@@ -73,8 +73,23 @@ export default function LandingPage() {
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-20">
-          {[\n            { icon: <Zap size={24} />, title: \"Fast\", desc: \"Streamable HTTP endpoints.\" },\n            { icon: <Cloud size={24} />, title: \"Flexible\", desc: \"Your tokens, your config.\" },\n            { icon: <Moon size={24} />, title: \"Cozy\", desc: \"A UI that doesn't scream at you.\" },\n          ].map((feature, i) => (\n            <div key={i} className=\"p-6 bg-void-surface/50 border border-void-border rounded-eepy backdrop-blur-sm hover:border-eepy-lavender/50 transition-colors group\">\n              <div className=\"text-eepy-lavender mb-3 group-hover:scale-110 transition-transform\">{feature.icon}</div>\n              <h3 className=\"font-semibold text-lg mb-2\">{feature.title}</h3>\n              <p className=\"text-gray-500 text-sm\">{feature.desc}</p>\n            </div>\n          ))}\n        </div>
+          {[
+            { icon: <Zap size={24} />, title: "Fast", desc: "Streamable HTTP endpoints." },
+            { icon: <Cloud size={24} />, title: "Flexible", desc: "Your tokens, your config." },
+            { icon: <Moon size={24} />, title: "Cozy", desc: "A UI that doesn't scream at you." },
+          ].map((feature, i) => (
+            <div key={i} className="p-6 bg-void-surface/50 border border-void-border rounded-eepy backdrop-blur-sm hover:border-eepy-lavender/50 transition-colors group">
+              <div className="text-eepy-lavender mb-3 group-hover:scale-110 transition-transform">{feature.icon}</div>
+              <h3 className="font-semibold text-lg mb-2">{feature.title}</h3>
+              <p className="text-gray-500 text-sm">{feature.desc}</p>
+            </div>
+          ))}
+        </div>
       </main>
 
-      <footer className=\"absolute bottom-8 text-gray-600 text-sm font-console\">\n        &copy; 2026 Eepy Host &bull; Stay cozy.\n      </footer>\n    </div>\n  );\n}\n"
+      <footer className="absolute bottom-8 text-gray-600 text-sm font-console">
+        &copy; 2026 Eepy Host &bull; Stay cozy.
+      </footer>
+    </div>
+  );
 }
