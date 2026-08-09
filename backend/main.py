@@ -27,7 +27,6 @@ app = FastAPI(title="Eepy Host API")
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     logger.warning(f"Validation error on {request.url.path}: {exc.errors()}")
-    # Extract the first error message for the user
     first_error = exc.errors()[0] if exc.errors() else {"msg": "Invalid request data"}
     return JSONResponse(
         status_code=422,
@@ -65,7 +64,7 @@ async def health():
 @app.post("/auth/signup")
 def signup(user_in: UserCreate, db: Session = Depends(get_db)):
     try:
-        logger.info(f"Signup request received: {user_in}")
+        logger.info(f"Signup request received for user: {user_in.username}")
         # Check if user exists
         existing_user = db.query(User).filter((User.username == user_in.username) | (User.email == user_in.email)).first()
         if existing_user:
@@ -78,10 +77,13 @@ def signup(user_in: UserCreate, db: Session = Depends(get_db)):
             logger.warning(f"Invalid role provided: {user_in.role}. Defaulting to USER.")
             role = UserRole.USER
 
+        # SECONDARY DEFENSE: Explicitly truncate password before passing to hash function
+        safe_password = user_in.password[:72]
+
         new_user = User(
             username=user_in.username,
             email=user_in.email,
-            hashed_password=get_password_hash(user_in.password),
+            hashed_password=get_password_hash(safe_password),
             role=role
         )
         db.add(new_user)
@@ -100,8 +102,11 @@ def signup(user_in: UserCreate, db: Session = Depends(get_db)):
 @app.post("/auth/login")
 def login(credentials: UserLogin, db: Session = Depends(get_db)):
     try:
+        logger.info(f"Login request received for user: {credentials.username}")
         user = db.query(User).filter(User.username == credentials.username).first()
-        if not user or not verify_password(credentials.password, user.hashed_password):
+        
+        # SECONDARY DEFENSE: Truncate login password as well
+        if not user or not verify_password(credentials.password[:72], user.hashed_password):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
         token = create_access_token({"sub": user.username, "role": user.role})
