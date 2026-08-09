@@ -6,9 +6,9 @@ services:
     container_name: eepy-db
     restart: always
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: eepy_admin
+      POSTGRES_PASSWORD: [ROTATED_POSTGRES_PASSWORD]
+      POSTGRES_DB: eepy_host
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -19,10 +19,10 @@ services:
     container_name: eepy-backend
     restart: always
     environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - SECRET_KEY=${SECRET_KEY}
+      - DATABASE_URL=postgresql://eepy_admin:[ROTATED_POSTGRES_PASSWORD]@db:5432/eepy_host
+      - SECRET_KEY=[ROTATED_JWT_SECRET]
     ports:
-      - "${BACKEND_PORT}:${BACKEND_PORT}"
+      - "8000:8000"
     depends_on:
       - db
     networks:
@@ -33,9 +33,9 @@ services:
     container_name: eepy-frontend
     restart: always
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
     ports:
-      - "${FRONTEND_PORT}:${FRONTEND_PORT}"
+      - "3000:3000"
     depends_on:
       - backend
     networks:
