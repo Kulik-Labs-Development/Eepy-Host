@@ -1,39 +1,10 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-:root {
-  --foreground-rgb: 255, 255, 255;
-  --background-start-rgb: 11, 11, 12;
-  --background-end-rgb: 0, 0, 0;
+@keyframes gradient-rotate {
+  0% { background-color: #c3b1de; } /* lavender */
+  33% { background-color: #a2f2d1; } /* mint */
+  66% { background-color: #fadad_d; } /* peach (adjusted) */
+  100% { background-color: #c3b1de; }
 }
 
-body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
-  font-family: var(--font-inter), sans-serif;
-}
-
-h1, h2, h3, h4, .font-console {
-  font-family: var(--font-mono), monospace !important;
-}
-
-/* Custom scrollbar for that tech feel */
-::-webkit-scrollbar {
-  width: 8px;
-}
-::-webkit-scrollbar-track {
-  background: #0B0B0C;
-}
-::-webkit-scrollbar-thumb {
-  background: #2A2A2C;
-  border-radius: 10px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #C3B1E1;
+.animate-gradient-border {
+  animation: gradient-rotate 8s infinite linear;
 }

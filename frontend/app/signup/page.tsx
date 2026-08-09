@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { Moon, Lock, User, Mail, Loader2, Eye, EyeOff } from 'lucide-react';
+import { Moon, Lock, User, Mail, Loader2, Eye, EyeOff, Sparkles } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
 
 export default function SignupPage() {
@@ -48,14 +48,15 @@ export default function SignupPage() {
       <div className="z-10 w-full max-w-md space-y-8">
         <div className="text-center space-y-4">
           <div className="flex justify-center mb-6">
-            <div className="p-4 bg-void-surface border border-void-border rounded-eepy shadow-[0_0_20px_rgba(195,177,225,0.1)]">
+            <div className="p-4 bg-void-surface border border-void-border rounded-eepy shadow-[0_0_20px_rgba(195,177,225,0.1)] relative group">
               <Moon size={32} className="text-eepy-peach" />
+              <Sparkles size={14} className="absolute -top-1 -right-1 text-eepy-mint animate-pulse" />
             </div>
           </div>
           <h1 className="text-4xl font-bold tracking-tight text-white">
-            Join the <span className="text-eepy-peach italic">Void</span>
+            Sync your <span className="text-eepy-peach italic">Vibe</span>
           </h1>
-          <p className="text-gray-500 font-console text-sm">Create an account and stay cozy.</p>
+          <p className="text-gray-500 font-console text-sm">Ready to connect your models to the world?</p>
         </div>
 
         <form onSubmit={handleSignup} className="bg-void-surface border border-void-border p-8 rounded-eepy shadow-xl space-y-6 backdrop-blur-sm">
@@ -108,7 +109,7 @@ export default function SignupPage() {
             disabled={isLoading}
             className="w-full py-3 bg-eepy-peach text-void font-bold rounded-xl hover:bg-opacity-90 transition-all transform hover:scale-[1.02] shadow-[0_0_15px_rgba(250,218,221,0.3)] font-console flex items-center justify-center"
           >
-            {isLoading ? <Loader2 className="animate-spin mr-2" size={18} /> : 'Begin Sleep'}
+            {isLoading ? <Loader2 className="animate-spin mr-2" size={18} /> : 'Sync the Vibe'}
           </button>
 
           <div className="text-center text-sm text-gray-500 font-console">
