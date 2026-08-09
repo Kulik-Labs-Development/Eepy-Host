@@ -1,0 +1,14 @@
+# Project Root
+node_modules/
+.next/
+out/
+build/
+dist/
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
+.DS_Store
