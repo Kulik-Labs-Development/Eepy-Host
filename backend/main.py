@@ -65,6 +65,7 @@ async def health():
 @app.post("/auth/signup")
 def signup(user_in: UserCreate, db: Session = Depends(get_db)):
     try:
+        logger.info(f"Signup request received: {user_in}")
         # Check if user exists
         existing_user = db.query(User).filter((User.username == user_in.username) | (User.email == user_in.email)).first()
         if existing_user:
