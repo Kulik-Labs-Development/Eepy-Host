@@ -4,8 +4,9 @@ from sqlalchemy.orm import Session
 from typing import List
 import logging
 
-from database import engine, Base, get_db, User, UserRole
-from auth import get_password_hash, verify_password, create_access_token
+from .database import engine, Base, get_db, User, UserRole
+from .auth import get_password_hash, verify_password, create_access_token
+from .schemas import UserCreate, UserLogin
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
@@ -40,7 +41,6 @@ async def root():
 @app.get("/health")
 async def health():
     try:
-        # Simple DB check
         from sqlalchemy import text
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -50,39 +50,31 @@ async def health():
         return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
 
 @app.post("/auth/signup")
-def signup(user_data: dict, db: Session = Depends(get_db)):
+def signup(user_in: UserCreate, db: Session = Depends(get_db)):
     try:
-        username = user_data.get("username")
-        email = user_data.get("email")
-        password = user_data.get("password")
-        role_input = user_data.get("role", "user")
-
-        if not username or not email or not password:
-            raise HTTPException(status_code=400, detail="Missing required fields")
-
         # Check if user exists
-        existing_user = db.query(User).filter((User.username == username) | (User.email == email)).first()
+        existing_user = db.query(User).filter((User.username == user_in.username) | (User.email == user_in.email)).first()
         if existing_user:
             raise HTTPException(status_code=400, detail="Username or email already registered")
 
         # Safe Enum casting
         try:
-            role = UserRole(role_input)
+            role = UserRole(user_in.role)
         except ValueError:
-            logger.warning(f"Invalid role provided: {role_input}. Defaulting to USER.")
+            logger.warning(f"Invalid role provided: {user_in.role}. Defaulting to USER.")
             role = UserRole.USER
 
         new_user = User(
-            username=username,
-            email=email,
-            hashed_password=get_password_hash(password),
+            username=user_in.username,
+            email=user_in.email,
+            hashed_password=get_password_hash(user_in.password),
             role=role
         )
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
         
-        logger.info(f"New user created: {username}")
+        logger.info(f"New user created: {user_in.username}")
         return {"message": "Account created successfully", "user_id": new_user.id}
 
     except HTTPException as he:
@@ -92,13 +84,10 @@ def signup(user_data: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/auth/login")
-def login(credentials: dict, db: Session = Depends(get_db)):
+def login(credentials: UserLogin, db: Session = Depends(get_db)):
     try:
-        username = credentials.get("username")
-        password = credentials.get("password")
-
-        user = db.query(User).filter(User.username == username).first()
-        if not user or not verify_password(password, user.hashed_password):
+        user = db.query(User).filter(User.username == credentials.username).first()
+        if not user or not verify_password(credentials.password, user.hashed_password):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
         token = create_access_token({"sub": user.username, "role": user.role})
