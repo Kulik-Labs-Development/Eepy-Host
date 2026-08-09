@@ -2,14 +2,40 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { Moon, Lock, User, Mail } from 'lucide-react';
+import { Moon, Lock, User, Mail, Loader2 } from 'lucide-react';
 
 export default function SignupPage() {
   const [formData, setFormData] = useState({ username: '', email: '', password: '' });
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.detail || 'Signup failed');
+      }
+
+      window.location.href = '/login';
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden bg-void">
-      {/* Background Glows */}
       <div className="absolute top-[-10%] right-[-10%] w-[40%] h-[40%] bg-eepy-peach/5 blur-[120px] rounded-full" />
       <div className="absolute bottom-[-10%] left-[-10%] w-[40%] h-[40%] bg-eepy-mint/5 blur-[120px] rounded-full" />
 
@@ -26,13 +52,19 @@ export default function SignupPage() {
           <p className="text-gray-500 font-console text-sm">Create an account and stay cozy.</p>
         </div>
 
-        <div className="bg-void-surface border border-void-border p-8 rounded-eepy shadow-xl space-y-6 backdrop-blur-sm">
+        <form onSubmit={handleSignup} className="bg-void-surface border border-void-border p-8 rounded-eepy shadow-xl space-y-6 backdrop-blur-sm">
+          {error && (
+            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-console rounded-lg text-center">
+              {error}
+            </div>
+          )}
           <div className="space-y-4">
             <div className="relative">
               <User size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
               <input 
                 type="text" 
                 placeholder="Username" 
+                required
                 className="w-full pl-10 pr-4 py-3 bg-void border border-void-border rounded-xl focus:outline-none focus:border-eepy-peach transition-colors font-console text-sm"
                 onChange={(e) => setFormData({...formData, username: e.target.value})}
               />
@@ -42,6 +74,7 @@ export default function SignupPage() {
               <input 
                 type="email" 
                 placeholder="Email Address" 
+                required
                 className="w-full pl-10 pr-4 py-3 bg-void border border-void-border rounded-xl focus:outline-none focus:border-eepy-peach transition-colors font-console text-sm"
                 onChange={(e) => setFormData({...formData, email: e.target.value})}
               />
@@ -51,20 +84,24 @@ export default function SignupPage() {
               <input 
                 type="password" 
                 placeholder="Password" 
+                required
                 className="w-full pl-10 pr-4 py-3 bg-void border border-void-border rounded-xl focus:outline-none focus:border-eepy-peach transition-colors font-console text-sm"
                 onChange={(e) => setFormData({...formData, password: e.target.value})}
               />
             </div>
           </div>
 
-          <button className="w-full py-3 bg-eepy-peach text-void font-bold rounded-xl hover:bg-opacity-90 transition-all transform hover:scale-[1.02] shadow-[0_0_15px_rgba(250,218,221,0.3)] font-console">
-            Begin Sleep
+          <button 
+            disabled={isLoading}
+            className="w-full py-3 bg-eepy-peach text-void font-bold rounded-xl hover:bg-opacity-90 transition-all transform hover:scale-[1.02] shadow-[0_0_15px_rgba(250,218,221,0.3)] font-console flex items-center justify-center"
+          >
+            {isLoading ? <Loader2 className="animate-spin mr-2" size={18} /> : 'Begin Sleep'}
           </button>
 
           <div className="text-center text-sm text-gray-500 font-console">
             Already have an account? <Link href="/login" className="text-eepy-peach hover:underline">Log in</Link>
           </div>
-        </div>
+        </form>
       </div>
     </div>
   );
