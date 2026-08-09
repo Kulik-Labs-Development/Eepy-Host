@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { Moon, Lock, User, Loader2 } from 'lucide-react';
+import { Moon, Lock, User, Loader2, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { getApiUrl } from '@/lib/api';
 
@@ -10,6 +10,7 @@ export default function LoginPage() {
   const [formData, setFormData] = useState({ username: '', password: '' });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const { login } = useAuth();
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -77,12 +78,19 @@ export default function LoginPage() {
             <div className="relative">
               <Lock size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
               <input 
-                type="password" 
+                type={showPassword ? "text" : "password"} 
                 placeholder="Password" 
                 required
-                className="w-full pl-10 pr-4 py-3 bg-void border border-void-border rounded-xl focus:outline-none focus:border-eepy-lavender transition-colors font-console text-sm"
+                className="w-full pl-10 pr-12 py-3 bg-void border border-void-border rounded-xl focus:outline-none focus:border-eepy-lavender transition-colors font-console text-sm"
                 onChange={(e) => setFormData({...formData, password: e.target.value})}
               />
+              <button 
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-eepy-lavender transition-colors"
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
             </div>
           </div>
 
