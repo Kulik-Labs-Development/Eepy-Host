@@ -15,8 +15,7 @@ services:
       - eepy-network
 
   backend:
-    build: 
-      context: ./backend
+    image: ghcr.io/kulik-labs-development/eepy-host-backend:latest
     container_name: eepy-backend
     restart: always
     environment:
@@ -30,8 +29,7 @@ services:
       - eepy-network
 
   frontend:
-    build: 
-      context: ./frontend
+    image: ghcr.io/kulik-labs-development/eepy-host-frontend:latest
     container_name: eepy-frontend
     restart: always
     environment:
