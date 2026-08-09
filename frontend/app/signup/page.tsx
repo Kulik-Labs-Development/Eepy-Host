@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { Moon, Lock, User, Mail, Loader2 } from 'lucide-react';
+import { getApiUrl } from '@/lib/api';
 
 export default function SignupPage() {
   const [formData, setFormData] = useState({ username: '', email: '', password: '' });
@@ -14,9 +15,9 @@ export default function SignupPage() {
     setIsLoading(true);
     setError('');
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      try {
-        const response = await fetch(`${apiUrl}/auth/signup`, {
+    try {
+      const apiUrl = getApiUrl();
+      const response = await fetch(`${apiUrl}/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),

@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { Moon, Lock, User, Loader2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { getApiUrl } from '@/lib/api';
 
 export default function LoginPage() {
   const [formData, setFormData] = useState({ username: '', password: '' });
@@ -16,9 +17,9 @@ export default function LoginPage() {
     setIsLoading(true);
     setError('');
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      try {
-        const response = await fetch(`${apiUrl}/auth/login`, {
+    try {
+      const apiUrl = getApiUrl();
+      const response = await fetch(`${apiUrl}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
