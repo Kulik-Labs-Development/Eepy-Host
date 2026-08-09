@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from database import engine, Base, get_db, User, UserRole
-from .auth import get_password_hash, verify_password, create_access_token
+from auth import get_password_hash, verify_password, create_access_token
 
 # Initialize Database
 Base.metadata.create_all(bind=engine)
