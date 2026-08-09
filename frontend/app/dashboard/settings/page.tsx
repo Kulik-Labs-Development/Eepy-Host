@@ -1,7 +1,7 @@
 "use client";
 
 import React from 'react';
-import { Settings, Bell, Eye, ShieldCheck, Zap } from 'lucide-react';
+import { Settings, Bell, Eye, ShieldCheck, Zap, Lock } from 'lucide-react';
 
 export default function SettingsPage() {
   return (
