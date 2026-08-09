@@ -1,17 +1,17 @@
 import React from 'react';
 import Link from 'next/link';
-import { Cloud, Moon, Zap, Sparkles, Globe } from 'lucide-react';
+import { Cloud, Moon, Zap, Sparkles, Globe, ShieldCheck } from 'lucide-react';
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden bg-void">
+    <div className="min-h-screen flex flex-col items-center p-6 relative overflow-hidden bg-void">
       {/* Background Decorative Glows - Enhanced Visual Flare */}
       <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-eepy-lavender/10 blur-[120px] rounded-full animate-pulse" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-eepy-mint/10 blur-[120px] rounded-full" />
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[80%] h-[80%] bg-eepy-peach/5 blur-[150px] rounded-full" />
 
       {/* Top Navigation */}
-      <nav className="absolute top-0 left-0 right-0 p-6 flex justify-end z-20">
+      <nav className="w-full max-w-6xl flex justify-end p-6 z-20">
         <Link 
           href="/login" 
           className="px-6 py-2 bg-void-surface border border-void-border text-white rounded-full hover:border-eepy-lavender transition-all font-console text-sm backdrop-blur-md"
@@ -20,7 +20,7 @@ export default function LandingPage() {
         </Link>
       </nav>
 
-      <main className="z-10 text-center space-y-8 max-w-4xl">
+      <main className="z-10 text-center space-y-12 max-w-4xl flex-grow flex flex-col justify-center py-12">
         <div className="flex justify-center mb-6">
           <div className="p-4 bg-void-surface border border-void-border rounded-eepy shadow-[0_0_30px_rgba(195,177,225,0.3)] relative group">
             <Moon size={48} className="text-eepy-lavender animate-pulse" />
@@ -67,15 +67,15 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* Self-Hosted Pairing Note */}
-        <p className="text-gray-500 text-sm font-console italic">
-          ✨ Best paired with self-hosted LLM interfaces like <span className="text-eepy-peach">Open WebUI</span> for the ultimate private stack.
+        {/* Self-Hosted Pairing Note + Privacy Highlight */}
+        <p className="text-gray-500 text-sm font-console italic max-w-md mx-auto">
+          ✨ Best paired with self-hosted LLM interfaces like <span className="text-eepy-peach">Open WebUI</span> for a <span className="text-white underline decoration-eepy-mint">fully private stack</span>. Your data, your vibes, zero leaks.
         </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-20">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-20 pb-12">
           {[
             { icon: <Zap size={24} />, title: "Fast", desc: "Streamable HTTP endpoints." },
-            { icon: <Cloud size={24} />, title: "Flexible", desc: "Your tokens, your config." },
+            { icon: <ShieldCheck size={24} />, title: "Private", desc: "Fully self-hosted, total data sovereignty." },
             { icon: <Moon size={24} />, title: "Cozy", desc: "A UI that doesn't scream at you." },
           ].map((feature, i) => (
             <div key={i} className="p-6 bg-void-surface/50 border border-void-border rounded-eepy backdrop-blur-sm hover:border-eepy-lavender/50 transition-colors group">
@@ -87,7 +87,7 @@ export default function LandingPage() {
         </div>
       </main>
 
-      <footer className="absolute bottom-8 text-gray-600 text-sm font-console">
+      <footer className="w-full py-8 text-center text-gray-600 text-sm font-console">
         &copy; 2026 Eepy Host &bull; Stay cozy.
       </footer>
     </div>
