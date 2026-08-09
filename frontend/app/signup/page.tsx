@@ -23,8 +23,14 @@ export default function SignupPage() {
         body: JSON.stringify(formData),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        const data = await response.json();
+        // FastAPI validation errors (422) return an array in 'detail'
+        if (Array.isArray(data.detail)) {
+          const firstError = data.detail[0];
+          throw new Error(firstError.msg || 'Validation failed');
+        }
         throw new Error(data.detail || 'Signup failed');
       }
 

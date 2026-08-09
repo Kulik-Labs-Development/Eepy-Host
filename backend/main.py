@@ -1,12 +1,14 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List
 import logging
 
-from database import engine, Base, get_db, User, UserRole
-from auth import get_password_hash, verify_password, create_access_token
-from schemas import UserCreate, UserLogin
+from .database import engine, Base, get_db, User, UserRole
+from .auth import get_password_hash, verify_password, create_access_token
+from .schemas import UserCreate, UserLogin
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +22,17 @@ except Exception as e:
     logger.error(f"Critical error creating database tables: {e}")
 
 app = FastAPI(title="Eepy Host API")
+
+# Handle Validation Errors (422) globally to provide a cleaner response
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.warning(f"Validation error on {request.url.path}: {exc.errors()}")
+    # Extract the first error message for the user
+    first_error = exc.errors()[0] if exc.errors() else {"msg": "Invalid request data"}
+    return JSONResponse(
+        status_code=422,
+        content={"detail": first_error.get("msg", "Validation failed")},
+    )
 
 # Explicit CORS Configuration
 app.add_middleware(
