@@ -27,6 +27,7 @@ class User(Base):
     profile_picture = Column(String, nullable=True)
     hashed_password = Column(String, nullable=False)
     role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)
+    total_requests = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 def get_db():

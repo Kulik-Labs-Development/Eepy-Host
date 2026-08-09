@@ -3,7 +3,7 @@
 import React from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
-import { LogOut, LayoutDashboard, Server, UserCircle, Settings, Moon } from 'lucide-react';
+import { LogOut, LayoutDashboard, Server, UserCircle, Settings, Moon, Organization } from 'lucide-react';
 import Link from 'next/link';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -19,6 +19,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { icon: <UserCircle size={20}/>, label: 'Account', path: '/dashboard/account' },
     { icon: <Settings size={20}/>, label: 'System Settings', path: '/dashboard/settings' },
   ];
+
+  // Add Organization tab for Superusers
+  if (user.role === 'superuser') {
+    navItems.push({ 
+      icon: <Organization size={20}/>, 
+      label: 'Organization', 
+      path: '/dashboard/organization' 
+    });
+  }
 
   return (
     <div className="min-h-screen bg-void text-white flex overflow-hidden">
