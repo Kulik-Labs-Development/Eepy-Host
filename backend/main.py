@@ -103,6 +103,14 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
+async def get_superuser(current_user: User = Depends(get_current_user)):
+    if current_user.role != UserRole.SUPERUSER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Operation restricted to superusers only"
+        )
+    return current_user
+
 @app.get("/")
 async def root():
     return {"status": "online", "message": "Welcome to Eepy Host API. Stay cozy."}

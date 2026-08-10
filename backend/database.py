@@ -14,7 +14,6 @@ Base = declarative_base()
 
 class UserRole(str, enum.Enum):
     USER = "user"
-    ADMIN = "admin"
     SUPERUSER = "superuser"
 
 class User(Base):
