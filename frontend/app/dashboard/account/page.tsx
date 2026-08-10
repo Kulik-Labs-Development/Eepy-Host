@@ -1,25 +1,96 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UserCircle, Mail, Lock, ShieldCheck, Camera, CreditCard, Wallet } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
 
 export default function AccountPage() {
+  const { user } = useAuth();
   const [profileData, setProfileData] = useState({
     fullName: '',
-    email: 'max@example.com',
+    email: '',
+    profilePicture: null as string | null,
   });
   const [isUploading, setIsUploading] = useState(false);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Load profile data on mount
+  useEffect(() => {
+    async function fetchProfile() {
+      try {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/user/profile`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setProfileData({
+            fullName: data.full_name || '',
+            email: data.email,
+            profilePicture: data.profile_picture,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to fetch profile:", error);
+      }
+    }
+    fetchProfile();
+  }, []);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setIsUploading(true);
-      // Simulate upload delay
-      setTimeout(() => {
-        setPreviewImage(URL.createObjectURL(file));
-        setIsUploading(false);
-      }, 1000);
+    if (!file) return;
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/user/avatar`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: formData,
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setProfileData(prev => ({ ...prev, profilePicture: data.profile_picture }));
+      } else {
+        alert("Failed to upload image");
+      }
+    } catch (error) {
+      console.error("Upload error:", error);
+      alert("An error occurred while uploading the image");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleSaveChanges = async () => {
+    setIsSaving(true);
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/user/profile`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({ full_name: profileData.fullName }),
+      });
+
+      if (response.ok) {
+        alert("Profile updated successfully!");
+      } else {
+        alert("Failed to save changes");
+      }
+    } catch (error) {
+      console.error("Save error:", error);
+      alert("An error occurred while saving");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -34,9 +105,13 @@ export default function AccountPage() {
         {/* Profile Sidebar */}
         <div className="p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl text-center space-y-6 h-fit sticky top-8">
           <div className="relative inline-block group">
-            <div className={`p-1 rounded-full border-2 transition-colors ${previewImage ? 'border-eepy-mint' : 'border-void-border'} overflow-hidden`}>
-              {previewImage ? (
-                <img src={previewImage} alt="Profile" className="w-32 h-32 rounded-full object-cover" />
+            <div className={`p-1 rounded-full border-2 transition-colors ${profileData.profilePicture ? 'border-eepy-mint' : 'border-void-border'} overflow-hidden`}>
+              {profileData.profilePicture ? (
+                <img 
+                  src={`${process.env.NEXT_PUBLIC_API_URL}${profileData.profilePicture}`} 
+                  alt="Profile" 
+                  className="w-32 h-32 rounded-full object-cover" 
+                />
               ) : (
                 <div className="w-32 h-32 rounded-full bg-void flex items-center justify-center text-eepy-lavender">
                   <UserCircle size={64} />
@@ -54,7 +129,7 @@ export default function AccountPage() {
             )}
           </div>
           <div className="space-y-1">
-            <h3 className="text-xl font-bold font-console">Max Kulik</h3>
+            <h3 className="text-xl font-bold font-console">{profileData.fullName || user?.username}</h3>
             <p className="text-gray-500 font-console text-xs italic uppercase tracking-widest">Verified Identity</p>
           </div>
           <div className="flex justify-center gap-2">
@@ -92,8 +167,12 @@ export default function AccountPage() {
                 </div>
               </div>
             </div>
-            <button className="px-6 py-2 bg-eepy-lavender text-void font-bold rounded-lg font-console text-xs hover:bg-opacity-90 transition-all shadow-[0_0_15px_rgba(195,177,225,0.3)]">
-              Save Changes
+            <button 
+              onClick={handleSaveChanges}
+              disabled={isSaving}
+              className={`px-6 py-2 bg-eepy-lavender text-void font-bold rounded-lg font-console text-xs transition-all shadow-[0_0_15px_rgba(195,177,225,0.3)] ${isSaving ? 'opacity-50 cursor-not-allowed' : 'hover:bg-opacity-90'}`}
+            >
+              {isSaving ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
 
