@@ -184,7 +184,8 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
             "user": {
                 "username": user.username,
                 "role": user.role,
-                "email": user.email
+                "email": user.email,
+                "full_name": user.full_name
             }
         }
     except HTTPException as he:

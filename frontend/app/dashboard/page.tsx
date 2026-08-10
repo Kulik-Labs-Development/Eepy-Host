@@ -11,7 +11,7 @@ export default function OverviewPage() {
     <div className="space-y-12">
       <header className="flex justify-between items-center mb-8">
         <div>
-          <h2 className="text-3xl font-bold font-console">Welcome back, <span className="text-eepy-lavender">{user?.username}</span></h2>
+          <h2 className=\"text-3xl font-bold font-console\">Welcome back, <span className=\"text-eepy-lavender\">{user?.fullName || user?.username}</span></h2>
           <p className="text-gray-500 font-console text-sm mt-1 italic">Current Role: {user?.role.toUpperCase()}</p>
         </div>
         
