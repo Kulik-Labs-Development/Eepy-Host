@@ -2,13 +2,12 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional
 import logging
 import os
-import shutil
+import base64
 
 from database import engine, Base, get_db, User, UserRole, SessionLocal
 from auth import get_password_hash, verify_password, create_access_token, decode_access_token
@@ -32,7 +31,7 @@ def sync_database_schema():
 
             required_columns = {
                 "full_name": "VARCHAR",
-                "profile_picture": "VARCHAR",
+                "profile_picture": "TEXT", # Changed to TEXT for larger Base64 strings
                 "total_requests": "INTEGER DEFAULT 0 NOT NULL"
             }
 
@@ -41,6 +40,8 @@ def sync_database_schema():
                     logger.info(f"Adding missing column {col} to users table...")
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
             
+            # If profile_picture exists as VARCHAR, we might want to ensure it's TEXT for Base64
+            # PostgreSQL handles VARCHAR without length as basically unlimited, but being explicit is safer.
             conn.commit()
             logger.info("Database columns synchronized.")
     except Exception as e:
@@ -73,13 +74,6 @@ except Exception as e:
     logger.error(f"Critical error initializing database: {e}")
 
 app = FastAPI(title="Eepy Host API")
-
-# Ensure uploads directory exists
-UPLOAD_DIR = "static/avatars"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-# Mount static files to serve profile pictures
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Handle Validation Errors (422) globally to provide a cleaner response
 @app.exception_handler(RequestValidationError)
@@ -233,19 +227,21 @@ async def upload_avatar(file: UploadFile = File(...), current_user: User = Depen
         if not file.content_type.startswith("image/"):
             raise HTTPException(status_code=400, detail="Invalid file type. Please upload an image.")
 
-        extension = os.path.splitext(file.filename)[1] or ".png"
-        filename = f"{current_user.username}{extension}"
-        file_path = os.path.join(UPLOAD_DIR, filename)
+        # Read the image content
+        contents = await file.read()
+        
+        # Encode to Base64
+        base64_encoded = base64.b64encode(contents).decode('utf-8')
+        
+        # Create a Data URI string (e.g., data:image/png;base64,...)
+        data_uri = f"data:{file.content_type};base64,{base64_encoded}"
 
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        db_path = f"/static/avatars/{filename}"
-        current_user.profile_picture = db_path
+        # Store the Base64 string directly in the database
+        current_user.profile_picture = data_uri
         db.commit()
         db.refresh(current_user)
 
-        return {"message": "Avatar uploaded successfully", "profile_picture": db_path}
+        return {"message": "Avatar uploaded successfully", "profile_picture": data_uri}
     except HTTPException as he:
         raise he
     except Exception as e:
