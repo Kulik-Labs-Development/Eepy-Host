@@ -19,10 +19,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("eepy-backend")
 
 def sync_database_schema():
-    \"\"\"
+    """
     Ensures the database schema is up to date without wiping data.
     Adds missing columns for Phase 3 features (User profiles & analytics).
-    \"\"\"
+    """
     try:
         with engine.connect() as conn:
             # Check current columns in users table
@@ -246,7 +246,7 @@ async def upload_avatar(file: UploadFile = File(...), current_user: User = Depen
 
 @app.get("/superuser/users", response_model=List[dict])
 def list_all_users(superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
-    \"\"\"Returns a list of all registered users with basic details.\"\"\"
+    """Returns a list of all registered users with basic details."""
     users = db.query(User).all()
     return [
         {
@@ -262,15 +262,12 @@ def list_all_users(superuser: User = Depends(get_superuser), db: Session = Depen
 
 @app.patch("/superuser/users/{user_id}")
 def update_user_by_admin(user_id: int, request: Request, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
-    \"\"\"Allows a superuser to manually update any user's details (name, role).\"\"\"
-    # Since the endpoint is async in some places and sync in others, 
-    # we handle this as a standard FastAPI route. But wait, request.json() is awaitable.
-    # I will make this endpoint async.
+    """Allows a superuser to manually update any user's details (name, role)."""
     pass
 
 @app.post("/superuser/users/{user_id}/password")
 def reset_user_password(user_id: int, password: str, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
-    \"\"\"Allows a superuser to manually force-reset a user's password.\"\"\"
+    """Allows a superuser to manually force-reset a user's password."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -281,7 +278,7 @@ def reset_user_password(user_id: int, password: str, superuser: User = Depends(g
 
 @app.delete("/superuser/users/{user_id}")
 def delete_user_by_admin(user_id: int, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
-    \"\"\"Allows a superuser to permanently remove a user from the system.\"\"\"
+    """Allows a superuser to permanently remove a user from the system."""
     # Prevent superusers from accidentally deleting themselves
     current_logged_in_user = superuser 
     target_user = db.query(User).filter(User.id == user_id).first()
