@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from typing import List
 import logging
 
@@ -14,12 +15,41 @@ from schemas import UserCreate, UserLogin
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("eepy-backend")
 
+def sync_database_schema():
+    """
+    Ensures the database schema is up to date without wiping data.
+    Adds missing columns for Phase 3 features (User profiles & analytics).
+    """
+    try:
+        with engine.connect() as conn:
+            # Check current columns in users table
+            result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='users'"))
+            existing_columns = {row[0] for row in result}
+
+            # Define required columns and their SQL types
+            required_columns = {
+                "full_name": "VARCHAR",
+                "profile_picture": "VARCHAR",
+                "total_requests": "INTEGER DEFAULT 0 NOT NULL"
+            }
+
+            for col, col_type in required_columns.items():
+                if col not in existing_columns:
+                    logger.info(f"Adding missing column {col} to users table...")
+                    conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
+            
+            conn.commit()
+            logger.info("Database schema synchronized successfully.")
+    except Exception as e:
+        logger.error(f"Schema synchronization failed: {e}")
+
 # Initialize Database
 try:
     Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created successfully.")
+    sync_database_schema()
+    logger.info("Database initialized and synchronized.")
 except Exception as e:
-    logger.error(f"Critical error creating database tables: {e}")
+    logger.error(f"Critical error initializing database: {e}")
 
 app = FastAPI(title="Eepy Host API")
 
@@ -53,7 +83,6 @@ async def root():
 @app.get("/health")
 async def health():
     try:
-        from sqlalchemy import text
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         return {"status": "healthy", "database": "connected"}
