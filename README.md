@@ -2,7 +2,7 @@
 
 **Powerful infrastructure, wrapped in a soft blanket of simplicity.**
 
-Eepy Host is the ultimate playground for the **Vibe Coder**. It is a cozy, tech-forward hosting platform designed for the Model Context Protocol (MCP), allowing users to pick from pre-configured servers and connect their AI models to the world of information. Designed for privacy and focus, it's best paired with self-hosted LLM interfaces like Open WebUI for a fully private stack.
+Eepy Host is the ultimate playground for the **Vibe Coder**. It is a cozy, tech-forward hosting platform designed for the Model Context Protocol (MCP), allowing users to pick from pre-configured servers and connect their AI models to the world of information. Designed for privacy and focus, it's best paired with self-hosted LLM interfaces like Open WebUI for a fully private stack..
  
 ---
 
