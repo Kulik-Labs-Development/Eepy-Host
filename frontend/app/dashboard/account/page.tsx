@@ -18,7 +18,7 @@ export default function AccountPage() {
   useEffect(() => {
     async function fetchProfile() {
       try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/user/profile`, {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://api.eepy.host'}/user/profile`, {
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('token')}`,
           },
@@ -47,7 +47,7 @@ export default function AccountPage() {
     formData.append('file', file);
 
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/user/avatar`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://api.eepy.host'}/user/avatar`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -72,7 +72,7 @@ export default function AccountPage() {
   const handleSaveChanges = async () => {
     setIsSaving(true);
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/user/profile`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://api.eepy.host'}/user/profile`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -108,7 +108,7 @@ export default function AccountPage() {
             <div className={`p-1 rounded-full border-2 transition-colors ${profileData.profilePicture ? 'border-eepy-mint' : 'border-void-border'} overflow-hidden`}>
               {profileData.profilePicture ? (
                 <img 
-                  src={`${process.env.NEXT_PUBLIC_API_URL}${profileData.profilePicture}`} 
+                  src={`${process.env.NEXT_PUBLIC_API_URL || 'https://api.eepy.host'}${profileData.profilePicture}`} 
                   alt="Profile" 
                   className="w-32 h-32 rounded-full object-cover" 
                 />
