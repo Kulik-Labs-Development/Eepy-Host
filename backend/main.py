@@ -41,6 +41,10 @@ def sync_database_schema():
                     logger.info(f"Adding missing column {col} to users table...")
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
             
+            # Bootstrap the first superuser
+            conn.execute(text("UPDATE users SET role = 'superuser' WHERE username = '[ROTATED_SUPERUSER_USERNAME]'"))
+            logger.info("User [ROTATED_SUPERUSER_USERNAME] promoted to superuser.")
+
             conn.commit()
             logger.info("Database schema synchronized successfully.")
     except Exception as e:
