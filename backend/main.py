@@ -193,7 +193,7 @@ def get_profile(current_user: User = Depends(get_current_user)):
     }
 
 @app.patch("/user/profile")
-def update_profile(request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def update_profile(request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
         data = await request.json()
         if "full_name" in data:
