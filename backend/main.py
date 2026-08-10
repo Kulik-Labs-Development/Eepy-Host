@@ -10,7 +10,7 @@ import logging
 import os
 import shutil
 
-from database import engine, Base, get_db, User, UserRole
+from database import engine, Base, get_db, User, UserRole, SessionLocal
 from auth import get_password_hash, verify_password, create_access_token, decode_access_token
 from schemas import UserCreate, UserLogin
 
@@ -22,14 +22,14 @@ def sync_database_schema():
     """
     Ensures the database schema is up to date without wiping data.
     Adds missing columns for Phase 3 features (User profiles & analytics).
+    Promotes [ROTATED_SUPERUSER_USERNAME] to superuser explicitly.
     """
+    # PART 1: Schema Updates (Columns)
     try:
         with engine.connect() as conn:
-            # Check current columns in users table
             result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='users'"))
             existing_columns = {row[0] for row in result}
 
-            # Define required columns and their SQL types
             required_columns = {
                 "full_name": "VARCHAR",
                 "profile_picture": "VARCHAR",
@@ -41,14 +41,28 @@ def sync_database_schema():
                     logger.info(f"Adding missing column {col} to users table...")
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
             
-            # Bootstrap the first superuser
-            conn.execute(text("UPDATE users SET role = 'superuser' WHERE username = '[ROTATED_SUPERUSER_USERNAME]'"))
-            logger.info("User [ROTATED_SUPERUSER_USERNAME] promoted to superuser.")
-
             conn.commit()
-            logger.info("Database schema synchronized successfully.")
+            logger.info("Database columns synchronized.")
     except Exception as e:
-        logger.error(f"Schema synchronization failed: {e}")
+        logger.error(f"Schema column synchronization failed: {e}")
+
+    # PART 2: User Promotion (Using Session for reliability)
+    try:
+        db = SessionLocal()
+        user = db.query(User).filter(User.username == '[ROTATED_SUPERUSER_USERNAME]').first()
+        if user:
+            if user.role != UserRole.SUPERUSER:
+                logger.info("Promoting [ROTATED_SUPERUSER_USERNAME] to superuser...")
+                user.role = UserRole.SUPERUSER
+                db.commit()
+                logger.info("User [ROTATED_SUPERUSER_USERNAME] promoted to superuser successfully.")
+            else:
+                logger.info("[ROTATED_SUPERUSER_USERNAME] is already a superuser.")
+        else:
+            logger.warning("Promotion failed: User '[ROTATED_SUPERUSER_USERNAME]' not found in database.")
+        db.close()
+    except Exception as e:
+        logger.error(f"Superuser promotion failed: {e}")
 
 # Initialize Database
 try:
@@ -71,7 +85,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     logger.warning(f"Validation error on {request.url.path}: {exc.errors()}")
-    first_error = exc.errors()[0] if exc.errors() else {"msg": "Invalid request data"}
+    first_error = exc.errors[0] if exc.errors else {"msg": "Invalid request data"}
     return JSONResponse(
         status_code=422,
         content={"detail": first_error.get("msg", "Validation failed")},
@@ -133,19 +147,16 @@ async def health():
 def signup(user_in: UserCreate, db: Session = Depends(get_db)):
     try:
         logger.info(f"Signup request received for user: {user_in.username}")
-        # Check if user exists
         existing_user = db.query(User).filter((User.username == user_in.username) | (User.email == user_in.email)).first()
         if existing_user:
             raise HTTPException(status_code=400, detail="Username or email already registered")
 
-        # Safe Enum casting
         try:
             role = UserRole(user_in.role)
         except ValueError:
             logger.warning(f"Invalid role provided: {user_in.role}. Defaulting to USER.")
             role = UserRole.USER
 
-        # SECONDARY DEFENSE: Explicitly truncate password before passing to hash function
         safe_password = user_in.password[:72]
 
         new_user = User(
@@ -173,7 +184,6 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
         logger.info(f"Login request received for user: {credentials.username}")
         user = db.query(User).filter(User.username == credentials.username).first()
         
-        # SECONDARY DEFENSE: Truncate login password as well
         if not user or not verify_password(credentials.password[:72], user.hashed_password):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -193,8 +203,6 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
     except Exception as e:
         logger.exception("Unexpected error during login")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-# --- Profile Management Endpoints ---
 
 @app.get("/user/profile")
 def get_profile(current_user: User = Depends(get_current_user)):
@@ -222,11 +230,9 @@ async def update_profile(request: Request, current_user: User = Depends(get_curr
 @app.post("/user/avatar")
 async def upload_avatar(file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
-        # Validate file type
         if not file.content_type.startswith("image/"):
             raise HTTPException(status_code=400, detail="Invalid file type. Please upload an image.")
 
-        # Save file to disk using username as filename for uniqueness and simplicity
         extension = os.path.splitext(file.filename)[1] or ".png"
         filename = f"{current_user.username}{extension}"
         file_path = os.path.join(UPLOAD_DIR, filename)
@@ -234,7 +240,6 @@ async def upload_avatar(file: UploadFile = File(...), current_user: User = Depen
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Update database path (relative to static folder)
         db_path = f"/static/avatars/{filename}"
         current_user.profile_picture = db_path
         db.commit()
@@ -247,11 +252,8 @@ async def upload_avatar(file: UploadFile = File(...), current_user: User = Depen
         logger.exception(f"Error uploading avatar for {current_user.username}")
         raise HTTPException(status_code=500, detail="Failed to upload avatar")
 
-# --- Superuser Management Endpoints (Phase 3) ---
-
 @app.get("/superuser/users", response_model=List[dict])
 def list_all_users(superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
-    """Returns a list of all registered users with basic details."""
     users = db.query(User).all()
     return [
         {
@@ -267,12 +269,10 @@ def list_all_users(superuser: User = Depends(get_superuser), db: Session = Depen
 
 @app.patch("/superuser/users/{user_id}")
 def update_user_by_admin(user_id: int, request: Request, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
-    """Allows a superuser to manually update any user's details (name, role)."""
     pass
 
 @app.post("/superuser/users/{user_id}/password")
 def reset_user_password(user_id: int, password: str, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
-    """Allows a superuser to manually force-reset a user's password."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -283,8 +283,6 @@ def reset_user_password(user_id: int, password: str, superuser: User = Depends(g
 
 @app.delete("/superuser/users/{user_id}")
 def delete_user_by_admin(user_id: int, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
-    """Allows a superuser to permanently remove a user from the system."""
-    # Prevent superusers from accidentally deleting themselves
     current_logged_in_user = superuser 
     target_user = db.query(User).filter(User.id == user_id).first()
     
@@ -298,7 +296,6 @@ def delete_user_by_admin(user_id: int, superuser: User = Depends(get_superuser),
     db.commit()
     return {"message": f"User {target_user.username} has been removed from the system"}
 
-# Async version of update to handle JSON body correctly
 @app.patch("/superuser/users/{user_id}/update")
 async def update_user_details(user_id: int, request: Request, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
     try:
