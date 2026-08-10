@@ -20,7 +20,7 @@ export default function AccountPage() {
       try {
         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://api.eepy.host'}/user/profile`, {
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
+            'Authorization': `Bearer ${localStorage.getItem('eepy_token')}`,
           },
         });
         if (response.ok) {
@@ -50,7 +50,7 @@ export default function AccountPage() {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://api.eepy.host'}/user/avatar`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('eepy_token')}`,
         },
         body: formData,
       });
@@ -76,7 +76,7 @@ export default function AccountPage() {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('eepy_token')}`,
         },
         body: JSON.stringify({ full_name: profileData.fullName }),
       });
