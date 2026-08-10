@@ -1,17 +1,40 @@
 "use client";
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { Moon } from 'lucide-react';
+import { getApiUrl } from '@/lib/api';
 
 export default function OverviewPage() {
   const { user } = useAuth();
+  const [displayName, setDisplayName] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function fetchLatestProfile() {
+      if (!user) return;
+      try {
+        const apiUrl = getApiUrl();
+        const response = await fetch(`${apiUrl}/user/profile`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('eepy_token')}`,
+          },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setDisplayName(data.full_name || user.username);
+        }
+      } catch (error) {
+        console.error("Failed to fetch latest profile for dashboard:", error);
+      }
+    }
+    fetchLatestProfile();
+  }, [user]);
 
   return (
     <div className="space-y-12">
       <header className="flex justify-between items-center mb-8">
         <div>
-          <h2 className="text-3xl font-bold font-console">Welcome back, <span className="text-eepy-lavender">{user?.fullName || user?.username}</span></h2>
+          <h2 className="text-3xl font-bold font-console">Welcome back, <span className="text-eepy-lavender">{displayName || user?.fullName || user?.username}</span></h2>
           <p className="text-gray-500 font-console text-sm mt-1 italic">Current Role: {user?.role.toUpperCase()}</p>
         </div>
         
