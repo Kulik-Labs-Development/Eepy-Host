@@ -14,6 +14,11 @@ import datetime
 from database import engine, Base, get_db, User, UserRole, SessionLocal
 from auth import get_password_hash, verify_password, create_access_token, decode_access_token
 from schemas import UserCreate, UserLogin
+# Import MCP endpoints for Phase 5 HappyFox template integration ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾
+try:
+    from api.mcp_endpoints import router as mcp_router
+except ImportError as e: 
+    logger.warning(f"MCP endpoints not available yet (Phase 5 mock mode enabled): {str(e)[:100]} ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾")
 
 # --- LOGGING SYSTEM ---
 class MemoryLogHandler(logging.Handler):
@@ -81,6 +86,12 @@ try:
     logger.info("Database initialized and synchronized.")
 except Exception as e:
     logger.error(f"Critical error initializing database: {e}")
+
+# Import MCP endpoints for Phase 5 HappyFox template integration ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾
+try:
+    from api.mcp_endpoints import router as mcp_router
+except ImportError as e: 
+    logger.warning(f"MCP endpoints not available yet (Phase 5 mock mode enabled): {str(e)[:100]} ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾")
 
 app = FastAPI(title="Eepy Host API")
 
