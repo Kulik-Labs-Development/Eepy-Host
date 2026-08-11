@@ -13,7 +13,7 @@ export default function LandingPage() {
       {/* Top Navigation */}
       <nav className="w-full max-w-6xl flex justify-end p-6 z-20">
         <Link 
-          href="/login" 
+          href="/auth" 
           className="px-6 py-2 bg-void-surface border border-void-border text-white rounded-full hover:border-eepy-lavender transition-all font-console text-sm backdrop-blur-md"
         >
           Log In
@@ -41,7 +41,7 @@ export default function LandingPage() {
         </div>
 
         <div className="flex gap-4 justify-center pt-4">
-          <Link href="/signup">
+          <Link href="/auth">
             <button className="px-10 py-4 bg-eepy-lavender text-void font-bold rounded-full hover:bg-opacity-90 transition-all transform hover:scale-105 shadow-[0_0_20px_rgba(195,177,225,0.5)] animate-gradient-border font-console">
               Get Started
             </button>
