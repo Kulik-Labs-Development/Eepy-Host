@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem('eepy_user');
     setToken(null);
     setUser(null);
-    router.push('/login');
+    router.push('/');
   };
 
   return (
