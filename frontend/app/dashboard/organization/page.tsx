@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Users, Activity, ShieldAlert, RefreshCw, Loader2, Search, ChevronDown } from 'lucide-react';
+import { Users, Activity, ShieldAlert, RefreshCw, Loader2, Search, ChevronDown, Trash2 } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
 
 interface PlatformUser {
@@ -21,6 +21,7 @@ export default function OrganizationPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [updatingUserId, setUpdatingUserId] = useState<number | null>(null);
+  const [deletingUserId, setDeletingUserId] = useState<number | null>(null);
 
   async function fetchUsers() {
     setIsLoading(true);
@@ -80,6 +81,30 @@ export default function OrganizationPage() {
       alert(`Error updating role: ${err.message}`);
     } finally {
       setUpdatingUserId(null);
+    }
+  }
+
+  async function deleteUser(userId: number, username: string) {
+    if (!confirm(`Are you absolutely sure you want to purge user ${username} from the void? This action cannot be undone.`)) return;
+    
+    setDeletingUserId(userId);
+    try {
+      const apiUrl = getApiUrl();
+      const response = await fetch(`${apiUrl}/superuser/users/${userId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('eepy_token')}`,
+        },
+      });
+
+      if (!response.ok) throw new Error("Failed to delete user");
+      
+      setUsers(prev => prev.filter(u => u.id !== userId));
+      setFilteredUsers(prev => prev.filter(u => u.id !== userId));
+    } catch (err: any) {
+      alert(`Error deleting user: ${err.message}`);
+    } finally {
+      setDeletingUserId(null);
     }
   }
 
@@ -159,6 +184,7 @@ export default function OrganizationPage() {
                   <th className="px-6 py-4 font-medium">Role</th>
                   <th className="px-6 py-4 font-medium">Email</th>
                   <th className="px-6 py-4 font-medium text-right">Total Requests</th>
+                  <th className="px-6 py-4 font-medium text-center w-20">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-void-border">
@@ -190,6 +216,16 @@ export default function OrganizationPage() {
                     </td>
                     <td className="px-6 py-4 text-gray-400">{user.email}</td>
                     <td className="px-6 py-4 text-right font-mono text-eepy-mint">{user.total_requests.toLocaleString()}</td>
+                    <td className="px-6 py-4 text-center">
+                      <button 
+                        onClick={() => deleteUser(user.id, user.username)}
+                        disabled={deletingUserId === user.id}
+                        className="p-2 text-gray-500 hover:text-red-400 transition-colors disabled:opacity-50"
+                        title="Delete User"
+                      >
+                        {deletingUserId === user.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
