@@ -16,7 +16,6 @@ from auth import get_password_hash, verify_password, create_access_token, decode
 from schemas import UserCreate, UserLogin
 
 # --- LOGGING SYSTEM ---
-# Custom handler to capture logs in a circular buffer for the Debug Log feature
 class MemoryLogHandler(logging.Handler):
     def __init__(self, capacity=200):
         super().__init__()
@@ -31,7 +30,6 @@ class MemoryLogHandler(logging.Handler):
             "message": log_entry
         })
 
-# Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("eepy-backend")
 memory_handler = MemoryLogHandler()
@@ -39,12 +37,6 @@ memory_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
 logger.addHandler(memory_handler)
 
 def sync_database_schema():
-    """
-    Ensures the database schema is up to date without wiping data.
-    Adds missing columns for Phase 3 features (User profiles & analytics).
-    Promotes [ROTATED_SUPERUSER_USERNAME] to superuser explicitly.
-    """
-    # PART 1: Schema Updates (Columns)
     try:
         with engine.connect() as conn:
             result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='users'"))
@@ -52,7 +44,7 @@ def sync_database_schema():
 
             required_columns = {
                 "full_name": "VARCHAR",
-                "profile_picture": "TEXT", # Changed to TEXT for larger Base64 strings
+                "profile_picture": "TEXT", 
                 "total_requests": "INTEGER DEFAULT 0 NOT NULL"
             }
 
@@ -66,7 +58,6 @@ def sync_database_schema():
     except Exception as e:
         logger.error(f"Schema column synchronization failed: {e}")
 
-    # PART 2: User Promotion (Using Session for reliability)
     try:
         db = SessionLocal()
         user = db.query(User).filter(User.username == '[ROTATED_SUPERUSER_USERNAME]').first()
@@ -84,7 +75,6 @@ def sync_database_schema():
     except Exception as e:
         logger.error(f"Superuser promotion failed: {e}")
 
-# Initialize Database
 try:
     Base.metadata.create_all(bind=engine)
     sync_database_schema()
@@ -94,7 +84,6 @@ except Exception as e:
 
 app = FastAPI(title="Eepy Host API")
 
-# Handle Validation Errors (422) globally to provide a cleaner response
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     logger.warning(f"Validation error on {request.url.path}: {exc.errors()}")
@@ -104,20 +93,14 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": first_error.get("msg", "Validation failed")},
     )
 
-# Explicit CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://dev.eepy.host",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=["https://dev.eepy.host", "http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Dependency to get current authenticated user
 async def get_current_user(request: Request, db: Session = Depends(get_db)):
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -136,10 +119,7 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)):
 
 async def get_superuser(current_user: User = Depends(get_current_user)):
     if current_user.role != UserRole.SUPERUSER:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Operation restricted to superusers only"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Operation restricted to superusers only")
     return current_user
 
 @app.get("/")
@@ -171,22 +151,13 @@ def signup(user_in: UserCreate, db: Session = Depends(get_db)):
             role = UserRole.USER
 
         safe_password = user_in.password[:72]
-
-        new_user = User(
-            username=user_in.username,
-            email=user_in.email,
-            hashed_password=get_password_hash(safe_password),
-            role=role
-        )
+        new_user = User(username=user_in.username, email=user_in.email, hashed_password=get_password_hash(safe_password), role=role)
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
-        
         logger.info(f"New user created: {user_in.username}")
         return {"message": "Account created successfully", "user_id": new_user.id}
-
-    except HTTPException as he:
-        raise he
+    except HTTPException as he: raise he
     except Exception as e:
         logger.exception("Unexpected error during signup")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
@@ -196,35 +167,22 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
     try:
         logger.info(f"Login request received for user: {credentials.username}")
         user = db.query(User).filter(User.username == credentials.username).first()
-        
         if not user or not verify_password(credentials.password[:72], user.hashed_password):
             raise HTTPException(status_code=401, detail="Invalid credentials")
-
         token = create_access_token({"sub": user.username, "role": user.role})
         return {
             "access_token": token,
             "token_type": "bearer",
-            "user": {
-                "username": user.username,
-                "role": user.role,
-                "email": user.email,
-                "full_name": user.full_name
-            }
+            "user": {"username": user.username, "role": user.role, "email": user.email, "full_name": user.full_name}
         }
-    except HTTPException as he:
-        raise he
+    except HTTPException as he: raise he
     except Exception as e:
         logger.exception("Unexpected error during login")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/user/profile")
 def get_profile(current_user: User = Depends(get_current_user)):
-    return {
-        "full_name": current_user.full_name,
-        "email": current_user.email,
-        "profile_picture": current_user.profile_picture,
-        "username": current_user.username
-    }
+    return {"full_name": current_user.full_name, "email": current_user.email, "profile_picture": current_user.profile_picture, "username": current_user.username}
 
 @app.patch("/user/profile")
 async def update_profile(request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -234,7 +192,6 @@ async def update_profile(request: Request, current_user: User = Depends(get_curr
             current_user.full_name = data["full_name"]
             db.commit()
             db.refresh(current_user)
-        
         return {"message": "Profile updated successfully", "full_name": current_user.full_name}
     except Exception as e:
         logger.error(f"Error updating profile: {e}")
@@ -247,26 +204,16 @@ async def upload_avatar(file: UploadFile = File(...), current_user: User = Depen
         if not file.content_type.startswith("image/"):
             logger.warning(f"Invalid file type attempted by {current_user.username}: {file.content_type}")
             raise HTTPException(status_code=400, detail="Invalid file type. Please upload an image.")
-
-        # Read the image content
         contents = await file.read()
-        
-        # Encode to Base64
         base64_encoded = base64.b64encode(contents).decode('utf-8')
         logger.info(f"Encoded image for {current_user.username} to Base64 string of length {len(base64_encoded)} bytes")
-        
-        # Create a Data URI string (e.g., data:image/png;base64,...)
         data_uri = f"data:{file.content_type};base64,{base64_encoded}"
-
-        # Store the Base64 string directly in the database
         current_user.profile_picture = data_uri
         db.commit()
         db.refresh(current_user)
         logger.info(f"Avatar successfully persisted to database for {current_user.username}.")
-
         return {"message": "Avatar uploaded successfully", "profile_picture": data_uri}
-    except HTTPException as he:
-        raise he
+    except HTTPException as he: raise he
     except Exception as e:
         logger.exception(f"Unexpected error uploading avatar for {current_user.username}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to upload avatar")
@@ -274,48 +221,46 @@ async def upload_avatar(file: UploadFile = File(...), current_user: User = Depen
 @app.get("/superuser/users", response_model=List[dict])
 def list_all_users(superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
     users = db.query(User).all()
-    return [
-        {
-            "id": u.id, 
-            "username": u.username, 
-            "email": u.email, 
-            "full_name": u.full_name, 
-            "role": u.role, 
-            "total_requests": u.total_requests,
-            "created_at": u.created_at
-        } for u in users
-    ]
+    return [{"id": u.id, "username": u.username, "email": u.email, "full_name": u.full_name, "role": u.role, "total_requests": u.total_requests, "created_at": u.created_at} for u in users]
 
 @app.get("/superuser/logs")
 def get_system_logs(superuser: User = Depends(get_superuser)):
-    """Returns the captured logs from the memory buffer."""
     return list(memory_handler.buffer)
 
-@app.patch("/superuser/users/{user_id}")
-def update_user_by_admin(user_id: int, request: Request, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
-    pass
+@app.patch("/superuser/users/{user_id}/role")
+def update_user_role(user_id: int, role: str, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        new_role = UserRole(role)
+        user.role = new_role
+        db.commit()
+        logger.info(f"Superuser {superuser.username} updated user {user.username} role to {role}")
+        return {"message": f"User {user.username} role updated to {role}"}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid role specified")
+    except Exception as e:
+        logger.error(f"Error updating user role: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update user role")
 
 @app.post("/superuser/users/{user_id}/password")
 def reset_user_password(user_id: int, password: str, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
     user.hashed_password = get_password_hash(password[:72])
     db.commit()
     return {"message": f"Password for {user.username} has been reset successfully"}
 
 @app.delete("/superuser/users/{user_id}")
 def delete_user_by_admin(user_id: int, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
-    current_logged_in_user = superuser 
     target_user = db.query(User).filter(User.id == user_id).first()
-    
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
-    
-    if target_user.id == current_logged_in_user.id:
+    if target_user.id == superuser.id:
         raise HTTPException(status_code=400, detail="You cannot delete your own superuser account")
-
     db.delete(target_user)
     db.commit()
     return {"message": f"User {target_user.username} has been removed from the system"}
@@ -327,17 +272,11 @@ async def update_user_details(user_id: int, request: Request, superuser: User = 
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        
-        if "full_name" in data:
-            user.full_name = data["full_name"]
-        if "email" in data:
-            user.email = data["email"]
+        if "full_name" in data: user.full_name = data["full_name"]
+        if "email" in data: user.email = data["email"]
         if "role" in data:
-            try:
-                user.role = UserRole(data["role"])
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid role specified")
-
+            try: user.role = UserRole(data["role"])
+            except ValueError: raise HTTPException(status_code=400, detail="Invalid role specified")
         db.commit()
         db.refresh(user)
         return {"message": "User updated successfully", "user": user.username}

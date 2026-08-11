@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Users, Activity, ShieldAlert, RefreshCw, Loader2 } from 'lucide-react';
+import { Users, Activity, ShieldAlert, RefreshCw, Loader2, Search, ChevronDown } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
 
 interface PlatformUser {
@@ -16,8 +16,11 @@ interface PlatformUser {
 
 export default function OrganizationPage() {
   const [users, setUsers] = useState<PlatformUser[]>([]);
+  const [filteredUsers, setFilteredUsers] = useState<PlatformUser[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [updatingUserId, setUpdatingUserId] = useState<number | null>(null);
 
   async function fetchUsers() {
     setIsLoading(true);
@@ -36,6 +39,7 @@ export default function OrganizationPage() {
 
       const data = await response.json();
       setUsers(data);
+      setFilteredUsers(data);
     } catch (err: any) {
       setError(err.message);
       console.error("Organization Hub Error:", err);
@@ -47,6 +51,37 @@ export default function OrganizationPage() {
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  useEffect(() => {
+    const filtered = users.filter(u => 
+      u.username.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (u.full_name && u.full_name.toLowerCase().includes(searchQuery.toLowerCase()))
+    );
+    setFilteredUsers(filtered);
+  }, [searchQuery, users]);
+
+  async function updateRole(userId: number, newRole: string) {
+    setUpdatingUserId(userId);
+    try {
+      const apiUrl = getApiUrl();
+      const response = await fetch(`${apiUrl}/superuser/users/${userId}/role?role=${newRole}`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('eepy_token')}`,
+        },
+      });
+
+      if (!response.ok) throw new Error("Failed to update role");
+      
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
+      setFilteredUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
+    } catch (err: any) {
+      alert(`Error updating role: ${err.message}`);
+    } finally {
+      setUpdatingUserId(null);
+    }
+  }
 
   const totalPlatformRequests = users.reduce((acc, user) => acc + user.total_requests, 0);
 
@@ -90,10 +125,20 @@ export default function OrganizationPage() {
 
       {/* User Management Table */}
       <div className="bg-void-surface border border-void-border rounded-eepy shadow-xl overflow-hidden backdrop-blur-sm">
-        <div className="p-6 border-b border-void-border flex justify-between items-center bg-void/50">
-          <h3 className="font-bold font-console text-lg flex items-center gap-2">
+        <div className="p-6 border-b border-void-border flex justify-between items-center bg-void/50 gap-4">
+          <h3 className="font-bold font-console text-lg flex items-center gap-2 shrink-0">
             <Users size={20} className="text-eepy-lavender" /> User Directory
           </h3>
+          <div className="relative w-full max-w-md">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input 
+              type="text" 
+              placeholder="Search usernames, emails..." 
+              className="w-full pl-10 pr-4 py-2 bg-void border border-void-border rounded-xl font-console text-sm focus:border-eepy-lavender transition-colors outline-none text-white"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
         </div>
         <div className="overflow-x-auto">
           {error ? (
@@ -117,7 +162,7 @@ export default function OrganizationPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-void-border">
-                {users.map((user) => (
+                {filteredUsers.map((user) => (
                   <tr key={user.id} className="hover:bg-white/5 transition-colors group">
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
@@ -126,11 +171,22 @@ export default function OrganizationPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] uppercase ${
-                        user.role === 'superuser' ? 'bg-eepy-lavender/20 text-eepy-lavender border border-eepy-lavender/30' : 'bg-gray-800 text-gray-400'
-                      }`}>
-                        {user.role}
-                      </span>
+                      <div className="relative group/select">
+                        <select 
+                          value={user.role}
+                          onChange={(e) => updateRole(user.id, e.target.value)}
+                          disabled={updatingUserId === user.id}
+                          className={\`appearance-none px-2 py-0.5 rounded-full text-[10px] uppercase cursor-pointer transition-all outline-none \${
+                            user.role === 'superuser' 
+                              ? 'bg-eepy-lavender/20 text-eepy-lavender border border-eepy-lavender/30' 
+                              : 'bg-gray-800 text-gray-400 border border-transparent'
+                          } hover:border-white disabled:opacity-50\`}
+                        >
+                          <option value="user">USER</option>
+                          <option value="superuser">SUPERUSER</option>
+                        </select>
+                        <ChevronDown size={10} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none opacity-50" />
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-gray-400">{user.email}</td>
                     <td className="px-6 py-4 text-right font-mono text-eepy-mint">{user.total_requests.toLocaleString()}</td>
