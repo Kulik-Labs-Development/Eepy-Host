@@ -18,6 +18,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { icon: <Server size={20}/>, label: 'MCP Servers', path: '/dashboard/servers' },
     { icon: <UserCircle size={20}/>, label: 'Account', path: '/dashboard/account' },
     { icon: <Settings size={20}/>, label: 'System Settings', path: '/dashboard/settings' },
+    { icon: <Terminal size={20}/>, label: 'Debug Log', path: '/dashboard/debug' },
   ];
 
   // Add Organization tab for Superusers
