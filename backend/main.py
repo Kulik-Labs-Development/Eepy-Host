@@ -296,7 +296,7 @@ def update_user_by_admin(user_id: int, request: Request, superuser: User = Depen
     pass
 
 @app.post("/superuser/users/{user_id}/password")
-def reset_user_password(user_id: int, password: str, superuser: User = Depends(get_superuser), db: Session = Depends(get_db))):
+def reset_user_password(user_id: int, password: str, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
