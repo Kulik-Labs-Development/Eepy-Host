@@ -8,14 +8,35 @@ from typing import List, Optional
 import logging
 import os
 import base64
+from collections import deque
+import datetime
 
 from database import engine, Base, get_db, User, UserRole, SessionLocal
 from auth import get_password_hash, verify_password, create_access_token, decode_access_token
 from schemas import UserCreate, UserLogin
 
+# --- LOGGING SYSTEM ---
+# Custom handler to capture logs in a circular buffer for the Debug Log feature
+class MemoryLogHandler(logging.Handler):
+    def __init__(self, capacity=200):
+        super().__init__()
+        self.buffer = deque(maxlen=capacity)
+
+    def emit(self, record):
+        log_entry = self.format(record)
+        timestamp = datetime.datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S')
+        self.buffer.append({
+            "timestamp": timestamp,
+            "level": record.levelname,
+            "message": log_entry
+        })
+
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("eepy-backend")
+memory_handler = MemoryLogHandler()
+memory_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+logger.addHandler(memory_handler)
 
 def sync_database_schema():
     """
@@ -264,6 +285,11 @@ def list_all_users(superuser: User = Depends(get_superuser), db: Session = Depen
             "created_at": u.created_at
         } for u in users
     ]
+
+@app.get("/superuser/logs")
+def get_system_logs(superuser: User = Depends(get_superuser)):
+    """Returns the captured logs from the memory buffer."""
+    return list(memory_handler.buffer)
 
 @app.patch("/superuser/users/{user_id}")
 def update_user_by_admin(user_id: int, request: Request, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
