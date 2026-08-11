@@ -1,219 +1,177 @@
-# 🌙 Eepy Host: Project Blueprint & System Guide
+# Agent Instructions for Eepy-Host Project
 
-**Project Repository:** https://github.com/Kulik-Labs-Development/Eepy-Host
+## Setup Commands
 
----
-
-## 🔐 Max's Github PAT (DEVELOPMENT ONLY - NEVER EXPOSE TO REPO)
-
-⚠️ **CRITICAL SECURITY RULE**: This token is for Portainer GitOps operations only. Never write this into any project file or README that gets committed!
-- User: `Glitch3dPenguinPersonal`  
-- Access Token: (stored in local env / secret manager, never exposed)
-
----
-
-## 🌐 The Vision: A SaaS MCP Gateway (NOT Container Orchestration) 🔥❌🚀
-
-**Eepy Host** (`eepy.host`) is **not** a self-hosted platform for users to deploy multiple Docker containers. 
-
-Instead, it's the **all-in-one managed integration layer** between LLM agents and real-world tools: Google Calendar, Slack Workspaces, Notion Databases, File Systems, Web Browsing APIs — all connected via a single backend proxy API that handles authentication securely in one place.
-
-### Core Architecture Principle
-```
-User Agent / OpenWebUI → Eepy Host (/api/mcp/proxy/*) → External Services
-                           │
-                    ┌──────┴───────┐
-                    ▼              ▼
-               Encrypted Creds  Admin-Approved 
-             in Postgres DB    Template Library ✅
-```
-
-**The User Experience:** They don't deploy containers. Users **"connect integrations"** — we handle API plumbing, credential management (encrypted at rest), and unified proxy routing so their agent can use external tools securely without operational overhead. 🤝
-
-### Cyber-Cozy Philosophy
-- Deep void backgrounds with soft neon glows on interaction 💜🍑🌿  
-- Zero container sprawl = single backend image per deployment  
-- Privacy-first credential storage (encrypted at rest, decrypted in-memory only) 🔐  
-
----
-
-## 🛠️ Technical Stack & Architecture Notes
-
-### Frontend (The Interface - Next.js App Router + Tailwind CSS)
-| Feature | Implementation Details |
-|---------|----------------------|
-| **Routing** | `/auth`, `/mcp/library`, `/dashboard/void-console`, superuser paths (`/superuser/*`) all use App Router file-based routing |
-| **Styling** | Custom void color palette utilities: `bg-void` (deep space), text variants with soft glows on hover states using Tailwind arbitrary values and custom config colors |
-| **Icons** | Lucide React for consistent visual language — no emoji-heavy icons, clean monochrome with accent fill variants |
-
-### Backend (The Engine - FastAPI + SQLAlchemy)
-| Feature | Implementation Details ✅ Current State |
-|---------|----------------------------------------|
-| **Architecture Pattern** | Single unified backend image. All MCP integrations handled via centralized proxy endpoint `/api/mcp/proxy/{template_id}/...` — NOT per-container orchestration! 📡🔥 |
-| **Database** | PostgreSQL managed via SQLAlchemy ORM + Alembic migrations for schema updates |
-| **Auth System** | JWT (JSON Web Tokens) using `python-jose`. Strict role hierarchy enforced at API middleware level: USER → SUPERUSER. All `/superuser/*` endpoints return 403 without proper JWT token verification ✅ 🔐 |
-| **Credentials Storage** | User MCP credentials stored as encrypted JSONB columns in PostgreSQL (`credentials_json`) using Fernet symmetric encryption with single master key from `MCP_ENCRYPTION_KEY` env var ⚠️ CRITICAL: never persist plaintext to disk or logs! |
-
-### Deployment Strategy (Docker Compose → Portainer/GHCR)
-- Single unified backend image built via multi-stage Docker builds ✅ 
-- Frontend + backend both containerized but deployed as separate services in one network (`eepy-network`) 🚀
-- **NO per-user server containers** — we don't run 10s of MCP instance pods. The proxy handles everything centrally.
-
----
-
-## 🚀 Current Implementation State (What's Live NOW) 🔥🌙
-
-### ✅ Phase 1: Core Infrastructure (Complete)
-| Feature | Status Notes |
-|---------|-------------|
-| Multi-stage Docker builds | Built and verified for both frontend/backend images ✅ |
-| CI/CD pipeline via GitHub Actions → GHCR registry automation | Fully operational, new commits auto-build & push 🚀 |
-| "Void & Cozy" Design System locked in with Tailwind utilities (bg-void, eepy-lavender variants) | All core components use these utility classes ✅🎨 |
-| Base networking and service interconnectivity verified | DB ↔ backend → frontend all communicate successfully on `eepy-network` ✅ |
-
-### ✅ Phase 2: The Auth Shell (Complete)  
-| Feature | Status Notes |
-|---------|-------------|
-| PostgreSQL user/schema creation + migrations baked into image build | Alembic auto-runs at startup, schema initialized automatically ✅🗄️ |
-| JWT authentication logic (`python-jose`) with bcrypt verification bytes truncation for storage efficiency | Passwords hashed once on signup; session tokens verified via algorithm HS256 ✅ |
-| RBAC middleware enforced at every `/superuser/*` route level — frontend components conditionally rendered via `AuthContext.user.role === 'SUPERUSER'` checks | Access control is dual-layered: backend rejects unauthorized requests; UI hides super-user-only content client-side ⚠️ never trust only the frontend! 🔐 |
-| High-vibe Login/Signup screens + password visibility toggles | Unified `/auth` endpoint handles both modes with smooth dynamic switching and instant "vibe sync" confirmations ✅💜🍑🌿 |
-
-### 🌙 Phase 3: Management & Oversight (LIVE NOW) 🔥⚡
-| Feature | Status Notes |
-|---------|-------------|
-| **Superuser Dashboard** — Full visibility across all accounts, template management tools | Admin can see every user's MCP configs without accessing their credentials directly ✅📊 |
-| **Admin User Directory** — Browse, search, manage users from one console ⚠️ MONETIZATION PIPELINE STARTS HERE | User directory supports filtering by role/status + bulk actions for admins 🤝💰 |
-| **Role Escalation Workflows** — Promote/demote USER → SUPERUSER with permission inheritance tracking (user approval queue) | Superusers can escalate any user but must document why in admin notes field ⚠️ always track changes ✅ |
-| **Account Purging System** — Delete accounts + cascade-remove associated resources (MCP server configs, credentials stored in encrypted JSONB columns 🗄️ 🔐) | Account deletion permanently removes all data from DB including credential blobs; no soft deletes for security compliance ❌🔒 |
-
-### 💎 Phase 4: MCP Integration Hub (IN PROGRESS - BUILDING NOW) 🔥⚙️
-| Feature | Priority | Notes on Architecture ✅ Current Plan |
-|---------|----------|------------------------------------|
-| MCP Template Library (Admin Approved Only) | 🔴 HIGH | Pre-populated database with 5-7 starter templates for launch. Users can't self-add custom servers — this is the monetization gate! ✅💰 |
-| Connection Wizard UI (`/mcp/library` → config form save encrypted creds to DB per user) | 🔴 HIGH | Users "connect" integrations instead of deploying containers: pick template + fill credential schema = saved encrypted JSONB field in `user_mcp_configs` table ⚙️🗄️ |
-| Proxy Endpoint (`/api/mcp/proxy/{template_id}/...`) Loads decrypted creds temporarily, routes request to external API ⚠️ SECURITY CRITICAL 📡 | 🟡 MEDIUM | Single unified route that reads encrypted credentials from Postgres → decrypts in memory during handler execution only → proxies authenticated call out to service (GCal, Slack, Notion) → streams response back. No tokens persisted anywhere after request completes ✅🔐⚠️ SECURITY FIRST! |
-| Template Request Workflow (user-requested integration → admin approval queue = monetization pipeline ✅) | 🟢 LATER | Users submit form for new template add to library. Admins approve/reject + optionally charge for custom implementation work ⏳💰📋 |
-
-**Starter Templates Planned (First 3-5):**
-1. **Google Calendar** — Query events & manage time blocks via OAuth2 token stored in DB ✅ 
-2. **Slack Workspace Adapter** — Send/receive messages from connected workspace using bot tokens 🔐  
-3. **Local File Browser** — Read/write files securely via agent → file system integration ⚠️ PRIVACY FOCUSED
-
----
-
-## 🗺️ Full Roadmap (Aligned With SaaS Vision & Monetization Path) ✅🤑
-
-### 💎 Phase 5: Monetization Hooks (+Future Features ✨)
-> *The path to revenue when we're ready.*
-
-| Feature | Goal Notes | Priority Level 🔴/🟡/🟢 | Status |
-|---------|-----------|------------------------|--------|
-| Template **pricing tiers** per-template configuration for admins ✅ FREE vs PREMIUM toggle | Admins can set `price_tier: 'FREE'` or `'PREMIUM'` on MCPTemplate models. Free tier = basic integrations, premium = advanced features (rate limiting bypassed) + analytics 📊 | 🔴 HIGH (when ready to monetize) | ⏳ Not Started Yet - Planning Now ✅🤑💰 |
-| Usage analytics dashboard (track `last_used_at`, API call volume, integration health scores 📈) = premium tier justification | Every MCP config tracks last-used timestamp + request count per user. Admin panel will show usage heatmaps for billing decisions 💳✅🚨 | 🔴 HIGH when monetization begins ⏳💰🤑 |
-| Stripe webhook integration for subscription billing (if/when you enable paid templates/pricing models later) | If we charge premium tier access or custom template requests → integrate payment gateway. For now, all free while building trust with user base ✅⚠️ NOT IMPLEMENTED YET ⏳📦💸 | 🟢 FUTURE PLANNING - Wait for Phase 4 MVP stabilization first ✅✅🔥
-
----
-
-## 🔐 MCP Security & Credential Handling (CRITICAL ARCHITECTURE RULE) ⚠️🔒🔑
-
-### ALL user credentials stored in PostgreSQL must follow these rules:
-1. **Encrypted at rest** using Fernet symmetric encryption (`MCP_ENCRYPTION_KEY` from env var). No plaintext ever written to disk! 🔐⚡❌
-2. Decryption happens ONLY temporarily inside request handlers — never persists anywhere else, not even logs 📋🔒  
-3. If modifying credential storage logic → verify these security controls FIRST before committing anything related to MCP config handling ✅✅
-
-> **WARNING:** This is the single most critical system-wide constraint on this stack. No exceptions allowed! 🔥❌🚨⏺️
-
----
-
-## ⚙️ Development Workflow (How We Move Here) 🚀💜
-
-We move fast but never break what works:
-1. **Feature Request → Implementation:** Rapid prototype UI first, then wire up backend API support ✅  
-2. **Direct Main-Branching:** All work happens on `main` for maximum visibility and speed (no feature branches just yet) ⚡💜🔥
-3. **Verification Cycle:** Every major change goes through `read_file → write_file → grep/test` pattern to ensure we didn't break anything critical 🔍✅
-
----
-
-## 🧩 Developer Gotchas & System-Wide Constraints (READ BEFORE CODE!) ⚠️📘❗
-
-### 1. The Absolute Import Rule (Backend) 🔥
-> **CRITICAL:** Never use relative imports (`from .module import ...`) inside `backend/main.py`.  
-Uvicorn launches the app as a top-level script → Python throws `ImportError: attempted relative import with no known parent package` ❌💀🔒  
-
-✅ The Fix: Always go absolute. Example:
-```python
-# GOOD (works on deployment ✅)
-from models.user import User
-
-# BAD (will crash hard when deployed 🔥❌)  
-from .models.user import User  # NEVER do this! ⚠️⛔🚨
-```
-
----
-
-### 2. The JSX Syntax Fragility 📝➡️🐞
-When using automated tools or shell scripts to rewrite `.tsx` files, there's a high risk of introducing escaping artifacts (`\n`, `\"`) into the code that immediately break builds on next compile cycle ⚠️💥❌
-
-**The Protocol:** Use quoted heredocs for file writes and always run post-write verification checks before committing anything near JSX blocks:
+### Prerequisites
 ```bash
-# ✅ GOOD - uses cat <<'EOF', no expansion occurs, escaping stays intact
-cat > /path/to/file.tsx << 'EOF'
-  Your component code here... without escaped \\n or \" characters! 🚀✅
-EOF
-
-# ❌ BAD - allows variable interpolation and escape sequences to leak into JSX blocks 😱⛔🐞
+python 3.12+ required for backend development
+Node.js 18+ recommended for frontend work
+PostgreSQL 15+ running locally or via Docker container
 ```
-After every file write, verify no `\n` (literal backslash-n in source) appears inside string literals meant for runtime evaluation ✅ `grep '\\\\n' .tsx | wc -l # should be 0! 🔍✅
 
----
+### Backend Development
+```bash
+# From /backend directory:
+cd /home/user/eepy-host/backend
 
-### 3. Role Hierarchy Enforcement 🛡️🔒
-Every `/superuser/*` endpoint has middleware checking JWT payload roles — frontend components are wrapped in `AuthContext.user.role === 'SUPERUSER'` conditionals but **backend is the source of truth**. Never trust client-side only for access control! ✅
+# Install Python dependencies (includes FastAPI, SQLAlchemy, cryptography, alembic)
+pip install -r requirements.txt pipenv pytest python-dotenv sqlalchemy asyncpg uvicorn fastapi python-jose[cryptography] cryptography alembic pydantic==2.0.* 
 
-⚠️ Double-check: if you bypass a UI check, can an API call still be blocked? Yes → good design. If no, add middleware enforcement to backend routes immediately 🔒✅🛡️💜
+# Run database migrations manually against your dev PostgreSQL instance:
+DATABASE_URL="postgresql://eepy_admin:[ROTATED_POSTGRES_PASSWORD]@db:5432/eepy_host" \
+MCP_ENCRYPTION_KEY=your-actual-secret-key-here-change-in-production-blahblah== \
+python run_migrations.py
 
----
+# Start the development server with hot-reload enabled ✅🔥⚡ 
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
-### 4. The Aesthetic Standard (Cyber-Cozy Design System) 🎨✨
-Eepy Host isn't just a tool; it's *a vibe*. When adding new UI:
-- ❌ No harsh whites or standard grays → reach for `void-surface` and `void-border` utilities instead ✅🚫⏺️  
-💜 **Accent Colors = Intent**:
-  - Lavender (`eepy-lavender`) → primary actions (deployments, confirmations, "yes" states)
-  - Peach (`eepy-peach`) → warnings/syncing states/attention triggers ⚠️🍑⏳
-- ✅ **Mint** = success states, health indicators, all systems go! 🌿✅💚
+# Verify health check endpoint responds before proceeding 👍✅✨  
+curl http://localhost:8000/health
+```
 
-Maintain the console feel by using `font-console` utility class on any data-display elements that users want to read in monospace for quick scanning/analysis ⌨️📊⚡
+### Frontend Development
+```bash
+cd /home/user/eepy-host/frontend 
 
----
+pnpm install # or npm install if you prefer package manager consistency ✅⚙️❗💜🔒  
 
-### 5. The MCP Proxy Is Single-Source-of-Truth For All Integrations 📡💜❗
-There's no containerization per integration anymore! If you're adding a new external service to Eepy Host:
-1. Add it as `MCPTemplate` in the library (admin approved only — users can't self-add ❌) ✅🔐⚠️  
-2. Configure its config_schema form fields (API key? OAuth URL? Secret?) ⏺️✅💜
-3. Implement proxy routing logic under `/api/mcp/proxy/{template_id}/...` following encryption-in-DB pattern 📡✅🔒
+# Start Next.js development server with App Router hot-reload enabled 💻✨  
+pnpm dev
 
----
+# Build static export for production deployment (if needed):
+pnpm build && pnpm start
+```
 
-## 🔍 Knowledge Base & Internal Resources ✅🗂️
+### Docker Deployment Commands ⚓🐳✅
+```bash 
+# From repository root:
+docker compose up --build -d # Start all containers on eepy-network with multi-stage builds ✅⏺️❗💜 🔄  
 
-### Where to Find Information:
-| Resource | Location/Notes | How To Access/use ✅ |
-|----------|---------------|---------------------|
-| **Knowledge Bases** | Query via `query_knowledge_files` and `search_memory_paths` in conversations 🔍💜📁 | Search for files by name or semantic query describing what you're looking for 🤖⚡✅ |
+docker-compose ps   # Verify both frontend/backend services running healthy and connected to PostgreSQL container  👍👾✅
 
----
+docker logs backend-app -f      # Follow live backend app server output for debugging errors 🔒📊❌
+```
 
-## ✅ Developer Notes & Reminders (Read Me First!) ⏺️❗📘
+## Code Style Guidelines
 
-### Before You Push Code:
-- [ ] Verify no relative imports exist in `backend/main.py` ✅  
-- [ ] Post-write file verification run via grep to ensure escaping didn't leak into JSX blocks 🔍⚠️✅  
-- [ ] If modifying MCP credential storage → double-check encryption logic and test decryption flow manually 🗝️🔒💜  
-- [ ] All superuser routes have middleware protection ✅ ⏺️❓
+### Backend (Python / FastAPI) 🐍💜⚙️❗  
+1. **Absolute Import Rule CRITICAL:** Never use relative imports (`from .module import ...`) inside `backend/main.py`. Uvicorn runs the app as a top-level script → Python throws `ImportError: attempted relative import with no known parent package` ❌🔥💀
 
----
+   ```python
+    # ✅ GOOD - works on deployment without issues 🚀✨   
+    from models.mcp_models import MCPTemplate
+   
+    # ❌ BAD - will crash hard when deployed outside dev server context ⛔⏺️❗
+    from .models.mcp_models import MCPTemplate  # NEVER do this! 🔥📉💻  
+   ```
 
-*Stay cozy, keep connecting.* 🌙💜🚀**
-*Made with ❤️ by **Kulik Labs Development***
+2. **Pydantic Model Usage:** All request/response schemas should inherit from `BaseModel` and include type hints with optional validation rules (min_length, regex patterns etc.) ✅⏺️❗✅  
+3. **Error Handling Pattern:** Wrap all database operations in try/except blocks + return standardized HTTPException responses using FastAPI middleware layer (`backend/api/common.py`) for consistent error message formatting 📋🛡️💜✨
 
+4. **Fernet Encryption Requirements (MCP Credentials Only):** All MCP user credentials stored in PostgreSQL `user_mcp_configs.credentials_json` column must be encrypted at rest via Fernet symmetric encryption with single master key from environment variable `MCP_ENCRYPTION_KEY`. Decryption happens ONLY temporarily inside request handlers — never persists anywhere else, not even logs! ⚠️❗🔒💜⏺️
+
+   ```python  
+    # Example usage in proxy handler for HappyFox tool calls ✅✅🔐✨
+    from utils.crypto import encrypt_credentials, decrypt_credentials
+   
+     @router.post("/mcp/proxy/happyfox/{tool_name}") async def happyfox_proxy(tool_name: str, params: dict):   
+        decrypted_creds = decrypt_credentials(row.credentials_json)  # Decrypt in MEMORY only during this request ❌ NEVER TO DISK! 🔒⏺️❗💜 
+         return external_api_call(decrypted_creds["HAPPYFOX_API_KEY"], ...)  
+   ```
+
+5. **Database Transactions:** All data-modifying endpoints must use SQLAlchemy ORM sessions with explicit commit/rollback handling inside `with engine.connect()` block + error recovery for partial failures 📦✅⏺️❗💜🔐  
+
+### Frontend (TypeScript / Next.js App Router) ⚡💻✨  
+1. **Component Naming:** All React components use PascalCase naming convention ✅🧩⏺️❗💜
+   ```typescript 
+    // ✅ GOOD - clear intent about what this component does 🎯✅✨   
+    ConnectionWizard.tsx, MCPLibraryPage.tsx
+   
+    # ❌ BAD - lowercase or camelcase breaks TypeScript strict mode ⚠️⛔📉  
+    connection_wizard.tsx (# Never! Use PascalCase for everything)
+   ```
+
+2. **Tailwind Utility Classes:** No arbitrary CSS values unless absolutely necessary (e.g., dynamic color schemes). Stick to predefined void palette utilities: `bg-void`, text variants like `text-eepy-lavender` ✅🎨⚙️❗💜✨  
+3. **Lucide Icons Only:** Use Lucide React icon library for all visual elements — no emoji-heavy icons or custom SVG paths unless required by design system 🔮💻✅
+
+### Commit Message Format 📝⏺️❗
+- Follow this exact structure: `[type] brief description` ✅🚀  
+  Example commits from main branch history:
+   ```bash 
+    "Add MCP model definitions and Pydantic schemas for template library" ✅💜✨
+    
+    "Complete Phase 4 implementation plan with database migration scripts + encryption utilities 🌙⏺️❗💰🔧" 
+    
+    "# Rename to AGENTS.md: comprehensive system guide updated per external reference link ✅✅📘💻\n\n# Added MCP template schema definitions including config form field specs for HappyFox integration 💜✨📋  "
+   ```
+
+## Testing Instructions
+
+### Backend Tests (Pytest) 🧪⚠️❗✅  
+```bash  
+cd /home/user/eepy-host/backend 
+
+# Run all unit tests with coverage reporting enabled ✅⏺️💻🔒✨ 
+pytest tests/ --cov=. -v || echo "Tests failed, review failures above ❌⛔"
+
+## To run a single test file (e.g., for crypto utility verification):
+pytest tests/test_crypto.py::test_encrypt_decrypt_roundtrip — verbose output shows success/failure immediately ✅✅🧪  
+```
+
+### Frontend Tests ⚡💻✨  
+From repository root:  
+pnpm test # Runs Vitest suite in watch mode by default (dev feedback loop) 🔄⏺️❗  
+
+# For CI/CD pipelines, use non-watch execution:
+pnpm vitest run --reporter=verbose && pnpm lint || echo "Build failed due to type checking errors ⚠️⛔📉"
+
+## Integration Test Checklist ✅✅❗💜 (Before Deployment):
+1. Verify no relative imports exist in `backend/main.py` 📋⏺️❌  
+2. Post-write file verification via grep runs before every commit to ensure escaping didn't leak into JSX blocks 🔍🔒⚠️  
+   ```bash 
+    # Quick sanity check after writing any .tsx/.jsx files:
+    grep -r '\\\\\\\\n' frontend/src/app/ | wc -l  # Should be zero (no literal backslash-n strings) ✅✅✨  
+
+3. If modifying MCP credential storage logic → double-check encryption logic via unit tests in utils/crypto.py module 🧪🔐❗⏺️💜  
+4. All superuser routes have middleware protection checked via functional test cases using fake JWT tokens with role='SUPERUSER' payload ⚙️✅😈  
+
+## MCP Template Integration Workflow 💻✨⚠️
+
+### Adding New External Service Templates 🛡️🔐💜
+1. **Define DB Schema First:** Add `MCPTemplate` table row via database migration script ✅❗⏺️  
+   ```bash 
+    # Example for HappyFox integration (already implemented) 👍✅✨  
+    CREATE TABLE mcp_templates (...);  -- Run in PostgreSQL manually or use run_migrations.py helper ⚙️📦💜  
+```
+
+2. **Implement Proxy Endpoint:** Create new FastAPI router under `/api/mcp/proxy/{template_id}/...` that follows this pattern: ✅✅❗⏺️💰
+   ```python 
+    @router.post("/mcp/proxy/happyfox/{tool_name}") async def happyfox_proxy(tool_name, params):   
+        # Step 1: Load encrypted credentials for authenticated user via owner_id FK join 📦🔒  
+        row = db.query(UserMCPConfig).filter_by(owner_id=current_user.id template_name="happyfox").first() 
+      
+       if not row or not decrypt_credentials(row.credentials_json) exists(): raise HTTPException(403, "No HappyFox configuration found for your account ❌⛔🚫")  
+        
+         # Step 2: Decrypt only temporarily during this request execution (NEVER TO DISK/LOGS!) ✅✅❗💜✨
+        decrypted_creds = decrypt_credentials(row.credentials_json)  # Returns dict → use values here then discard immediately 🔐⏺️  
+
+3. **Update Connection Wizard UI:** Add new form fields to `/mcp/library` page for credential entry based on `config_schema` JSON definition stored in MCPTemplate model ✅✅📋💜✨  
+   ```tsx 
+    // Example: Dynamic render function that builds HappyFox connection wizard from template's config schema ⚙️🔧❗
+    {Object.entries(template.config_schema.properties).map(([field_name, field_spec]: [string, any]) => (   
+       <input key={field_name} name={field_name} type={field_spec.type === 'password' ? 'password':'text'} className="bg-void border void-border p-3 rounded" />  
+    ))}  
+   ```
+
+### Admin Approval Workflow 🛡️⏺️✅
+1. Users submit template requests via `MCPTemplateRequest` table (`status='pending'`) ✅📋💜✨  \n2. Superuser dashboard shows approval queue with optional admin notes for rejection/reason tracking ❌⚠️📝\n3. When approved → set MCPTemplate.approved_by_admin=true + enabled_global toggle on so users can connect via `/mcp/library` page ✅✅❗💜
+
+## Security Gotchas (CRITICAL!) 🔐⏺️❗
+1. **Encrypted Credential Storage:** All user credentials stored in PostgreSQL must be Fernet-encrypted before write operations; never persist plaintext anywhere (disk/logs/memory dumps excluded during handler execution) ⚠️🔒💜 ✅  
+2. **Decryption Only In-Memory During Request Handlers:** Any decrypted credential data used for external API calls MUST NOT appear in logs, error messages or response payloads after request completion ❌⛔❗\n3. If modifying credential storage → verify encryption logic via unit tests + manual curl requests with mocked tokens before deployment ✅✅🧪🚀
+
+## Project Overview 📦💻✨  
+**Eepy Host (eepy.host)** is a SaaS MCP gateway platform designed specifically for Model Context Protocol servers — NOT self-hosted Docker container orchestration per-user. Instead, it's the **all-in-one managed integration layer between LLM agents and real-world tools**: Google Calendar Slack Workspaces Notion Databases File Systems Web Browsing APIs connected via single backend proxy API that handles authentication securely in one place.\n\n**Core Architecture Principle:** Users don't deploy containers; they "connect integrations" — we handle API plumbing, credential management (encrypted at rest), unified proxy routing so their agent can use external tools without operational overhead 🤝💜✨
+
+## Additional Context For Agents 🧠⚙️
+1. **Knowledge Base System:** Internal documentation stored via `query_knowledge_files()` and memory paths; search by filename or semantic query describing what you're looking for 🔍📁✅\n2. **Monetization Pipeline Template Approval workflow starts when users request custom integrations → admin review queue + optional pricing tier assignment 💰⏺️❗💜✨  \n3. Database Schema Reference: Run `DESCRIBE mcp_templates; DESCRIBE user_mcp_configs;` in PostgreSQL CLI to see full table structure for template library, encrypted credential storage etc. 📊🔐⚙️\n
