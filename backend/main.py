@@ -40,8 +40,6 @@ def sync_database_schema():
                     logger.info(f"Adding missing column {col} to users table...")
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
             
-            # If profile_picture exists as VARCHAR, we might want to ensure it's TEXT for Base64
-            # PostgreSQL handles VARCHAR without length as basically unlimited, but being explicit is safer.
             conn.commit()
             logger.info("Database columns synchronized.")
     except Exception as e:
@@ -224,7 +222,9 @@ async def update_profile(request: Request, current_user: User = Depends(get_curr
 @app.post("/user/avatar")
 async def upload_avatar(file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
+        logger.info(f"Avatar upload started for user: {current_user.username}")
         if not file.content_type.startswith("image/"):
+            logger.warning(f"Invalid file type attempted by {current_user.username}: {file.content_type}")
             raise HTTPException(status_code=400, detail="Invalid file type. Please upload an image.")
 
         # Read the image content
@@ -232,6 +232,7 @@ async def upload_avatar(file: UploadFile = File(...), current_user: User = Depen
         
         # Encode to Base64
         base64_encoded = base64.b64encode(contents).decode('utf-8')
+        logger.info(f"Encoded image for {current_user.username} to Base64 string of length {len(base64_encoded)} bytes")
         
         # Create a Data URI string (e.g., data:image/png;base64,...)
         data_uri = f"data:{file.content_type};base64,{base64_encoded}"
@@ -240,12 +241,13 @@ async def upload_avatar(file: UploadFile = File(...), current_user: User = Depen
         current_user.profile_picture = data_uri
         db.commit()
         db.refresh(current_user)
+        logger.info(f"Avatar successfully persisted to database for {current_user.username}.")
 
         return {"message": "Avatar uploaded successfully", "profile_picture": data_uri}
     except HTTPException as he:
         raise he
     except Exception as e:
-        logger.exception(f"Error uploading avatar for {current_user.username}")
+        logger.exception(f"Unexpected error uploading avatar for {current_user.username}: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to upload avatar")
 
 @app.get("/superuser/users", response_model=List[dict])
@@ -268,7 +270,7 @@ def update_user_by_admin(user_id: int, request: Request, superuser: User = Depen
     pass
 
 @app.post("/superuser/users/{user_id}/password")
-def reset_user_password(user_id: int, password: str, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
+def reset_user_password(user_id: int, password: str, superuser: User = Depends(get_superuser), db: Session = Depends(get_db))):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
