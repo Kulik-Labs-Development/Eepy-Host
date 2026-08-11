@@ -3,7 +3,7 @@
 import React from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
-import { LogOut, LayoutDashboard, Server, UserCircle, Settings, Moon, Building2 } from 'lucide-react';
+import { LogOut, LayoutDashboard, Server, UserCircle, Settings, Moon, Building2, Terminal } from 'lucide-react';
 import Link from 'next/link';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
