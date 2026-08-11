@@ -7,10 +7,10 @@
 
 <div align="center">
 
-![Void & Neon](https://github.com/Kulik-Labs-Development/Eepy-host/blob/main/glossy-zzz.png?raw=true)
+![Eepy Host Vibe GIF](assets/images/eepy.gif)
 
-*Deep voids. Soft glows. Zero container sprawl.*  
-*MCP servers managed centrally, credentials encrypted end-to-end.*
+*Deep voids. Soft neon glows and cyber vibes.*  
+*MCP integrations managed centrally, credentials encrypted end-to-end.*
 
 </div>
 
