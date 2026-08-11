@@ -176,11 +176,11 @@ export default function OrganizationPage() {
                           value={user.role}
                           onChange={(e) => updateRole(user.id, e.target.value)}
                           disabled={updatingUserId === user.id}
-                          className={\`appearance-none px-2 py-0.5 rounded-full text-[10px] uppercase cursor-pointer transition-all outline-none \${
+                          className={`appearance-none px-2 py-0.5 rounded-full text-[10px] uppercase cursor-pointer transition-all outline-none ${
                             user.role === 'superuser' 
                               ? 'bg-eepy-lavender/20 text-eepy-lavender border border-eepy-lavender/30' 
                               : 'bg-gray-800 text-gray-400 border border-transparent'
-                          } hover:border-white disabled:opacity-50\`}
+                          } hover:border-white disabled:opacity-50`}
                         >
                           <option value="user">USER</option>
                           <option value="superuser">SUPERUSER</option>
