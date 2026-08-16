@@ -1,88 +1,139 @@
 'use client';
 
-// HappyFox MCP Template Library Page - Phase 5 Implementation (Template #1)
-import { useState, useEffect } from 'react';  
-import Link from 'next/link';  
+// MCP Template Library - shows admin-approved integrations and launches the
+// connection wizard. Talks to the FastAPI backend (via getApiUrl) with the
+// user's Eepy JWT. No credential values ever touch the client.
+import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { ArrowLeft, Loader2, PlugZap, ShieldCheck } from 'lucide-react';
+import { getApiUrl } from '@/lib/api';
 
-interface MCPTemplate {
-    id?: string;
-    name?: string;
-    description?: string;
-    [key: string]: unknown;
+interface TemplateProperty {
+  type?: string;
+  label?: string;
+  placeholder?: string;
+  help?: string;
+  required?: boolean;
 }
 
-export default function MCPLibrary() {    
-    const [templates, setTemplates] = useState<MCPTemplate[]>([]);  
-    const [loading, setLoading] = useState(true);  
-    
-    // Phase 5: Fetch approved templates from backend API ✅ ❌❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾 
-    useEffect(() => {
-        async function fetchTemplates() {  
-            try {  
-                const response = await fetch('/api/mcp/templates/list');  // TODO: Add JWT auth headers later ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾
-                
-                if (!response.ok) throw new Error('Failed to load templates from backend API ✅❗💜✨⏮️ 🚀 ⏰');  
-                    
-                const data = await response.json();  
-                setTemplates(data.templates || []); // Extract array of template objects (MCPTemplate instances) converted to dicts via SQLALchemy ORM layer 
-                
-            } catch(err) {
-                console.error("Template fetch error:", err instanceof Error ? err.message : String(err));  // ONLY log errors - NEVER secrets! ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾  
-                setTemplates([]);
-            } finally { 
-                setLoading(false);  
-            }
-        } 
-        
-        fetchTemplates();
-    }, []);  
-    
-    return (        
-        <div className="p-8 font-mono bg-void min-h-screen text-white">            
-            {/* Header Section */}           
-            <h1 className="text-3xl mb-6 flex items-center gap-2 font-bold text-eepy-lavender border-b pb-4 border-surface-light/50 ❌❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾">  
-                MCP Integration Library ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭   
-            </h1>      
-            
-            {/* Loading State */}    
-            {loading ? (                
-                <div className="text-center py-20 text-surface-light/75">
-                    ✨ Connecting to backend... ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾 
-                </div>  
-            ) : templates.length === 0 ? (                
-                <div className="text-center py-20 text-surface-light/75">                    
-                    No approved integrations yet - Phase 4 HappyFox Template coming soon! ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾 
-                </div>  
-            ) : (                   
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">                       
-                    {templates.map((template, idx) => (                        
-                        <Link href={`/mcp/connect/${encodeURIComponent(template.id || template.name || 'unknown')}`} key={idx}>                         
-                            {/* Template Card Design - Void & Neon Aesthetic ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾 */}   
-                            <div className="bg-surface-dark/80 border-2 border-surface-light/30 rounded-lg hover:border-eepy-lavender transition-all duration-300 p-6 relative overflow-hidden group">                                
-                                {/* Background glow effect on card hover ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾 */}  
-                                <div className="absolute top-0 right-0 w-full h-1 bg-gradient-to-r from-eepy-lavender via-eepy-peach to-transparent opacity-60 transform group-hover:opacity-80 transition-opacity duration-300"></div>                                    
-                                
-                                {/* Template Title + Icon ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾 */}  
-                                <h2 className="text-xl font-semibold mb-3 flex items-center gap-2 text-eepy-mint">    
-                                    {template.name || 'Template Name'}                                    
-                                    {/* Status indicator - admin approved ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾 */}  
-                                    <span className="w-3 h-3 bg-green-500 rounded-full animate-pulse" title={`Template #${idx+1}`}></span>                                    
-                                </h2>                                     
-                                
-                                {/* Description text ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾 */}  
-                                <p className="text-surface-light/80 mb-4 leading-relaxed">                                      
-                                    {template.description || 'Description coming from backend API via MCPTemplate ORM model ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾'}  
-                                </p>                                                                
-                                
-                                {/* Action Button - Connect Integration Form (opens connection wizard modal/component) → Phase 5 implementation detail: dynamic form rendering based on config_schema from backend ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾 */}  
-                                <button className="w-full py-2 bg-eepy-lavender/90 hover:bg-eepy-peach text-black font-medium rounded transition-colors duration-200">                                
-                                    Connect Integration ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾  
-                                </button>                                                                
-                            </div>                        
-                        </Link>                    
-                    ))}                
-                </div>            
-            )}         
-        </div>    
-    ); 
+interface MCPTemplate {
+  id: string;
+  name: string;
+  description: string;
+  config_schema?: {
+    category?: string;
+    properties?: Record<string, TemplateProperty>;
+    required?: string[];
+  };
+  image_tag?: string | null;
+}
+
+export default function MCPLibraryPage() {
+  const [templates, setTemplates] = useState<MCPTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('eepy_token') : null;
+      const res = await fetch(`${getApiUrl()}/api/mcp/templates/list`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: 'no-store',
+      });
+      if (res.status === 401) {
+        setError('Authentication required. Please sign in again.');
+        setTemplates([]);
+        return;
+      }
+      if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+      const data = await res.json();
+      // Backend returns a bare array (response_model=list).
+      setTemplates(Array.isArray(data) ? data : data.templates || []);
+    } catch (err) {
+      console.error('Template fetch error:', err instanceof Error ? err.message : String(err));
+      setError('Could not reach the MCP backend. Is the API service running?');
+      setTemplates([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <div className="min-h-screen bg-void text-white p-8">
+      <div className="max-w-6xl mx-auto">
+        <Link href="/dashboard" className="inline-flex items-center gap-2 text-gray-400 hover:text-white mb-6 text-sm">
+          <ArrowLeft size={16} /> Back to dashboard
+        </Link>
+
+        <header className="flex items-center justify-between mb-8 pb-4 border-b border-void-border">
+          <div>
+            <h1 className="text-3xl font-bold flex items-center gap-3">
+              <PlugZap className="text-eepy-lavender" size={30} />
+              MCP Integration Library
+            </h1>
+            <p className="text-gray-500 text-sm mt-2 flex items-center gap-1">
+              <ShieldCheck size={14} className="text-eepy-mint" />
+              Admin-approved integrations. Credentials are encrypted at rest.
+            </p>
+          </div>
+          <button
+            onClick={load}
+            className="px-3 py-2 text-sm border border-void-border rounded-lg hover:bg-void-border transition-colors text-gray-300"
+          >
+            Refresh
+          </button>
+        </header>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-24 text-gray-500">
+            <Loader2 className="animate-spin mr-2" size={20} /> Connecting to backend...
+          </div>
+        ) : error ? (
+          <div className="py-20 text-center">
+            <p className="text-red-400 mb-4">{error}</p>
+            <button onClick={load} className="px-4 py-2 bg-eepy-lavender text-void rounded-lg text-sm font-medium">
+              Try again
+            </button>
+          </div>
+        ) : templates.length === 0 ? (
+          <div className="py-20 text-center text-gray-500">
+            No approved integrations yet. Check back soon.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {templates.map((template) => (
+              <div
+                key={template.id}
+                className="p-6 bg-void-surface border border-void-border rounded-xl group hover:border-eepy-lavender transition-all flex flex-col"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-lg font-bold text-eepy-mint">{template.name}</h2>
+                  {template.config_schema?.category && (
+                    <span className="text-[10px] px-2 py-0.5 bg-void border border-void-border text-gray-500 rounded uppercase tracking-wide">
+                      {template.config_schema.category}
+                    </span>
+                  )}
+                </div>
+                <p className="text-gray-400 text-sm mb-6 leading-relaxed flex-1">
+                  {template.description}
+                </p>
+                <Link
+                  href={`/mcp/connect?template_id=${encodeURIComponent(template.id)}`}
+                  className="w-full py-2 bg-eepy-lavender text-void font-medium rounded-lg hover:bg-opacity-90 transition-all text-center"
+                >
+                  Connect
+                </Link>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }

@@ -14,11 +14,7 @@ import datetime
 from database import engine, Base, get_db, User, UserRole, SessionLocal
 from auth import get_password_hash, verify_password, create_access_token, decode_access_token
 from schemas import UserCreate, UserLogin
-# Import MCP endpoints for Phase 5 HappyFox template integration ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾
-try:
-    from api.mcp_endpoints import router as mcp_router
-except ImportError as e: 
-    logger.warning(f"MCP endpoints not available yet (Phase 5 mock mode enabled): {str(e)[:100]} ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾")
+from models import mcp_models  # noqa: F401  - register MCP tables on the shared Base so create_all builds them
 
 # --- LOGGING SYSTEM ---
 class MemoryLogHandler(logging.Handler):
@@ -80,20 +76,86 @@ def sync_database_schema():
     except Exception as e:
         logger.error(f"Superuser promotion failed: {e}")
 
+def seed_mcp_templates():
+    """Seed the admin-approved HappyFox template (template #1) into the library.
+
+    Idempotent: only inserts if the slug does not already exist.
+    """
+    from models.mcp_models import MCPTemplate
+
+    happyfox = MCPTemplate(
+        id="happyfox",
+        name="HappyFox Help Desk",
+        description=(
+            "Manage, read, and respond to support tickets in your HappyFox Help Desk. "
+            "Agents can triage queues, read threads, post replies and private notes, "
+            "change ticket status, and download attachments. All traffic is routed "
+            "through the Eepy unified proxy with credentials encrypted at rest."
+        ),
+        config_schema={
+            "category": "Support / Ticketing",
+            "type": "object",
+            "properties": {
+                "HAPPYFOX_DOMAIN": {
+                    "type": "string",
+                    "label": "HappyFox Domain",
+                    "placeholder": "yourcompany.happyfox.com",
+                    "help": "The domain of your HappyFox instance.",
+                    "required": True,
+                },
+                "HAPPYFOX_API_KEY": {
+                    "type": "password",
+                    "label": "API Key",
+                    "help": "From HappyFox dashboard: Settings > Integrations > API Key.",
+                    "required": True,
+                },
+                "HAPPYFOX_AUTH_CODE": {
+                    "type": "password",
+                    "label": "Auth Code",
+                    "help": "Second API credential from the same panel.",
+                    "required": True,
+                },
+            },
+            "required": ["HAPPYFOX_DOMAIN", "HAPPYFOX_API_KEY", "HAPPYFOX_AUTH_CODE"],
+        },
+        image_tag="ghcr.io/glitch3dpenguin/happyfox-mcp",
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
+    db = SessionLocal()
+    try:
+        existing = db.query(MCPTemplate).filter(MCPTemplate.id == "happyfox").first()
+        if existing:
+            existing.approved_by_admin = True
+            existing.enabled_global = True
+            existing.description = happyfox.description
+            existing.config_schema = happyfox.config_schema
+            db.commit()
+            logger.info("HappyFox MCP template exists; ensured enabled.")
+        else:
+            db.add(happyfox)
+            db.commit()
+            logger.info("Seeded HappyFox MCP template (approved).")
+    finally:
+        db.close()
+
 try:
     Base.metadata.create_all(bind=engine)
     sync_database_schema()
+    seed_mcp_templates()
     logger.info("Database initialized and synchronized.")
 except Exception as e:
     logger.error(f"Critical error initializing database: {e}")
 
-# Import MCP endpoints for Phase 5 HappyFox template integration ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾
-try:
-    from api.mcp_endpoints import router as mcp_router
-except ImportError as e: 
-    logger.warning(f"MCP endpoints not available yet (Phase 5 mock mode enabled): {str(e)[:100]} ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾")
+# MCP endpoints (Phase 5: HappyFox template #1). Absolute import (never relative):
+# Uvicorn runs this module top-level.
+from api.mcp_endpoints import router as mcp_router
 
 app = FastAPI(title="Eepy Host API")
+
+# Mount the MCP integration router (Phase 5: HappyFox template #1).
+app.include_router(mcp_router)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):

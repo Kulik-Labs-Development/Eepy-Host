@@ -1,191 +1,169 @@
-// MCP Connection Wizard Component - Phase 5 Implementation (Template #1: HappyFox)
 'use client';
 
-import { useState } from 'react';
-import { X, Key as KeyIcon, Eye, EyeOff } from 'lucide-react';
+// MCP Connection Wizard - renders a dynamic form from the template's config_schema,
+// submits credentials to the backend (where they are Fernet-encrypted), and reports
+// success with the unified proxy URL. Credentials never leave this component except
+// in the single encrypted-at-rest register call.
 
-interface ConfigSchemaProperty {
-    type: string;
-    required?: boolean;
+import { useState } from 'react';
+import { X, KeyRound, Eye, EyeOff, Loader2, CheckCircle2, ShieldCheck } from 'lucide-react';
+import { getApiUrl } from '@/lib/api';
+
+export interface SchemaProperty {
+  type?: string;
+  label?: string;
+  placeholder?: string;
+  help?: string;
+  required?: boolean;
+}
+
+export interface TemplateSchema {
+  properties?: Record<string, SchemaProperty>;
+  required?: string[];
 }
 
 interface Props {
-    templateId: string;
-    onClose?: () => void;
+  templateId: string;
+  templateName: string;
+  schema: TemplateSchema | undefined;
+  onSuccess: (result: { configId: number; proxyUrl: string }) => void;
+  onClose: () => void;
 }
 
-export default function MCPConnectionWizard({ templateId, onClose }: Props) {
-    // Phase 5 state management
-    const [formData, setFormData] = useState<Record<string, string>>({});
-    const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState("");
+export default function MCPConnectionWizard({ templateId, templateName, schema, onSuccess, onClose }: Props) {
+  const [formData, setFormData] = useState<Record<string, string>>({});
+  const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-    // TODO (Phase 5): Fetch config_schema from backend API /api/mcp/templates/list to dynamically build form fields
-    const mockConfigSchema: Record<string, ConfigSchemaProperty> = {
-        HAPPYFOX_DOMAIN: { type: "string", required: true },
-        HAPPYFOX_API_KEY: { type: "password", required: true },
-        HAPPYFOX_AUTH_CODE: { type: "password", required: true }
-    };
+  const properties = schema?.properties || {};
+  const required = new Set(schema?.required || Object.keys(properties).filter((k) => properties[k].required));
 
-    const togglePasswordVisibility = (field: string): void => {
-        setShowPasswords(prevState => ({ ...prevState, [field]: !prevState[field] }));
-    };
+  const isPassword = (key: string) => properties[key]?.type === 'password';
 
-    const handleWizardClose = (): void => {
-        if (onClose) {
-            onClose();
-        } else {
-            window.parent.postMessage({ type: "close-wizard", wizard_id: "happyfox-001" }, "*");
-        }
-    };
+  const setField = (field: string, value: string) =>
+    setFormData((prev) => ({ ...prev, [field]: value }));
 
-    // TODO (Phase 5): Submit form data to POST /api/mcp/config/register endpoint with credentials_json body + JWT auth headers
-    const handleSubmit = async (): Promise<void> => {
-        setLoading(true);
-        setError("");
+  const toggleVisibility = (field: string) =>
+    setShowPasswords((prev) => ({ ...prev, [field]: !prev[field] }));
 
-        try {
-            // Validate all required fields populated before submission (security check)
-            const missingFields = Object.keys(mockConfigSchema).filter((field: string): boolean => !formData[field] && !!mockConfigSchema[field].required);
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
 
-            if (missingFields.length > 0) {
-                throw new Error(`Missing required fields: ${JSON.stringify(missingFields)}`);
-            }
+    // Client-side preflight: required fields populated.
+    const missing = Array.from(required).filter((f) => !formData[f]?.trim());
+    if (missing.length > 0) {
+      setError(`Missing required fields: ${missing.join(', ')}`);
+      setLoading(false);
+      return;
+    }
 
-            // TODO (Phase 5): Send encrypted credentials to backend -> Fernet encryption happens server-side ONLY via crypto.encrypt_jsonb()
-            const response = await fetch('/api/mcp/config/register', {
-                method: 'POST',
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    credentials_json: formData,
-                    display_name: `My Support Queue (${templateId})`
-                })
-            });
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('eepy_token') : null;
+      const res = await fetch(`${getApiUrl()}/api/mcp/config/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          template_id: templateId,
+          display_name: `${templateName} connection`,
+          credentials_json: formData,
+        }),
+      });
 
-            if (!response.ok) {
-                throw new Error(`Backend API error: ${response.statusText}`);
-            }
-        } catch (err) {
-            // ONLY log errors - NEVER secrets!
-            setError(`Submission failed: ${err instanceof Error ? err.message : String(err)}`);
-        } finally {
-            setLoading(false);
-        }
-    };
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || `Backend returned ${res.status}`);
+      }
 
-    const setField = (field: string, value: string): void => {
-        setFormData(prevState => ({ ...prevState, [field]: value }));
-    };
+      onSuccess({ configId: data.id, proxyUrl: data.proxy_url || `/api/mcp/proxy/${templateId}` });
+    } catch (err) {
+      // Error strings from the backend are safe (no secrets in them by design).
+      setError(err instanceof Error ? err.message : String(err));
+      setLoading(false);
+    }
+  };
 
-    return (
-        <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-[999] backdrop-blur-sm">
-            {/* Modal panel */}
-            <div className="bg-surface-dark/95 border-2 border-eepy-lavender rounded-lg p-6 max-w-md w-full relative shadow-xl">
-                {/* Header */}
-                <header className="flex items-center justify-between mb-6 pb-4 border-b border-surface-light/30">
-                    <h2 className="text-xl font-bold text-eepy-mint flex items-center gap-2">
-                        Connect Integration: {templateId || "HappyFox"}
-                    </h2>
-                    <button onClick={handleWizardClose} className="text-surface-light/75 hover:text-white transition-colors duration-150">
-                        <X size={20} />
-                    </button>
-                </header>
+  return (
+    <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-[999] backdrop-blur-sm">
+      <div className="bg-void-surface border-2 border-eepy-lavender rounded-xl p-6 max-w-md w-full relative shadow-2xl max-h-[90vh] overflow-y-auto">
+        <header className="flex items-center justify-between mb-6 pb-4 border-b border-void-border">
+          <div>
+            <h2 className="text-lg font-bold flex items-center gap-2">
+              <ShieldCheck className="text-eepy-mint" size={18} />
+              Connect: {templateName}
+            </h2>
+            <p className="text-xs text-gray-500 mt-1">Credentials are encrypted at rest (Fernet) on the server.</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+            <X size={20} />
+          </button>
+        </header>
 
-                {/* Form */}
-                <form onSubmit={(e): void => { e.preventDefault(); handleSubmit(); }}>
-                    <div className="space-y-4 mb-6">
-                        {/* HAPPYFOX_DOMAIN Field */}
-                        <div>
-                            <h3 className="text-sm font-medium text-eepy-peach mb-2 flex items-center gap-1">
-                                {mockConfigSchema.HAPPYFOX_DOMAIN?.required && <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>}
-                                HAPPYFOX Domain (Required)
-                            </h3>
-                            <div className="relative">
-                                <KeyIcon size={18} />
-                                <input
-                                    type="text"
-                                    required
-                                    placeholder={`e.g., https://${templateId || "mycompany"}.happyfox.com`}
-                                    value={formData.HAPPYFOX_DOMAIN || ""}
-                                    onChange={(e): void => setField("HAPPYFOX_DOMAIN", e.target.value)}
-                                    className="w-full p-3 bg-surface-dark/70 border border-eepy-lavender rounded focus:outline-none focus:border-peach text-white transition-all duration-200"
-                                />
-                            </div>
-                        </div>
-
-                        {/* HAPPYFOX_API_KEY Field (masked input + visibility toggle) */}
-                        <div>
-                            <h3 className="text-sm font-medium text-eepy-peach mb-2 flex items-center gap-1">
-                                {mockConfigSchema.HAPPYFOX_API_KEY.required && (<span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>)}
-                                HAPPYFOX API Key (Required)
-                            </h3>
-                            <div className={`relative ${showPasswords.HAPPYFOX_API_KEY ? "opacity-100" : "opacity-70"} transition-opacity duration-200`}>
-                                <KeyIcon size={18} />
-                                <input
-                                    type={showPasswords.HAPPYFOX_API_KEY ? "text" : "password"}
-                                    required
-                                    placeholder="Your API key from HappyFox dashboard (copy/paste value only!)"
-                                    value={formData.HAPPYFOX_API_KEY || ""}
-                                    onChange={(e): void => setField("HAPPYFOX_API_KEY", e.target.value)}
-                                    className={`w-full p-3 bg-surface-dark/70 border ${showPasswords.HAPPYFOX_API_KEY ? "border-peach" : "border-eepy-lavender"} rounded focus:outline-none transition-all duration-200 text-white`}
-                                />
-                                <button
-                                    type="button"
-                                    onClick={(e): void => { e.preventDefault(); togglePasswordVisibility("HAPPYFOX_API_KEY"); }}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 bg-surface-light/75 hover:bg-eepy-peach text-white rounded transition-colors duration-150"
-                                >
-                                    {showPasswords.HAPPYFOX_API_KEY ? <Eye size={16} /> : <EyeOff size={16} />}
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* HAPPYFOX_AUTH_CODE Field (masked input + visibility toggle) */}
-                        <div>
-                            <h3 className="text-sm font-medium text-eepy-peach mb-2 flex items-center gap-1">
-                                {mockConfigSchema.HAPPYFOX_AUTH_CODE.required && (<span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>)}
-                                HAPPYFOX Auth Code (Required)
-                            </h3>
-                            <div className={`relative ${showPasswords.HAPPYFOX_AUTH_CODE ? "opacity-100" : "opacity-70"} transition-opacity duration-200`}>
-                                <KeyIcon size={18} />
-                                <input
-                                    type={showPasswords.HAPPYFOX_AUTH_CODE ? "text" : "password"}
-                                    required
-                                    placeholder="OAuth authorization code from OAuth flow (if applicable)"
-                                    value={formData.HAPPYFOX_AUTH_CODE || ""}
-                                    onChange={(e): void => setField("HAPPYFOX_AUTH_CODE", e.target.value)}
-                                    className={`w-full p-3 bg-surface-dark/70 border ${showPasswords.HAPPYFOX_AUTH_CODE ? "border-peach" : "border-eepy-lavender"} rounded focus:outline-none transition-all duration-200 text-white`}
-                                />
-                                <button
-                                    type="button"
-                                    onClick={(e): void => { e.preventDefault(); togglePasswordVisibility("HAPPYFOX_AUTH_CODE"); }}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 bg-surface-light/75 hover:bg-eepy-peach text-white rounded transition-colors duration-150"
-                                >
-                                    {showPasswords.HAPPYFOX_AUTH_CODE ? <Eye size={16} /> : <EyeOff size={16} />}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Error Message Section (no secrets shown) */}
-                    {error && (
-                        <p className="text-sm text-red-500 mb-4 bg-surface-dark/70 border-l-2 border-red-500 p-3 rounded">
-                            {error}
-                        </p>
-                    )}
-
-                    {/* Submit Button */}
+        <form onSubmit={handleSubmit}>
+          <div className="space-y-4 mb-6">
+            {Object.entries(properties).map(([key, prop]) => (
+              <div key={key}>
+                <label className="text-sm font-medium text-eepy-peach mb-2 flex items-center gap-2">
+                  {prop.label || key}
+                  {required.has(key) && <span className="w-2 h-2 bg-red-500 rounded-full" />}
+                </label>
+                <div className="relative">
+                  <KeyRound size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                  <input
+                    type={isPassword(key) && !showPasswords[key] ? 'password' : 'text'}
+                    required={required.has(key)}
+                    placeholder={prop.placeholder || key}
+                    value={formData[key] || ''}
+                    onChange={(e) => setField(key, e.target.value)}
+                    className="w-full pl-9 pr-10 py-3 bg-void border border-void-border rounded-lg focus:outline-none focus:border-eepy-lavender text-white text-sm transition-colors"
+                  />
+                  {isPassword(key) && (
                     <button
-                        type="submit"
-                        disabled={loading || !!error}
-                        className={`w-full py-3 bg-eepy-lavender/90 hover:bg-peach text-black font-medium rounded transition-all duration-200 ${loading ? "opacity-50 cursor-not-allowed" : ""}`}
+                      type="button"
+                      onClick={() => toggleVisibility(key)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
                     >
-                        {loading ? "Saving..." : (error ? "Retry Connection" : "Connect & Encrypt Credentials")}
+                      {showPasswords[key] ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
-                </form>
-            </div>
-        </div>
-    );
+                  )}
+                </div>
+                {prop.help && <p className="text-xs text-gray-600 mt-1.5">{prop.help}</p>}
+              </div>
+            ))}
+          </div>
+
+          {error && (
+            <p className="text-sm text-red-400 mb-4 bg-void border-l-2 border-red-500 p-3 rounded">
+              {error}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className={`w-full py-3 bg-eepy-lavender text-void font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
+              loading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-opacity-90'
+            }`}
+          >
+            {loading ? (
+              <>
+                <Loader2 size={16} className="animate-spin" /> Encrypting &amp; saving...
+              </>
+            ) : error ? (
+              'Retry Connection'
+            ) : (
+              <>
+                <CheckCircle2 size={16} /> Connect &amp; Encrypt Credentials
+              </>
+            )}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
 }

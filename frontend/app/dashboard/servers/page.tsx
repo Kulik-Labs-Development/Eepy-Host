@@ -1,7 +1,8 @@
 "use client";
 
 import React from 'react';
-import { Server, Plus, Globe, Database, Lock } from 'lucide-react';
+import Link from 'next/link';
+import { Server, Plus, Globe, Database, Lock, PlugZap } from 'lucide-react';
 
 export default function ServersPage() {
   return (
@@ -11,9 +12,9 @@ export default function ServersPage() {
           <h2 className="text-3xl font-bold font-console text-white">MCP Server Engine</h2>
           <p className="text-gray-500 font-console text-sm mt-1 italic">Configure your models' access to the world.</p>
         </div>
-        <button className="px-4 py-2 bg-eepy-lavender text-void font-bold rounded-xl hover:bg-opacity-90 transition-all flex items-center gap-2 font-console text-sm shadow-[0_0_15px_rgba(195,177,225,0.3)]">
-          <Plus size={18} /> Deploy New Server
-        </button>
+        <Link href="/mcp/library" className="px-4 py-2 bg-eepy-lavender text-void font-bold rounded-xl hover:bg-opacity-90 transition-all flex items-center gap-2 font-console text-sm shadow-[0_0_15px_rgba(195,177,225,0.3)]">
+          <Plus size={18} /> Connect an Integration
+        </Link>
       </header>
 
       {/* Library of Pre-configured Servers */}
@@ -50,7 +51,10 @@ export default function ServersPage() {
           <Server size={20} className="text-eepy-mint" /> Your Active Servers
         </h3>
         <div className="flex flex-col items-center justify-center py-12 text-center space-y-4 border-2 border-dashed border-void-border rounded-xl">
-          <p className="text-gray-600 font-console text-sm italic">No servers deployed yet. Pick one from the library above to begin.</p>
+          <p className="text-gray-600 font-console text-sm italic mb-4">No servers connected yet.</p>
+          <Link href="/mcp/library" className="inline-flex items-center gap-2 px-4 py-2 bg-void border border-void-border rounded-lg text-xs font-console hover:bg-void-border transition-colors">
+            <PlugZap size={14} /> Browse the MCP Library
+          </Link>
         </div>
       </div>
     </div>
