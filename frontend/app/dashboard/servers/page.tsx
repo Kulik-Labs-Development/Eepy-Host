@@ -1,11 +1,12 @@
 'use client';
 
-// MCP Servers - the single hub for the MCP Integration Library and your active
-// connections. Library templates come from the backend; "Connect" opens a
-// schema-driven wizard that stores credentials (encrypted at rest). Your active
-// servers show the unified proxy URL, a live connection test, and disconnect.
+// MCP Servers - the single hub for your active connections (primary) and the
+// browsable Integration Library (secondary, searchable). Library templates come
+// from the backend; "Connect" opens a schema-driven wizard that stores
+// credentials (encrypted at rest). Active servers show the unified proxy URL, a
+// live connection test, and disconnect.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Server,
   Loader2,
@@ -18,17 +19,10 @@ import {
   Trash2,
   Wifi,
   WifiOff,
+  Search,
 } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
 import MCPConnectionWizard, { TemplateSchema } from '@/src/components/MCPConnectionWizard';
-
-interface TemplateProperty {
-  type?: string;
-  label?: string;
-  placeholder?: string;
-  help?: string;
-  required?: boolean;
-}
 
 interface Template {
   id: string;
@@ -64,6 +58,17 @@ export default function ServersPage() {
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [testingId, setTestingId] = useState<number | null>(null);
   const [testResults, setTestResults] = useState<Record<number, { status: string; detail: string }>>({});
+
+  // Search box for the (potentially long) integration library.
+  const [search, setSearch] = useState('');
+
+  const filteredTemplates = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return templates;
+    return templates.filter((t) =>
+      [t.name, t.description, t.id, t.config_schema?.category || ''].join(' ').toLowerCase().includes(q)
+    );
+  }, [templates, search]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -185,64 +190,15 @@ export default function ServersPage() {
         </div>
       ) : (
         <>
-          {/* Library of approved servers */}
-          <section>
-            <h3 className="text-xl font-bold font-console mb-4 flex items-center gap-2">
-              <PlugZap size={20} className="text-eepy-lavender" /> Integration Library
-            </h3>
-            {templates.length === 0 ? (
-              <div className="p-8 bg-void-surface/30 border border-void-border rounded-eepy text-center text-gray-600 font-console text-sm italic">
-                No approved integrations yet. Check back soon.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {templates.map((template) => {
-                  const isConnected = configs.some((c) => c.template_name === template.id);
-                  return (
-                    <div
-                      key={template.id}
-                      className="p-6 bg-void-surface border-t-4 border-eepy-lavender border-x border-b border-void-border rounded-eepy group hover:scale-[1.02] transition-all shadow-xl flex flex-col"
-                    >
-                      <div className="flex justify-between items-start mb-4">
-                        <div className="p-3 bg-void rounded-lg text-gray-400 group-hover:text-white transition-colors">
-                          <PlugZap size={24} />
-                        </div>
-                        {template.config_schema?.category && (
-                          <span className="px-2 py-1 bg-void border border-void-border text-[10px] font-console text-gray-500 rounded uppercase tracking-tighter">
-                            {template.config_schema.category}
-                          </span>
-                        )}
-                      </div>
-                      <h4 className="text-lg font-bold font-console mb-2 text-eepy-mint">{template.name}</h4>
-                      <p className="text-gray-500 text-sm mb-6 leading-relaxed flex-1">{template.description}</p>
-                      {isConnected ? (
-                        <div className="w-full py-2 bg-void border border-eepy-mint rounded-lg text-xs font-console text-eepy-mint flex items-center justify-center gap-2">
-                          <Check size={14} /> Connected
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setWizardTemplate(template)}
-                          className="w-full py-2 bg-eepy-lavender text-void rounded-lg text-xs font-console font-bold hover:bg-opacity-90 transition-all"
-                        >
-                          Connect
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-
-          {/* Active servers */}
-          <section className="mt-12 p-8 bg-void-surface/30 border border-void-border rounded-eepy backdrop-blur-sm">
+          {/* Active servers (primary, at top) */}
+          <section className="p-8 bg-void-surface/30 border border-void-border rounded-eepy backdrop-blur-sm">
             <h3 className="text-xl font-bold font-console mb-6 flex items-center gap-2">
               <Server size={20} className="text-eepy-mint" /> Your Active Servers
             </h3>
             {configs.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center space-y-2 border-2 border-dashed border-void-border rounded-xl">
                 <p className="text-gray-600 font-console text-sm italic">No servers connected yet.</p>
-                <p className="text-gray-700 font-console text-xs">Pick one from the library above to begin.</p>
+                <p className="text-gray-700 font-console text-xs">Pick one from the integration library below to begin.</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -308,6 +264,74 @@ export default function ServersPage() {
                         >
                           {result.detail}
                         </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          {/* Integration Library (browsable catalog, filtered) */}
+          <section>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+              <h3 className="text-xl font-bold font-console flex items-center gap-2">
+                <PlugZap size={20} className="text-eepy-lavender" /> Integration Library
+                <span className="text-xs font-normal text-gray-600">({filteredTemplates.length})</span>
+              </h3>
+              {templates.length > 0 && (
+                <div className="relative">
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search integrations..."
+                    className="w-full sm:w-72 pl-9 pr-3 py-2 bg-void border border-void-border rounded-lg text-sm text-white font-console placeholder:text-gray-600 focus:outline-none focus:border-eepy-lavender transition-colors"
+                  />
+                </div>
+              )}
+            </div>
+            {templates.length === 0 ? (
+              <div className="p-8 bg-void-surface/30 border border-void-border rounded-eepy text-center text-gray-600 font-console text-sm italic">
+                No approved integrations yet. Check back soon.
+              </div>
+            ) : filteredTemplates.length === 0 ? (
+              <div className="p-8 bg-void-surface/30 border border-void-border rounded-eepy text-center text-gray-600 font-console text-sm italic">
+                No integrations match "{search}".
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredTemplates.map((template) => {
+                  const isConnected = configs.some((c) => c.template_name === template.id);
+                  return (
+                    <div
+                      key={template.id}
+                      className="p-6 bg-void-surface border-t-4 border-eepy-lavender border-x border-b border-void-border rounded-eepy group hover:scale-[1.02] transition-all shadow-xl flex flex-col"
+                    >
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="p-3 bg-void rounded-lg text-gray-400 group-hover:text-white transition-colors">
+                          <PlugZap size={24} />
+                        </div>
+                        {template.config_schema?.category && (
+                          <span className="px-2 py-1 bg-void border border-void-border text-[10px] font-console text-gray-500 rounded uppercase tracking-tighter">
+                            {template.config_schema.category}
+                          </span>
+                        )}
+                      </div>
+                      <h4 className="text-lg font-bold font-console mb-2 text-eepy-mint">{template.name}</h4>
+                      <p className="text-gray-500 text-sm mb-6 leading-relaxed flex-1">{template.description}</p>
+                      {isConnected ? (
+                        <div className="w-full py-2 bg-void border border-eepy-mint rounded-lg text-xs font-console text-eepy-mint flex items-center justify-center gap-2">
+                          <Check size={14} /> Connected
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setWizardTemplate(template)}
+                          className="w-full py-2 bg-eepy-lavender text-void rounded-lg text-xs font-console font-bold hover:bg-opacity-90 transition-all"
+                        >
+                          Connect
+                        </button>
                       )}
                     </div>
                   );
