@@ -1,9 +1,18 @@
-// HappyFox MCP Template Library Page - Phase 5 Implementation (Template #1) 
+'use client';
+
+// HappyFox MCP Template Library Page - Phase 5 Implementation (Template #1)
 import { useState, useEffect } from 'react';  
 import Link from 'next/link';  
 
+interface MCPTemplate {
+    id?: string;
+    name?: string;
+    description?: string;
+    [key: string]: unknown;
+}
+
 export default function MCPLibrary() {    
-    const [templates, setTemplates] = useState([]);  
+    const [templates, setTemplates] = useState<MCPTemplate[]>([]);  
     const [loading, setLoading] = useState(true);  
     
     // Phase 5: Fetch approved templates from backend API ✅ ❌❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾 
@@ -18,7 +27,7 @@ export default function MCPLibrary() {
                 setTemplates(data.templates || []); // Extract array of template objects (MCPTemplate instances) converted to dicts via SQLALchemy ORM layer 
                 
             } catch(err) {
-                console.error("Template fetch error:", err.message);  // ONLY log errors - NEVER secrets! ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾  
+                console.error("Template fetch error:", err instanceof Error ? err.message : String(err));  // ONLY log errors - NEVER secrets! ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾  
                 setTemplates([]);
             } finally { 
                 setLoading(false);  
@@ -47,7 +56,7 @@ export default function MCPLibrary() {
             ) : (                   
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">                       
                     {templates.map((template, idx) => (                        
-                        <Link href={`/mcp/connect/${encodeURIComponent(template.id || template.name)}}`} key={idx}>                         
+                        <Link href={`/mcp/connect/${encodeURIComponent(template.id || template.name || 'unknown')}`} key={idx}>                         
                             {/* Template Card Design - Void & Neon Aesthetic ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾 */}   
                             <div className="bg-surface-dark/80 border-2 border-surface-light/30 rounded-lg hover:border-eepy-lavender transition-all duration-300 p-6 relative overflow-hidden group">                                
                                 {/* Background glow effect on card hover ✅❗💜✨⏮️ 🚀 ⏰ 🔒✅ ❌🎭 👾 */}  
