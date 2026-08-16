@@ -3,7 +3,7 @@
 import React from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
-import { LogOut, LayoutDashboard, Server, UserCircle, Settings, Moon, Building2, Terminal, PlugZap } from 'lucide-react';
+import { LogOut, LayoutDashboard, Server, UserCircle, Settings, Moon, Building2, Terminal } from 'lucide-react';
 import Link from 'next/link';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -16,7 +16,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const navItems = [
     { icon: <LayoutDashboard size={20}/>, label: 'Overview', path: '/dashboard' },
     { icon: <Server size={20}/>, label: 'MCP Servers', path: '/dashboard/servers' },
-    { icon: <PlugZap size={20}/>, label: 'MCP Library', path: '/mcp/library' },
     { icon: <UserCircle size={20}/>, label: 'Account', path: '/dashboard/account' },
     { icon: <Settings size={20}/>, label: 'System Settings', path: '/dashboard/settings' },
     { icon: <Terminal size={20}/>, label: 'Debug Log', path: '/dashboard/debug' },
@@ -44,7 +43,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         <nav className="flex-1 space-y-2">
           {navItems.map((item) => {
-            const isActive = pathname === item.path || pathname.startsWith(item.path + '/');
+            // Exact match only. Prefix matching made 'Overview' (=/dashboard) stay
+            // highlighted on every /dashboard/* sub-page.
+            const isActive = pathname === item.path;
             return (
               <Link key={item.label} href={item.path}>
                 <div className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-console text-sm cursor-pointer ${
