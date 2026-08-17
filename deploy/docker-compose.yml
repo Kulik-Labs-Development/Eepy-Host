@@ -11,9 +11,9 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-eepy_admin}
       # NOTE: this value must MATCH the password the existing postgres_data
-      # volume was initialized with. Put the old value in .env until you do a
-      # planned, backed-up data migration - the volume keeps its original
-      # password even when you change .env.
+      # volume was initialized with. Put the old value in stack.env until you
+      # do a planned, backed-up data migration - the volume keeps its original
+      # password even when you change stack.env.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - see deploy/stack.env.example}
       POSTGRES_DB: ${POSTGRES_DB:-eepy_host}
     volumes:
