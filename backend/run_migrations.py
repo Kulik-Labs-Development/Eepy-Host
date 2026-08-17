@@ -16,7 +16,7 @@ from sqlalchemy import create_engine, text
 # Get database URL - use env variable or default for dev ✅✅🔧  
 database_url = os.getenv("DATABASE_URL")
 if not database_url:
-    raise SystemExit("DATABASE_URL environment variable is not set. See .env.example for configuration.")
+    raise SystemExit("DATABASE_URL environment variable is not set. See deploy/stack.env.example for configuration.")
 
 if not database_url.startswith('postgresql'): 
     print(f"❌ Invalid DATABASE_URL format. Expected postgresql://... but got: {database_url}")  

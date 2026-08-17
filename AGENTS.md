@@ -86,7 +86,9 @@ FastAPI backend proxies every integration.
 │   └── src/components/       # MCPConnectionWizard, OpenWebUIExportPanel
 ├── deploy/
 │   ├── docker-compose.yml    # db + backend + frontend (no secrets in file)
-│   └── .env.example          # secret reference — copy to .env and fill in
+│   └── stack.env.example     # secret reference — copy to stack.env and fill in
+│                             #   (named stack.env, not .env, because the stack
+│                             #   is normally deployed via Portainer)
 └── assets/
 ```
 
@@ -143,7 +145,7 @@ python 3.12+ (backend) | Node.js 18+ (frontend) | PostgreSQL 15+ (or Docker)
 cd backend
 pip install -r requirements.txt
 # DATABASE_URL, SECRET_KEY (and optionally MCP_ENCRYPTION_KEY) from env:
-source ../deploy/.env   # after filling it in
+source ../deploy/stack.env   # after filling it in
 python run_migrations.py
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 curl http://localhost:8000/health
@@ -160,12 +162,17 @@ pnpm build && pnpm start
 ### Docker deployment (compose file lives in `deploy/`)
 ```bash
 cd deploy
-cp .env.example .env   # then fill in real secrets (.env is git-ignored)
-chmod 600 .env
-docker compose up -d
+cp stack.env.example stack.env   # then fill in real secrets (stack.env is git-ignored)
+chmod 600 stack.env
+docker compose --env-file stack.env up -d
 docker compose ps
 docker logs eepy-backend -f
 ```
+
+**Portainer is the primary deployment path:** import `deploy/docker-compose.yml`
+as a stack and paste the filled-in `stack.env` contents into the stack's
+Environment section. The file is named `stack.env` (not `.env`) on purpose —
+keeps stack secrets distinct from any host-level dotfiles.
 
 ### Testing
 ```bash
@@ -205,7 +212,7 @@ cd frontend && pnpm vitest run --reporter=verbose && pnpm lint
 
 ## Operational Notes
 
-- **Secrets** come from `deploy/.env` (git-ignored): `POSTGRES_PASSWORD`,
+- **Secrets** come from `deploy/stack.env` (git-ignored): `POSTGRES_PASSWORD`,
   `DATABASE_URL`, `SECRET_KEY`, `MCP_ENCRYPTION_KEY`.
   `SECRET_KEY` signs JWTs (also the Fernet fallback key) — see Key
   Architecture Decision #3 before ever rotating it.

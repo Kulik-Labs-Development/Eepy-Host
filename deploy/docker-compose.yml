@@ -1,5 +1,7 @@
-# Secrets are supplied from a local (git-ignored) .env file in this same
-# directory:  cp .env.example .env  and fill in the values.
+# Secrets are supplied from a local (git-ignored) stack.env file in this same
+# directory:  cp stack.env.example stack.env  and fill in the values.
+# (For plain `docker compose` runs, pass the file explicitly:
+#   docker compose --env-file stack.env up -d)
 # No secret has a hardcoded default: the stack refuses to start if one is missing.
 services:
   db:
@@ -12,7 +14,7 @@ services:
       # volume was initialized with. Put the old value in .env until you do a
       # planned, backed-up data migration - the volume keeps its original
       # password even when you change .env.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - see deploy/.env.example}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - see deploy/stack.env.example}
       POSTGRES_DB: ${POSTGRES_DB:-eepy_host}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -24,14 +26,14 @@ services:
     container_name: eepy-backend
     restart: always
     environment:
-      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL is required - see deploy/.env.example}
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL is required - see deploy/stack.env.example}
       # Long random string that signs JWTs (HS256). Rotating this invalidates
       # all existing login sessions (users just sign in again).
-      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required - see deploy/.env.example}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required - see deploy/stack.env.example}
       # Fernet key (44-char url-safe Base64) for MCP credential encryption at rest.
       # MUST stay the same as the one that encrypted existing stored credentials,
       # otherwise they can no longer be decrypted.
-      - MCP_ENCRYPTION_KEY=${MCP_ENCRYPTION_KEY:?MCP_ENCRYPTION_KEY is required - see deploy/.env.example}
+      - MCP_ENCRYPTION_KEY=${MCP_ENCRYPTION_KEY:?MCP_ENCRYPTION_KEY is required - see deploy/stack.env.example}
     ports:
       - "8068:8000"
     depends_on:

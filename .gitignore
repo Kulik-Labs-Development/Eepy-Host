@@ -8,6 +8,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .env
+stack.env
 .venv
 env/
 venv/

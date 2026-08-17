@@ -8,7 +8,7 @@ import os
 # Database URL from environment variable (no hardcoded fallback - fail fast if unset)
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL environment variable is not set. See .env.example for configuration.")
+    raise RuntimeError("DATABASE_URL environment variable is not set. See deploy/stack.env.example for configuration.")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
