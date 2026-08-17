@@ -1,154 +1,224 @@
-Eepy Host - System Blueprint and Agent Instructions
+# Eepy Host — System Blueprint and Agent Instructions
+
+> This file is the single source of truth for project state, architecture, and
+> conventions. Historical planning documents (`PHASE_4_IMPLEMENTATION_PLAN.md`)
+> are archived references only — where they disagree with this file or the code,
+> the code wins.
 
 ## Project Overview
 
-Eepy Host is a SaaS MCP gateway platform designed specifically for Model Context Protocol servers. It provides an all-in-one managed integration layer between LLM agents and real-world tools including Google Calendar, Slack Workspaces, Notion Databases, File Systems, and Web Browsing APIs connected via a single backend proxy API that handles authentication securely in one place.
+Eepy Host (https://github.com/Kulik-Labs-Development/Eepy-Host) is a managed
+SaaS MCP gateway. Users connect integrations (HappyFox today; Google Calendar,
+Slack Workspaces, Notion Databases, etc. on the roadmap); Eepy handles the API
+plumbing, credential management (encrypted at rest), and unified proxy routing
+(`/api/mcp/proxy/{template_id}/{tool_name}`) so their agent can use external
+tools without operational overhead.
 
-Core Architecture Principle: Users do not deploy containers; they connect integrations - we handle API plumbing, credential management (encrypted at rest), and unified proxy routing so their agent can use external tools without operational overhead.
+**Core architecture principle:** this is NOT a container orchestration
+platform. No per-user containers, no container sprawl — a single unified
+FastAPI backend proxies every integration.
+
+## Current State (Phase 4+ complete)
+
+- Unified auth portal + dashboard hub (account, debug console, organization
+  admin tools for superusers, servers).
+- HappyFox Help Desk is Template #1: seeded at startup in `main.py`
+  (`seed_mcp_templates()`, idempotent) with `approved_by_admin=True`.
+- Unified proxy endpoint handles all templates via `TEMPLATE_REGISTRY` in
+  `backend/api/mcp_endpoints.py`.
+- Open WebUI integration: per-user **Tool API Keys** (`eekey_...`, one key
+  unlocks every integration) + a single unified OpenAPI spec for import.
+
+## Key Architecture Decisions
+
+1. **Single backend endpoint per integration** — proxy routes, no user
+   containers.
+2. **Credentials encrypted at rest** in PostgreSQL (`credentials_json`
+   column) via Fernet. Decrypted ONLY temporarily inside request handlers —
+   NEVER written to disk or logs.
+3. **Fernet key resolution** (`backend/utils/crypto.py`): `MCP_ENCRYPTION_KEY`
+   env var (valid Fernet key) takes priority; otherwise a key is derived
+   deterministically from `SECRET_KEY` (SHA-256 → urlsafe b64). This fallback
+   means rotating `SECRET_KEY` rotates the credential encryption key too —
+   if you ever rotate it in production, stored credentials stop decrypting.
+4. **Admin approval gate** — templates only appear in the library once a
+   superuser sets `approved_by_admin` / `enabled_global`. This is also where
+   the monetization pipeline starts (user template requests → admin review).
+5. **Role hierarchy** — strict USER / SUPERUSER roles. Every `/superuser/*`
+   endpoint enforces the role server-side via a dependency; frontend gating
+   (`AuthContext.user.role === 'SUPERUSER'`) is cosmetic only — the backend is
+   the source of truth.
+
+## Technical Stack
+
+- **Frontend:** Next.js (App Router) + TypeScript, Tailwind ("Void & Neon"
+  aesthetic: `eepy-lavender` / `eepy-peach` / `eepy-mint` accents), Lucide
+  React icons, "console feel" UI convention.
+- **Backend:** FastAPI, PostgreSQL via SQLAlchemy (sync), Alembic migrations
+  (also an idempotent `backend/run_migrations.py`), JWT auth (python-jose).
+- **Deploy:** Docker Compose in `deploy/` (db + backend + frontend), GHCR
+  images via CI.
+
+## Repository Layout
+
+```
+├── backend/
+│   ├── main.py               # FastAPI app, router mounting, template seeding,
+│   │                         #   superuser routes, superuser bootstrap
+│   ├── auth.py               # JWT encode/decode (python-jose)
+│   ├── database.py           # engine/session (DATABASE_URL from env)
+│   ├── run_migrations.py     # idempotent schema bootstrap
+│   ├── api/
+│   │   └── mcp_endpoints.py  # ALL MCP routes: tool keys, template list,
+│   │                         #   config register/list/delete/test/mcp-url,
+│   │                         #   unified proxy, unified OpenAPI spec
+│   ├── models/
+│   │   └── mcp_models.py     # MCPTemplate, UserMCPConfig, MCPUserToolKey,
+│   │                         #   MCPTemplateRequest
+│   ├── utils/
+│   │   └── crypto.py         # Fernet encrypt/decrypt (+ SECRET_KEY fallback)
+│   ├── alembic/              # migration structure + MCP migration
+│   └── requirements.txt
+├── frontend/
+│   ├── app/                  # App Router pages: /auth, /dashboard/*
+│   ├── context/AuthContext.tsx
+│   ├── lib/api.ts
+│   └── src/components/       # MCPConnectionWizard, OpenWebUIExportPanel
+├── deploy/
+│   ├── docker-compose.yml    # db + backend + frontend (no secrets in file)
+│   └── .env.example          # secret reference — copy to .env and fill in
+└── assets/
+```
+
+## MCP API Surface (implemented)
+
+All under `/api/mcp` (router prefix in `api/mcp_endpoints.py`):
+
+| Method & Path | Purpose | Auth |
+|---------------|---------|------|
+| `POST /api/mcp/api-keys` | Create a Tool API Key (`eekey_...`, shown once) | USER |
+| `GET /api/mcp/api-keys` | List keys (prefix only, never plaintext) | USER |
+| `DELETE /api/mcp/api-keys/{key_id}` | Revoke a key | USER |
+| `GET /api/mcp/templates/list` | Approved+enabled templates with config schemas | USER |
+| `POST /api/mcp/config/register` | Save credentials for a template (encrypted on write) | USER |
+| `GET /api/mcp/config/list` | User's active configs (no plaintext creds) | USER |
+| `DELETE /api/mcp/config/{template_id}` | Remove a config + stored creds | USER (owner) |
+| `GET /api/mcp/config/{template_id}/mcp-url` | Per-template MCP URL | USER |
+| `POST /api/mcp/config/{template_id}/test` | Test stored credentials live | USER / Tool Key |
+| `GET/POST/PUT /api/mcp/proxy/{template_id}/{tool_name}` | The core proxy: decrypt in memory → call upstream → stream back | USER / Tool Key |
+| `GET /api/mcp/openapi.json` | Unified OpenAPI spec of ALL connected tools (Open WebUI import) | public |
+
+**Tool API Keys** are stored hashed (`mcp_user_tool_keys`) and accepted ONLY
+on the proxy and config-test routes. On any other route an `eekey_` bearer is
+rejected — session JWTs and tool keys have strictly different scopes.
+
+## Adding a New Integration (runbook)
+
+1. **Register the template** — either seed it in `main.py` (like HappyFox) or
+   add an `MCPTemplate` row, with `config_schema` (JSON: field name, type
+   `string`/`password`, label, help, required) describing which credentials to
+   collect.
+2. **Add to `TEMPLATE_REGISTRY`** in `backend/api/mcp_endpoints.py` — the tool
+   map (tool name → upstream HTTP method + path) plus upstream base-URL/
+   auth logic. The unified proxy picks it up automatically.
+3. **Approve it** — `approved_by_admin=True`, `enabled_global=True`.
+4. **Done.** It appears in the library, the connect wizard renders from
+   `config_schema`, and its tools show up in every user's unified Open WebUI
+   connection automatically (single-connection model).
+
+HappyFox credential fields: `HAPPYFOX_DOMAIN` (string),
+`HAPPYFOX_API_KEY` + `HAPPYFOX_AUTH_CODE` (password). Upstream API:
+`https://{domain}/api/1.1/json/`. Write tools require user confirmation per
+the upstream spec — keep that.
 
 ## Setup Commands
 
 ### Prerequisites
 ```bash
-python 3.12+ required for backend development
-Node.js 18+ recommended for frontend work
-PostgreSQL 15+ running locally or via Docker container
+python 3.12+ (backend) | Node.js 18+ (frontend) | PostgreSQL 15+ (or Docker)
 ```
 
-### Backend Development
+### Backend development
 ```bash
-cd /home/user/eepy-host/backend  
-pip install -r requirements.txt pipenv pytest python-dotenv sqlalchemy asyncpg uvicorn fastapi python-jose[cryptography] cryptography alembic pydantic==2.0.* 
-DATABASE_URL="postgresql://USER:PASSWORD@db:5432/eepy_host" MCP_ENCRYPTION_KEY=generate-a-valid-fernet-key-here python run_migrations.py  
+cd backend
+pip install -r requirements.txt
+# DATABASE_URL, SECRET_KEY (and optionally MCP_ENCRYPTION_KEY) from env:
+source ../deploy/.env   # after filling it in
+python run_migrations.py
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
-curl http://localhost:8000/health  
+curl http://localhost:8000/health
 ```
 
-### Frontend Development
+### Frontend development
 ```bash
-cd /home/user/eepy-host/frontend 
+cd frontend
 pnpm install
-pnpm dev
+NEXT_PUBLIC_API_URL=http://localhost:8000 pnpm dev
 pnpm build && pnpm start
 ```
 
-### Docker Deployment Commands (compose file lives in deploy/)
-```bash 
+### Docker deployment (compose file lives in `deploy/`)
+```bash
 cd deploy
 cp .env.example .env   # then fill in real secrets (.env is git-ignored)
+chmod 600 .env
 docker compose up -d
 docker compose ps
-docker logs eepy-backend -f      
+docker logs eepy-backend -f
 ```
+
+### Testing
+```bash
+cd backend && pytest tests/ --cov=. -v || echo "Tests failed"
+cd frontend && pnpm vitest run --reporter=verbose && pnpm lint
+```
+
+## Critical Developer Nuances (learn the hard way)
+
+1. **Absolute import rule — CRITICAL.** Never use relative imports in
+   `backend/main.py` (Uvicorn runs it as a top-level script →
+   `ImportError: attempted relative import with no known parent package`).
+   Always `from api.mcp_endpoints import ...`, etc.
+2. **JSX syntax fragility.** When rewriting `.tsx` files with automated
+   tools, escaping artifacts break the build immediately. Use quoted HEREDOCs
+   for file writes and re-verify the file after every automated edit.
+3. **Credential security — SECURITY CRITICAL.** All MCP credentials are
+   Fernet-encrypted at rest. Decryption happens only in memory during handler
+   execution. No logs, no disk, no error messages that echo decrypted values.
+4. **Role enforcement is server-side.** Client-side role checks are UX only;
+   every privileged endpoint validates the JWT role in a FastAPI dependency.
 
 ## Code Style Guidelines
 
 ### Backend (Python/FastAPI)
-1. **Absolute Import Rule CRITICAL:** Never use relative imports in `backend/main.py` due to Uvicorn running as top-level script. Use absolute imports instead.
-2. Pydantic models should inherit from BaseModel with type hints and validation rules.
-3. Wrap DB operations in try/except + return standardized HTTPException responses via middleware layer.
-4. MCP credentials encrypted at rest via Fernet symmetric encryption; decrypted only temporarily inside request handlers - never persisted anywhere else, not even logs!
+1. Absolute imports in `main.py` (see Critical Nuances #1).
+2. Pydantic models inherit `BaseModel` with type hints and validation.
+3. Wrap DB operations in try/except and return standardized
+   `HTTPException` responses.
+4. Never log or persist decrypted credentials (see #3 above).
 
-### Frontend (TypeScript/Next.js App Router)  
-1. Component naming uses PascalCase convention  
-2. Tailwind utility classes: no arbitrary CSS values unless absolutely necessary
-3. Lucide React icons only for visual elements  
+### Frontend (TypeScript/Next.js App Router)
+1. PascalCase component naming.
+2. Tailwind utilities; no arbitrary CSS values unless necessary.
+3. Lucide React icons only.
+4. Dark "console feel" — void surfaces with eepy-lavender/peach/mint accents.
 
-## Testing Instructions
-```bash  
-cd /home/user/eepy-host/backend 
-pytest tests/ --cov=. -v || echo "Tests failed"   
-pnpm test
-pnpm vitest run --reporter=verbose && pnpm lint    
-```
+## Operational Notes
 
-Integration Checklist: Verify no relative imports, post-write grep checks for escaping issues, encryption logic unit tests.  
+- **Secrets** come from `deploy/.env` (git-ignored): `POSTGRES_PASSWORD`,
+  `DATABASE_URL`, `SECRET_KEY`, `MCP_ENCRYPTION_KEY`.
+  `SECRET_KEY` signs JWTs (also the Fernet fallback key) — see Key
+  Architecture Decision #3 before ever rotating it.
+- **Initial superuser** is bootstrapped from the `SUPERUSER_USERNAME` env var
+  at startup (idempotent promotion).
+- **Schema inspection:** `DESCRIBE mcp_templates; DESCRIBE user_mcp_configs;`
+  in psql.
+- **Monetization telemetry (planned, post-launch):** `last_used_at` + per
+  config request counters for usage-based decisions.
 
-## Phase 4 Implementation Plan
+## Workflow Preferences
 
-### HappyFox Template Integration  
-**Repository:** https://github.com/Glitch3dPenguin/happyfox-mcp 
-
-Architecture Principles:
-- Single unified backend handling all MCP integrations via `/proxy/{template_id}/*` routes 
-- Credentials stored as Fernet-encrypted JSONB columns in PostgreSQL, decrypted only temporarily during request handlers  
-- Admin approval required before users can connect any template (monetization gate)
-
-### Database Schema Changes Needed  
-
-Files to Create:
-1. `backend/models/mcp_models.py` - MCPTemplate, UserMCPServerConfig, MCPTemplateRequest tables
-2. Alembic migration script for new tables + foreign key constraints  
-
-Table Definitions:  
-```python 
-class MCPTemplate(Base):
-    __tablename__ = 'mcp_templates'
-    id (PK), name, description, config_schema(JSON)  
-    approved_by_admin(bool), enabled_global(bool)
-
-class UserMCPServerConfig(Base):
-    __tablename__ = 'user_mcp_configs'   
-    id(PK), owner_id(ForeignKey(User.id)), template_name, credentials_json(ENCRYPTED JSONB)  
-
-class MCPTemplateRequest(Base):  
-    __tablename__ = 'mcp_template_requests'    
-    id(PK), requester_id(ForeignKey(User.id)), requested_name, description_purpose(TEXT), status(Enum:pending|approved|rejected) 
-```
-
-### Backend Endpoints To Implement  
-Files to Create:`backend/api/mcp_endpoints.py` 
-
-Endpoints include listing templates (GET /api/mcp/templates/list), registering credentials with encryption (POST `/api/mcp/config/register`, deleting configs, submitting new requests for admin approval. Core proxy endpoint: `/api/mcp/proxy/happyfox/{tool_name}/{rest_of_path}` handles decrypted credential lookups in memory only during request execution - NEVER TO DISK/LOGS!  
-
-### Frontend Components To Build  
-Files to Create:
-1. `frontend/src/app/mcp/library/page.tsx`  (template grid view) 
-2. `frontend/src/components/MCPConnectionWizard.tsx` reusable component for credential entry form based on config_schema from backend API
-
-Page Routes: `/mcp/library`, `/mcp/connect/happyfox` 
-
-### Backend Security & Credential Encryption Strategy  
-Files to Create:`backend/utils/crypto.py` with Fernet encrypt/decrypt functions. CRITICAL: all user MCP credentials encrypted at rest using single master key from env var; decrypted only temporarily inside request handlers - never persisted anywhere else, not even logs!
-
-Security Checklist Before Launch:
-- Verify encryption at rest (no plaintext in DB)  
-- Decryption happens only in memory during handler execution -> NO disk writes or log output ever! 
-All MCP tool responses sanitized for context safety? Yes. User confirmation required before write operations per HappyFox spec requirement? YES.  
-
-### Admin Approval Workflow Endpoints
-Files to Create:`backend/api/superuser/mcp_admin.py`  
-POST `/api/superuser/templates/approve/{id}` - Approve user-requested template -> add to library, enable for all users (SUPERUSER role only) 
-DELETE `/superuser/request/reject/{id}/notes`- Reject request with optional admin notes sent back  
-
-### Implementation Sequence
-
-Phase 4a Week 1: Database schema + migration files
-- [ ] Create `backend/models/mcp_models.py` file  
-[ ] Generate Alembic migration script via autogenerate flag 
-[ ] Run migration on dev environment and verify schema is correctly created in PostgreSQL (check DB manually or use psql)  
-
-Phase 4a Week2: Backend endpoints + crypto utils
-- [ ] Create `backend/utils/crypto.py` with Fernet encryption/decryption helper functions  
-IMPLEMENT GET `/api/mcp/templates/list`, POST `/api/mcp/config/register`, DELETE route and other CRUD operations on UserMCPServerConfig via owner_id FK checks  
-
-Phase 4a Week3: Frontend library page + connection wizard UI
-- [ ] Create frontend page `/mcp/library` showing template cards in grid layout (HappyFox appears first)  
-[ ] Implement reusable MCPConnectionWizard component accepting config_schema from backend and dynamically building form fields based on field types (string vs password input toggle for credential visibility!)
-
-Phase 4a Week4: HappyFox proxy endpoint logic + security testing
-- [ ] Implement proxy endpoint routing under `/api/mcp/proxy/happyfox/{tool_name}`  
-[ ] Test via manual curl requests with mocked decrypted credentials in memory (DO NOT use production API keys yet!)  
-
-### Testing & Deployment Checklist
-
-Before enabling HappyFox template for all users: 
-Verify encryption at rest, test proxy endpoint with mocked data -> ensure no logs leak decrypted API keys/auth codes, confirm user confirmation required before write tools per spec requirement, validate frontend wizard displays masked password fields correctly.
-
-Post-launch monitoring: track `last_used_at` timestamp + request counter in JSONB object for monetization decisions later.  
-
-### Additional Context For Agents 
-
-Knowledge base system via memory paths; search by filename or semantic query describing what you're looking for  
-Monetization pipeline starts when users request custom integrations -> admin review queue with optional pricing tier assignment
-Database schema reference: Run `DESCRIBE mcp_templates; DESCRIBE user_mcp_configs;` in PostgreSQL CLI to see full table structure
+- Direct main-branching (no feature branches yet); rapid prototyping →
+  implementation verification cycle.
+- Communication style: professional/factual; minimize emoji in documentation
+  unless an aesthetic requirement is validated in code review.
