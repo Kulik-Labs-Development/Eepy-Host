@@ -54,7 +54,7 @@ Eepy Host is a **managed integration layer between LLM agents and real-world Saa
 - **Unified proxy** — every tool call for every integration flows through `/api/mcp/proxy/{template_id}/{tool}`. Credentials are decrypted in memory for the duration of the request only — never logged, never persisted in plaintext.
 - **Live connection testing** — users validate stored credentials against the real upstream API from the dashboard in one click.
 - **Open WebUI as a single tool server** — one user-scoped, revocable API key + one OpenAPI spec URL covers *every* integration the user has connected, now and in the future. No per-server imports, ever.
-- **Dashboard** — account & profile management, per-server observability (last used, live tests), organization tools for superusers.
+- **Dashboard** — Overview hub with the Open WebUI tool-server connection and a live status flag; account & profile management; per-server observability (last used, live tests); organization tools for superusers.
 
 ## Current Integrations
 
@@ -84,7 +84,7 @@ New integrations are added as admin-approved templates. Because the Open WebUI e
 
 Eepy Host is designed to be **one** external tool server for your agent, not one per integration:
 
-1. **Create a key** — In the Eepy dashboard, open the **Open WebUI** section on the MCP Servers page and generate a Tool API Key (`eekey_…`). The plaintext is shown once; only a SHA-256 hash is stored. The key is user-scoped: it unlocks every integration *you* have connected.
+1. **Create a key** — In the Eepy dashboard, open the **Open WebUI** section on the **Overview** page (it shows your live connection status at a glance) and generate a Tool API Key (`eekey_…`). The plaintext is shown once; only a SHA-256 hash is stored. The key is user-scoped: it unlocks every integration *you* have connected.
 2. **Copy the spec URL** — `https://<your-host>/api/mcp/openapi.json` is a public, secret-free OpenAPI 3.0 document describing the entire Eepy tool surface (tools namespaced as `/{template}/{tool}`).
 3. **Import in Open WebUI** — Settings → Tools → add an external Tool Server → paste the URL → Bearer auth with your key. Done.
 
@@ -185,7 +185,8 @@ All endpoints live under a single FastAPI app. Interactive docs at `/docs` when 
 │   └── app/
 │       ├── auth/             # Unified sign-in / sign-up portal
 │       └── dashboard/
-│           ├── servers/      # MCP hub: active servers, Open WebUI, library
+│           ├── page.tsx    # Overview: Open WebUI tool server + status flag
+│           ├── servers/    # Active integrations + browsable library
 │           ├── account/      # Profile & identity management
 │           ├── organization/ # Superuser org hub
 │           ├── debug/        # Live console log

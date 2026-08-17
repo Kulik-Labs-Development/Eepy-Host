@@ -5,6 +5,9 @@
 // from the backend; "Connect" opens a schema-driven wizard that stores
 // credentials (encrypted at rest). Active servers show the unified proxy URL, a
 // live connection test, and disconnect.
+//
+// NOTE: the Open WebUI tool-server setup lives on the Overview page
+// (/dashboard) - this page is purely integrations in/out.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -20,11 +23,9 @@ import {
   Wifi,
   WifiOff,
   Search,
-  Plug,
 } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
 import MCPConnectionWizard, { TemplateSchema } from '@/src/components/MCPConnectionWizard';
-import OpenWebUIExportPanel from '@/src/components/OpenWebUIExportPanel';
 
 interface Template {
   id: string;
@@ -55,7 +56,6 @@ export default function ServersPage() {
   const [error, setError] = useState('');
 
   const [wizardTemplate, setWizardTemplate] = useState<Template | null>(null);
-  const [openWebUIOpen, setOpenWebUIOpen] = useState(false);
 
   // Per-config ephemeral UI state.
   const [copiedId, setCopiedId] = useState<number | null>(null);
@@ -275,31 +275,6 @@ export default function ServersPage() {
             )}
           </section>
 
-          {/* Open WebUI - one connection for the entire Eepy tool surface */}
-          <section className="p-8 bg-void-surface/30 border border-void-border rounded-eepy backdrop-blur-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-start gap-4">
-                <div className="p-3 bg-eepy-lavender/10 rounded-lg text-eepy-lavender shrink-0">
-                  <Plug size={22} />
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold font-console">Open WebUI</h3>
-                  <p className="text-gray-500 font-console text-sm mt-1 max-w-xl leading-relaxed">
-                    One connection gives your agent every Eepy tool - all integrations you have connected, plus
-                    every one you connect later. No per-server setup, ever.
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setOpenWebUIOpen(true)}
-                className="px-4 py-2.5 bg-eepy-lavender text-void rounded-lg text-xs font-console font-bold hover:bg-opacity-90 transition-all flex items-center gap-2 self-start"
-              >
-                <Plug size={15} />
-                {configs.length > 0 ? 'Open WebUI Tool Server Setup' : 'Set Up Tool Server'}
-              </button>
-            </div>
-          </section>
-
           {/* Integration Library (browsable catalog, filtered) */}
           <section>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
@@ -383,9 +358,6 @@ export default function ServersPage() {
         />
       )}
 
-      {openWebUIOpen && (
-        <OpenWebUIExportPanel onClose={() => setOpenWebUIOpen(false)} />
-      )}
     </div>
   );
 }
