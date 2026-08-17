@@ -32,11 +32,13 @@ pnpm dev
 pnpm build && pnpm start
 ```
 
-### Docker Deployment Commands
+### Docker Deployment Commands (compose file lives in deploy/)
 ```bash 
-docker compose up --build -d  
-docker-compose ps   
-docker logs backend-app -f      
+cd deploy
+cp .env.example .env   # then fill in real secrets (.env is git-ignored)
+docker compose up -d
+docker compose ps
+docker logs eepy-backend -f      
 ```
 
 ## Code Style Guidelines

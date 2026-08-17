@@ -105,7 +105,7 @@ Security properties of the key:
 
 ```bash
 git clone https://github.com/Kulik-Labs-Development/Eepy-Host.git
-cd Eepy-Host
+cd Eepy-Host/deploy
 cp .env.example .env
 # edit .env: set a strong SECRET_KEY and generate a Fernet key:
 #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -123,13 +123,14 @@ docker compose up -d
 
 ```bash
 # 1. Database
-docker compose up -d db
+docker compose -f deploy/docker-compose.yml up -d db
 
 # 2. Backend
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example ../.env   # and fill in DATABASE_URL, SECRET_KEY, MCP_ENCRYPTION_KEY
+# Fill in DATABASE_URL, SECRET_KEY, MCP_ENCRYPTION_KEY from deploy/.env (or export them)
+set -a; source ../deploy/.env; set +a
 uvicorn main:app --reload --port 8000
 
 # 3. Frontend
@@ -149,7 +150,7 @@ The backend creates missing tables on startup and seeds the approved template re
 | `MCP_ENCRYPTION_KEY` | Fernet key for credential encryption at rest. Generate with `Fernet.generate_key()`. |
 | `NEXT_PUBLIC_API_URL` | Backend base URL used by the frontend |
 
-See [.env.example](.env.example) for the full reference.
+See [deploy/.env.example](deploy/.env.example) for the full reference.
 
 ## API Overview
 
@@ -202,8 +203,9 @@ All endpoints live under a single FastAPI app. Interactive docs at `/docs` when 
 │   │   └── crypto.py         # Fernet credential encryption
 │   ├── alembic/              # Migration structure
 │   └── requirements.txt
-├── docker-compose.yml        # db + backend + frontend
-└── .env.example
+└── deploy/
+    ├── docker-compose.yml    # db + backend + frontend (no secrets in the file)
+    └── .env.example          # secret reference - copy to .env and fill in
 ```
 
 ## Adding a New Integration
