@@ -1,0 +1,83 @@
+Eepy Host License
+=================
+
+Copyright (c) 2026 Kulik Labs Development. All rights reserved.
+
+Eepy Host is the proprietary work of Kulik Labs Development ("Owner").
+This license grants you certain rights to use the software. By using,
+copying, modifying, or distributing Eepy Host, you agree to the terms
+below. If you do not agree, do not use the software.
+
+1. DEFINITIONS
+--------------
+
+"Software" means Eepy Host as published at
+https://github.com/Kulik-Labs-Development/Eepy-Host, including all
+source code, configuration, documentation, and derivative works.
+
+"Personal, Non-Commercial Use" means using the Software for your own
+private, educational, or evaluation purposes where no direct or
+indirect fee, charge, subscription, or other monetary consideration is
+collected from end users for access to the Software or services built
+on it.
+
+2. GRANT OF LICENSE
+-------------------
+
+Subject to these terms, Owner grants you a worldwide, royalty-free,
+non-exclusive, non-transferable, non-sublicensable license to:
+
+  (a) use, view, and run the Software;
+  (b) copy and modify the Software; and
+  (c) distribute copies of the Software, unmodified or modified,
+
+in each case solely for Personal, Non-Commercial Use. Any
+redistribution must include an unaltered copy of this license and the
+copyright notice above.
+
+3. COMMERCIAL RESTRICTIONS
+--------------------------
+
+You may NOT, and you agree not to:
+
+  (a) sell, license, lease, or otherwise transfer the Software for
+     money or other valuable consideration;
+  (b) use the Software, in whole or in part, to operate a business,
+     product, service, or platform that charges users, customers, or
+     third parties of any kind (including SaaS offerings, hosted
+     services, consulting deliverables, or white-label products); or
+  (c) provide the Software, or services primarily enabled by it, to
+     third parties as a commercial service.
+
+Personal, Non-Commercial Use does not include use by a company,
+organization, or other entity in the ordinary course of a business,
+except as strictly internal tooling that does not generate revenue or
+serve third parties.
+
+4. OWNERSHIP
+------------
+
+The Software and all intellectual property rights in it remain the sole
+and exclusive property of Kulik Labs Development. Nothing in this
+license transfers ownership to you. No rights are granted to Owner's
+name, trademarks, or branding, except as required to comply with this
+license.
+
+5. COMMERCIAL LICENSES
+----------------------
+
+Commercial use is not covered by this license. Commercial licenses
+(and related services) are available from Kulik Labs Development.
+Inquiries: contact Kulik Labs Development through the project
+repository.
+
+6. DISCLAIMER OF WARRANTY
+-------------------------
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+NONINFRINGEMENT. IN NO EVENT SHALL OWNER BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR
+OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR
+THE USE OR OTHER DEALINGS IN THE SOFTWARE.

@@ -239,6 +239,16 @@ A few hard-learned conventions for this codebase:
 - [ ] Usage analytics (per-template call volume, health)
 - [ ] Template pricing tiers and billing
 
+## Licensing
+
+Eepy Host is proprietary software owned by **Kulik Labs Development**.
+
+- **Personal / non-commercial use:** free. You may run, copy, modify, and share the code for private, educational, or evaluation purposes.
+- **Commercial use: not permitted** under this license. You may not sell the software, build a business or paid service on top of it, or offer it to third parties for a fee (SaaS, white-label, consulting deliverables, etc.).
+- **Commercial licenses** are available from Kulik Labs Development — see the repository for contact info.
+
+See [LICENSE](LICENSE) for the full terms. Use of this repository constitutes acceptance of those terms.
+
 ## Contributing
 
 This project currently follows a rapid-iteration workflow on `main`:
