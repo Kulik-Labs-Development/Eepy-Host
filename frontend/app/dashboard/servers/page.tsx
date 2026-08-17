@@ -20,9 +20,11 @@ import {
   Wifi,
   WifiOff,
   Search,
+  Plug,
 } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
 import MCPConnectionWizard, { TemplateSchema } from '@/src/components/MCPConnectionWizard';
+import OpenWebUIExportPanel from '@/src/components/OpenWebUIExportPanel';
 
 interface Template {
   id: string;
@@ -53,6 +55,7 @@ export default function ServersPage() {
   const [error, setError] = useState('');
 
   const [wizardTemplate, setWizardTemplate] = useState<Template | null>(null);
+  const [openwebuiTemplate, setOpenWebUITemplate] = useState<string | null>(null);
 
   // Per-config ephemeral UI state.
   const [copiedId, setCopiedId] = useState<number | null>(null);
@@ -231,6 +234,13 @@ export default function ServersPage() {
                             <FlaskConical size={14} /> {testingId === config.id ? 'Testing...' : 'Run Live Test'}
                           </button>
                           <button
+                            onClick={() => setOpenWebUITemplate(config.template_name)}
+                            className="px-3 py-2 bg-void border border-void-border rounded-lg text-xs font-console hover:bg-void-border transition-colors flex items-center gap-1.5"
+                            title="Export for Open WebUI"
+                          >
+                            <Plug size={14} className="text-eepy-mint" /> Add to Open WebUI
+                          </button>
+                          <button
                             onClick={() => disconnect(config.template_name, config.id)}
                             className="p-2 border border-void-border rounded-lg hover:bg-red-500/10 hover:text-red-400 transition-colors"
                             title="Disconnect"
@@ -352,6 +362,14 @@ export default function ServersPage() {
             refresh();
           }}
           onClose={() => setWizardTemplate(null)}
+        />
+      )}
+
+      {openwebuiTemplate && (
+        <OpenWebUIExportPanel
+          templateId={openwebuiTemplate}
+          templateName={templates.find((t) => t.id === openwebuiTemplate)?.name || openwebuiTemplate}
+          onClose={() => setOpenWebUITemplate(null)}
         />
       )}
     </div>

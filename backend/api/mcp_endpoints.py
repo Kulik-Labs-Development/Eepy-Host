@@ -1,4 +1,4 @@
-"""MCP integration endpoints - Phase 5 (HappyFox template #1).
+"""MCP integration endpoints - Phase 5 (HappyFox template #1) + Open WebUI Tool Server export.
 
 Security model:
 - Credentials are encrypted with Fernet (MCP_ENCRYPTION_KEY) before being written to
@@ -8,21 +8,29 @@ Security model:
   never written to disk.
 - Every endpoint requires a valid JWT (get_current_user). The backend is the source of
   truth for authorization; the frontend is never trusted for access control.
+- Proxy + connection-test endpoints additionally accept a scoped, revocable Tool API
+  Key (Bearer `eekey_...`). The key is tied to ONE template for ONE user and is
+  accepted ONLY on /api/mcp/proxy/* and /config/{template}/test — never on user,
+  auth, billing, or superuser routes. Only a SHA-256 hash is stored; the plaintext
+  key is returned once at creation and is never persisted.
 """
 
+import hashlib
 import logging
 import re
+import secrets
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from auth import decode_access_token
 from database import get_db, User
-from models.mcp_models import MCPTemplate, UserMCPConfig
+from models.mcp_models import MCPTemplate, UserMCPConfig, MCPToolApiKey
 from utils.crypto import encrypt_credentials, decrypt_credentials
 
 logger = logging.getLogger("eepy-backend")
@@ -109,6 +117,169 @@ def _happyfox_base(domain: str) -> str:
     if not domain.startswith("http"):
         domain = f"https://{domain}"
     return f"{domain.rstrip('/')}/api/1.1/json"
+
+
+# ---------------------------------------------------------------------------
+# Scoped Tool API Key auth (Open WebUI integration)
+# ---------------------------------------------------------------------------
+# The proxy + connection-test routes accept EITHER a session JWT OR a scoped Tool
+# API Key. The key is deliberately narrow: it identifies a (user, template) pair
+# and works only on MCP routes. It is NOT a general Eepy credential — it cannot
+# touch /user/*, /auth/*, /superuser/*, billing, or any other template.
+def _resolve_scoped_user(request: Request, db: Session) -> User:
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+
+        # Scoped tool key path.
+        if token.startswith("eekey_"):
+            key_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+            key_row = (
+                db.query(MCPToolApiKey)
+                .filter(MCPToolApiKey.key_hash == key_hash, MCPToolApiKey.is_active == True)  # noqa: E712
+                .first()
+            )
+            if not key_row:
+                raise HTTPException(status_code=401, detail="Invalid or revoked tool API key.")
+            user = db.query(User).filter(User.id == key_row.owner_id).first()
+            if not user:
+                raise HTTPException(status_code=404, detail="Key owner no longer exists.")
+            # Enforce template scope: /api/mcp/proxy/{template}/...
+            path = request.url.path
+            m = re.match(r"^/api/mcp/(?:proxy|config)/([^/]+)", path)
+            if not m or m.group(1) != key_row.template_name:
+                raise HTTPException(status_code=403, detail="Tool API key is scoped to a different integration.")
+            # Throttle-friendly last-used tracking (do not commit on every read).
+            key_row.last_used_at = datetime.utcnow()
+            db.commit()
+            return user
+
+        # Session JWT path.
+        payload = decode_access_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        username = payload.get("sub")
+        user = db.query(User).filter(User.username == username).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
+
+    raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
+
+
+def get_current_user_or_key(request: Request, db: Session = Depends(get_db)) -> User:
+    """Proxy-only auth: accepts EITHER a JWT OR a scoped Tool API Key."""
+    return _resolve_scoped_user(request, db)
+
+
+def _generate_tool_key() -> str:
+    return "eekey_" + secrets.token_urlsafe(32)
+
+
+def _tool_key_out(row: MCPToolApiKey, show_plaintext: Optional[str] = None) -> Dict[str, Any]:
+    out = {
+        "id": row.id,
+        "name": row.name,
+        "template_name": row.template_name,
+        "key_prefix": row.key_prefix,
+        "is_active": row.is_active,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
+        "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
+    }
+    if show_plaintext is not None:
+        # Returned exactly once, at creation time. Never persisted.
+        out["key"] = show_plaintext
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Tool API Keys (Open WebUI / third-party integrations)
+# ---------------------------------------------------------------------------
+class ToolKeyCreateIn(BaseModel):
+    template_id: str = Field(..., description="Integration this key is scoped to, e.g. 'happyfox'.")
+    name: Optional[str] = Field("Open WebUI", description="Label shown in the Eepy UI.")
+
+
+@router.post("/api-keys")
+async def create_tool_api_key(
+    body: ToolKeyCreateIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a scoped, revocable Tool API Key for an integration.
+
+    The plaintext key is returned ONCE. Only a SHA-256 hash is stored.
+    The key is scoped to this template for this user and works only on
+    /api/mcp/proxy/{template}/* and /api/mcp/config/{template}/test.
+    """
+    template = (
+        db.query(MCPTemplate)
+        .filter(MCPTemplate.id == body.template_id, MCPTemplate.approved_by_admin == True, MCPTemplate.enabled_global == True)  # noqa: E712
+        .first()
+    )
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template '{body.template_id}' is not available.")
+
+    cfg = (
+        db.query(UserMCPConfig)
+        .filter(UserMCPConfig.owner_id == current_user.id, UserMCPConfig.template_name == body.template_id, UserMCPConfig.is_active == True)  # noqa: E712
+        .first()
+    )
+    if not cfg:
+        raise HTTPException(status_code=400, detail=f"Connect to {template.name} first, then generate a key.")
+
+    plaintext = _generate_tool_key()
+    row = MCPToolApiKey(
+        owner_id=current_user.id,
+        template_name=body.template_id,
+        name=body.name or "Open WebUI",
+        key_hash=hashlib.sha256(plaintext.encode("utf-8")).hexdigest(),
+        key_prefix=plaintext[:8],
+        is_active=True,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    logger.info(f"User {current_user.username} created tool API key id={row.id} for {body.template_id}")
+    return _tool_key_out(row, show_plaintext=plaintext)
+
+
+@router.get("/api-keys")
+async def list_tool_api_keys(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List the user's tool API keys. Never returns plaintext — only a short prefix."""
+    rows = (
+        db.query(MCPToolApiKey)
+        .filter(MCPToolApiKey.owner_id == current_user.id)
+        .order_by(MCPToolApiKey.created_at.desc())
+        .all()
+    )
+    return [_tool_key_out(r) for r in rows]
+
+
+@router.delete("/api-keys/{key_id}")
+async def revoke_tool_api_key(
+    key_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Revoke a tool API key. The next call using it will 401."""
+    row = (
+        db.query(MCPToolApiKey)
+        .filter(MCPToolApiKey.id == key_id, MCPToolApiKey.owner_id == current_user.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    row.is_active = False
+    row.revoked_at = datetime.utcnow()
+    db.commit()
+    logger.info(f"User {current_user.username} revoked tool API key id={row.id} for {row.template_name}")
+    return {"status": "revoked", "id": row.id}
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +428,9 @@ async def mcp_proxy_url(
 async def test_mcp_connection(
     template_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    # Accept EITHER a session JWT OR a scoped Tool API Key so the Open WebUI
+    # Tool Server connection can self-test.
+    current_user: User = Depends(get_current_user_or_key),
 ):
     """Validate stored credentials against the external API (read-only call).
 
@@ -322,7 +495,8 @@ async def mcp_proxy(
     tool_name: str,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    # Accept EITHER a session JWT OR a scoped Tool API Key (Open WebUI).
+    current_user: User = Depends(get_current_user_or_key),
 ):
     # Collect params from either the JSON body or the query string.
     params: Dict[str, Any] = {}
@@ -396,3 +570,177 @@ async def mcp_proxy(
         payload = r.text
 
     return {"status_code": r.status_code, "tool": tool_name, "data": payload}
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI 3 spec generator (Open WebUI "Tool Server" import)
+# ---------------------------------------------------------------------------
+# Open WebUI's external Tool Server connector consumes a standard OpenAPI doc:
+# it takes a URL, fetches the spec, and lists every operation as a tool the LLM
+# can call, sending the configured auth (Bearer) on each request. This endpoint
+# exposes our proxy surface as exactly that. It is PUBLIC on purpose: it contains
+# no credentials — only tool names, parameters, and the base URL. A user's
+# Eepy credentials live encrypted server-side; the caller supplies a scoped
+# Tool API Key as the Bearer token.
+
+# Per-tool parameter metadata (name, json type, description, where it belongs).
+# GET tools take params as query strings; POST/PUT tools send a JSON body.
+TOOL_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
+    "list_tickets": {
+        "status": {"type": "string", "description": "Ticket status filter (e.g. 'open', 'pending', 'resolved')."},
+        "size": {"type": "integer", "description": "Page size (default 20)."},
+        "page": {"type": "integer", "description": "Page number (default 1)."},
+    },
+    "list_statuses": {},
+    "list_staff": {},
+    "get_ticket_details": {
+        "ticket_id": {"type": "string", "description": "The ticket ID to fetch."},
+    },
+    "get_ticket_messages": {
+        "ticket_id": {"type": "string", "description": "The ticket ID whose messages to fetch."},
+    },
+    "add_ticket_update": {
+        "ticket_id": {"type": "string", "description": "The ticket ID to update."},
+        "comment": {"type": "string", "description": "Text of the reply or private note."},
+        "is_private": {"type": "boolean", "description": "If true, post as a private internal note (default false)."},
+    },
+    "create_ticket": {
+        "summary": {"type": "string", "description": "Subject line of the new ticket."},
+        "message": {"type": "string", "description": "Body text of the ticket."},
+        "email": {"type": "string", "description": "Requester's email address."},
+        "first_name": {"type": "string", "description": "Requester's first name."},
+        "last_name": {"type": "string", "description": "Requester's last name."},
+    },
+    "rename_ticket": {
+        "ticket_id": {"type": "string", "description": "The ticket ID to rename."},
+        "summary": {"type": "string", "description": "New subject line for the ticket."},
+    },
+    "change_ticket_status": {
+        "ticket_id": {"type": "string", "description": "The ticket ID to change."},
+        "status": {"type": "string", "description": "New ticket status (e.g. 'resolved', 'pending', 'open')."},
+    },
+}
+
+TOOL_SUMMARIES = {
+    "list_tickets": "List support tickets with optional status/pagination filters.",
+    "list_statuses": "List all ticket statuses in the HappyFox account.",
+    "list_staff": "List staff members in the HappyFox account.",
+    "get_ticket_details": "Get full details of a single ticket.",
+    "get_ticket_messages": "Get all messages on a ticket thread.",
+    "add_ticket_update": "Post a public reply or private note on a ticket.",
+    "create_ticket": "Create a new support ticket.",
+    "rename_ticket": "Change the subject line of a ticket.",
+    "change_ticket_status": "Change the status of a ticket.",
+}
+
+
+@router.get("/openapi/{template_id}")
+async def openapi_spec(
+    template_id: str,
+    request: Request,
+):
+    """Return an OpenAPI 3.0 document describing the Eepy proxy tools for a template.
+
+    Intended to be imported into Open WebUI as an external Tool Server.
+    Public: contains no secrets — credentials are supplied via Bearer auth.
+    """
+    if template_id != "happyfox":
+        raise HTTPException(status_code=404, detail=f"No OpenAPI spec for '{template_id}'.")
+
+    # Base URL of the proxy. Use the host the caller reached us on so the
+    # spec is correct for local dev AND production (api.eepy.host).
+    base_url = str(request.base_url).rstrip("/")
+    proxy_base = f"{base_url}/api/mcp/proxy/{template_id}"
+
+    paths: Dict[str, Any] = {}
+    for tool_name, (method, path_tpl) in TOOL_MAP.items():
+        # Collapse HappyFox path templates (e.g. /ticket/{id}/) to a single op.
+        # Our proxy exposes one operation per tool at /{tool_name}, not per HappyFox path.
+        op_path = f"/{tool_name}"
+        params_meta = TOOL_PARAMS.get(tool_name, {})
+        path_params = {m for m in re.findall(r"\{(\w+)\}", path_tpl)}
+        # Params named in the tool's path template become required query/body fields.
+        required = [p for p in path_params] + [
+            p for p, spec in params_meta.items() if spec.get("required")
+        ]
+
+        if method == "GET":
+            parameters = []
+            for pname, spec in params_meta.items():
+                parameters.append({
+                    "name": pname,
+                    "in": "query",
+                    "required": pname in required,
+                    "schema": {"type": spec["type"]},
+                    "description": spec.get("description", ""),
+                })
+            op: Dict[str, Any] = {
+                "get": {
+                    "operationId": tool_name,
+                    "summary": TOOL_SUMMARIES.get(tool_name, tool_name),
+                    "description": f"Eepy MCP tool '{tool_name}' proxied to HappyFox via GET {path_tpl}.",
+                    "tags": [template_id],
+                    "parameters": parameters,
+                    "responses": {"200": {"description": "Success"}},
+                }
+            }
+        else:  # POST / PUT -> JSON body
+            body_props: Dict[str, Any] = {}
+            for pname, spec in params_meta.items():
+                body_props[pname] = {"type": spec["type"]}
+                if spec.get("description"):
+                    body_props[pname]["description"] = spec["description"]
+            # Ensure path-template params are present in the body.
+            for p in path_params:
+                if p not in body_props:
+                    body_props[p] = {"type": "string", "description": f"{p} (path parameter)."}
+            op = {
+                "post": {
+                    "operationId": tool_name,
+                    "summary": TOOL_SUMMARIES.get(tool_name, tool_name),
+                    "description": f"Eepy MCP tool '{tool_name}' proxied to HappyFox via {method} {path_tpl}.",
+                    "tags": [template_id],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": body_props,
+                                    "required": required or (list(body_props.keys()) if body_props else []),
+                                }
+                            }
+                        },
+                    },
+                    "responses": {"200": {"description": "Success"}},
+                }
+            }
+        paths[op_path] = op
+
+    spec = {
+        "openapi": "3.0.3",
+        "info": {
+            "title": f"Eepy Host — HappyFox Help Desk Tools",
+            "version": "1.0.0",
+            "description": (
+                "Eepy Host managed integration tools for HappyFox Help Desk. Each operation is a "
+                "tool; Eepy holds your encrypted credentials server-side and proxies the call. "
+                "Authenticate with a scoped Eepy Tool API Key (Bearer)."
+            ),
+        },
+        "servers": [{"url": proxy_base, "description": "Eepy unified MCP proxy (HappyFox)"}],
+        "tags": [{"name": template_id, "description": "HappyFox Help Desk"}],
+        "paths": paths,
+        "components": {
+            "securitySchemes": {
+                "bearerAuth": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "Eepy Tool API Key (starts with 'eekey_'). Generated in the Eepy dashboard.",
+                }
+            }
+        },
+        "security": [{"bearerAuth": {}}],
+    }
+
+    return JSONResponse(content=spec, media_type="application/json")
