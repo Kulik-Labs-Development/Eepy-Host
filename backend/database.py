@@ -5,8 +5,10 @@ import enum
 from datetime import datetime
 import os
 
-# Database URL from environment variable
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://eepy_admin:[ROTATED_POSTGRES_PASSWORD]@db:5432/eepy_host")
+# Database URL from environment variable (no hardcoded fallback - fail fast if unset)
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not set. See .env.example for configuration.")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

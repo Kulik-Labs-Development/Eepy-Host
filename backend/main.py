@@ -60,19 +60,23 @@ def sync_database_schema():
         logger.error(f"Schema column synchronization failed: {e}")
 
     try:
-        db = SessionLocal()
-        user = db.query(User).filter(User.username == '[ROTATED_SUPERUSER_USERNAME]').first()
-        if user:
-            if user.role != UserRole.SUPERUSER:
-                logger.info("Promoting [ROTATED_SUPERUSER_USERNAME] to superuser...")
-                user.role = UserRole.SUPERUSER
-                db.commit()
-                logger.info("User [ROTATED_SUPERUSER_USERNAME] promoted to superuser successfully.")
+        # Optional first-boot bootstrap: promote the account named in the
+        # SUPERUSER_USERNAME env var to superuser (useful for the initial admin).
+        bootstrap_username = os.getenv("SUPERUSER_USERNAME", "")
+        if bootstrap_username:
+            db = SessionLocal()
+            user = db.query(User).filter(User.username == bootstrap_username).first()
+            if user:
+                if user.role != UserRole.SUPERUSER:
+                    logger.info(f"Promoting {bootstrap_username} to superuser...")
+                    user.role = UserRole.SUPERUSER
+                    db.commit()
+                    logger.info(f"User {bootstrap_username} promoted to superuser successfully.")
+                else:
+                    logger.info(f"{bootstrap_username} is already a superuser.")
             else:
-                logger.info("[ROTATED_SUPERUSER_USERNAME] is already a superuser.")
-        else:
-            logger.warning("Promotion failed: User '[ROTATED_SUPERUSER_USERNAME]' not found in database.")
-        db.close()
+                logger.warning(f"Promotion skipped: User '{bootstrap_username}' not found in database.")
+            db.close()
     except Exception as e:
         logger.error(f"Superuser promotion failed: {e}")
 

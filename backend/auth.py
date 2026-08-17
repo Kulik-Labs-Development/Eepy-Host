@@ -3,8 +3,16 @@ from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
 
-# Use the same key as in docker-compose for dev consistency
-SECRET_KEY = "[ROTATED_JWT_SECRET]" 
+import os
+
+# JWT signing key — MUST be provided via the SECRET_KEY environment variable.
+# No default is hardcoded so the service fails fast if misconfigured.
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY environment variable is not set. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440 # 24 hours
 

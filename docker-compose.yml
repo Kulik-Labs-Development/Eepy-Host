@@ -1,12 +1,15 @@
+# All secrets are supplied via a local (git-ignored) .env file next to this
+# compose file. See .env.example for the full list of required variables.
+# No secret has a hardcoded default: the stack refuses to start if one is missing.
 services:
   db:
     image: postgres:15-alpine
     container_name: eepy-db
     restart: always
     environment:
-      POSTGRES_USER: eepy_admin
-      POSTGRES_PASSWORD: [ROTATED_POSTGRES_PASSWORD]
-      POSTGRES_DB: eepy_host
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required - see .env.example}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - see .env.example}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required - see .env.example}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -17,11 +20,12 @@ services:
     container_name: eepy-backend
     restart: always
     environment:
-      - DATABASE_URL=postgresql://eepy_admin:[ROTATED_POSTGRES_PASSWORD]@db:5432/eepy_host
-      - SECRET_KEY=[ROTATED_JWT_SECRET]
-      # Fernet key for MCP credential encryption at rest (44-char Base64).
-      # Override with a strong generated key in production (Fernet.generate_key()).
-      - MCP_ENCRYPTION_KEY=${MCP_ENCRYPTION_KEY:-[ROTATED_FERNET_KEY]}
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL is required - see .env.example}
+      # Long random string that signs JWTs (HS256).
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required - see .env.example}
+      # Fernet key (44-char url-safe Base64) for MCP credential encryption at rest.
+      # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      - MCP_ENCRYPTION_KEY=${MCP_ENCRYPTION_KEY:?MCP_ENCRYPTION_KEY is required - see .env.example}
     ports:
       - "8000:8000"
     depends_on:
@@ -34,7 +38,7 @@ services:
     container_name: eepy-frontend
     restart: always
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     depends_on:

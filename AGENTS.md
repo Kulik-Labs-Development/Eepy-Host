@@ -19,7 +19,7 @@ PostgreSQL 15+ running locally or via Docker container
 ```bash
 cd /home/user/eepy-host/backend  
 pip install -r requirements.txt pipenv pytest python-dotenv sqlalchemy asyncpg uvicorn fastapi python-jose[cryptography] cryptography alembic pydantic==2.0.* 
-DATABASE_URL="postgresql://eepy_admin:[ROTATED_POSTGRES_PASSWORD]@db:5432/eepy_host" MCP_ENCRYPTION_KEY=your-actual-secret-key-here-change-in-production-blahblah== python run_migrations.py  
+DATABASE_URL="postgresql://USER:PASSWORD@db:5432/eepy_host" MCP_ENCRYPTION_KEY=generate-a-valid-fernet-key-here python run_migrations.py  
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 curl http://localhost:8000/health  
 ```
