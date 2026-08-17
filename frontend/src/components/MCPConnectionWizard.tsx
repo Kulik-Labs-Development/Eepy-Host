@@ -89,17 +89,17 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
   };
 
   return (
-    <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-[999] backdrop-blur-sm">
-      <div className="bg-void-surface border-2 border-eepy-lavender rounded-xl p-6 max-w-md w-full relative shadow-2xl max-h-[90vh] overflow-y-auto">
-        <header className="flex items-center justify-between mb-6 pb-4 border-b border-void-border">
-          <div>
-            <h2 className="text-lg font-bold flex items-center gap-2">
-              <ShieldCheck className="text-eepy-mint" size={18} />
-              Connect: {templateName}
+    <div className="fixed inset-0 bg-black/75 flex items-end sm:items-center justify-center sm:p-4 z-[999] backdrop-blur-sm">
+      <div className="bg-void-surface border-2 border-eepy-lavender rounded-t-2xl sm:rounded-xl p-4 sm:p-6 max-w-md w-full relative shadow-2xl max-h-[92vh] overflow-y-auto">
+        <header className="flex items-center justify-between mb-6 pb-4 border-b border-void-border gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
+              <ShieldCheck className="text-eepy-mint" size={18} shrink-0 />
+              <span className="truncate">Connect: {templateName}</span>
             </h2>
             <p className="text-xs text-gray-500 mt-1">Credentials are encrypted at rest (Fernet) on the server.</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors shrink-0 p-1">
             <X size={20} />
           </button>
         </header>

@@ -13,7 +13,7 @@ export default function SettingsPage() {
 
       <div className="max-w-3xl space-y-6">
         {/* General Section */}
-        <div className="p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl space-y-6 backdrop-blur-sm">
+        <div className="p-4 sm:p-6 md:p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl space-y-6 backdrop-blur-sm">
           <div className="flex items-center gap-3 mb-4">
             <Settings size={20} className="text-eepy-lavender" />
             <h3 className="text-lg font-bold font-console text-white">General Preferences</h3>
@@ -49,7 +49,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Security Section */}
-        <div className="p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl space-y-6 backdrop-blur-sm">
+        <div className="p-4 sm:p-6 md:p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl space-y-6 backdrop-blur-sm">
           <div className="flex items-center gap-3 mb-4">
             <ShieldCheck size={20} className="text-eepy-mint" />
             <h3 className="text-lg font-bold font-console text-white">Security & Privacy</h3>

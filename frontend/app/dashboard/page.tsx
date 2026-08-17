@@ -129,21 +129,21 @@ export default function OverviewPage() {
 
   return (
     <div className="space-y-12">
-      <header className="flex justify-between items-center mb-8">
+      <header className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
         <div>
-          <h2 className="text-3xl font-bold font-console">Welcome back, <span className="text-eepy-lavender">{displayName || user?.fullName || user?.username}</span></h2>
+          <h2 className="text-2xl sm:text-3xl font-bold font-console">Welcome back, <span className="text-eepy-lavender">{displayName || user?.fullName || user?.username}</span></h2>
           <p className="text-gray-500 font-console text-sm mt-1 italic">Current Role: {user?.role.toUpperCase()}</p>
         </div>
 
-        <div className="flex items-center gap-4">
-           <div className="px-3 py-1 bg-void-surface border border-void-border rounded-full text-xs font-console text-eepy-mint animate-pulse">
+        <div className="flex items-center gap-4 shrink-0">
+           <div className="px-3 py-1 bg-void-surface border border-void-border rounded-full text-xs font-console text-eepy-mint animate-pulse whitespace-nowrap">
              System Status: Cozy
            </div>
         </div>
       </header>
 
       {/* Open WebUI - the single external tool server connection */}
-      <section className="p-8 bg-void-surface/30 border border-void-border rounded-eepy backdrop-blur-sm">
+      <section className="p-4 sm:p-6 md:p-8 bg-void-surface/30 border border-void-border rounded-eepy backdrop-blur-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start gap-4">
             <div className={`p-3 rounded-lg shrink-0 ${owState === 'connected' ? 'bg-eepy-mint/10 text-eepy-mint' : 'bg-eepy-lavender/10 text-eepy-lavender'}`}>
@@ -164,7 +164,7 @@ export default function OverviewPage() {
           </div>
           <button
             onClick={() => { setPanelOpen(true); loadOwStatus(); }}
-            className="px-4 py-2.5 bg-eepy-lavender text-void rounded-lg text-xs font-console font-bold hover:bg-opacity-90 transition-all flex items-center gap-2 self-start"
+            className="px-4 py-2.5 bg-eepy-lavender text-void rounded-lg text-xs font-console font-bold hover:bg-opacity-90 transition-all flex items-center gap-2 self-start sm:self-auto w-full sm:w-auto justify-center"
           >
             <PlugZap size={15} />
             {owState === 'connected' ? 'Manage Tool Server' : 'Set Up Tool Server'}
@@ -175,7 +175,7 @@ export default function OverviewPage() {
       {/* Dashboard Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Main Stat Card */}
-        <div className="md:col-span-2 p-8 bg-void-surface border-4 border-void-border rounded-eepy relative overflow-hidden group hover:border-eepy-lavender/50 transition-colors shadow-xl">
+        <div className="md:col-span-2 p-4 sm:p-6 md:p-8 bg-void-surface border-4 border-void-border rounded-eepy relative overflow-hidden group hover:border-eepy-lavender/50 transition-colors shadow-xl">
           <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
             <Moon size={80} />
           </div>
@@ -200,7 +200,7 @@ export default function OverviewPage() {
         </div>
 
         {/* Quick Actions Card */}
-        <div className="p-8 bg-void-surface border-4 border-void-border rounded-eepy space-y-6 group hover:border-eepy-peach/50 transition-colors shadow-xl">
+        <div className="p-4 sm:p-6 md:p-8 bg-void-surface border-4 border-void-border rounded-eepy space-y-6 group hover:border-eepy-peach/50 transition-colors shadow-xl">
           <h3 className="text-xl font-bold font-console text-eepy-peach">Quick Actions</h3>
           <div className="space-y-3">
             {[

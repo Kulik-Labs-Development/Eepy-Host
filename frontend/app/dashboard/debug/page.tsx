@@ -50,21 +50,22 @@ export default function DebugLogPage() {
       case 'INFO': return 'text-eepy-mint';
       case 'WARNING': return 'text-eepy-peach';
       case 'ERROR': return 'text-red-500';
-      case 'CRITICAL': return 'text-red-700 font-bold animate-pulse';
+      case 'CRITICAL': return 'text-red-400 font-bold animate-pulse';
       default: return 'text-gray-400';
     }
   };
 
   return (
     <div className="space-y-6">
-      <header className="flex justify-between items-center mb-8">
+      <header className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-8">
         <div>
-          <h2 className="text-3xl font-bold font-console text-white flex items-center gap-3">
-            <Terminal size={32} className="text-eepy-lavender" /> Debug Log
+          <h2 className="text-2xl sm:text-3xl font-bold font-console text-white flex items-center gap-3">
+            <Terminal size={26} className="text-eepy-lavender sm:hidden" />
+            <Terminal size={32} className="text-eepy-lavender hidden sm:block" /> Debug Log
           </h2>
           <p className="text-gray-500 font-console text-sm mt-1 italic">Real-time backend stream. Auto-refreshing every 5s.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0 self-start sm:self-auto">
           <button 
             onClick={fetchLogs}
             disabled={isLoading}
@@ -88,7 +89,7 @@ export default function DebugLogPage() {
         </div>
 
         {/* Terminal Body */}
-        <div className="p-4 h-[70vh] overflow-y-auto space-y-1 bg-black/90">
+        <div className="p-3 sm:p-4 h-[60vh] sm:h-[70vh] overflow-y-auto space-y-1 bg-black/90">
           {error ? (
             <div className="text-red-400 font-console text-sm p-4 border border-red-500/20 bg-red-500/5 rounded-lg">
               [ERROR] {error}
@@ -97,12 +98,11 @@ export default function DebugLogPage() {
             <div className="text-gray-600 italic text-sm p-4">No logs captured in buffer yet...</div>
           ) : (
             logs.map((log, i) => (
-              <div key={i} className="flex gap-3 text-xs leading-relaxed hover:bg-white/5 transition-colors px-2 py-0.5 group">
-                <span className="text-gray-600 shrink-0">[{log.timestamp}]</span>
-                <span className={`${getLevelColor(log.level)} font-bold shrink-0 w-16`}>
-                  {log.level}
+              <div key={i} className="flex flex-col sm:flex-row sm:gap-3 gap-0.5 text-xs leading-relaxed hover:bg-white/5 transition-colors px-2 py-0.5 group">
+                <span className="text-gray-600 sm:shrink-0 whitespace-nowrap">
+                  [{log.timestamp}] <span className={`${getLevelColor(log.level)} font-bold`}>{log.level}</span>
                 </span>
-                <span className="text-gray-300 break-all">{log.message}</span>
+                <span className="text-gray-300 break-all min-w-0">{log.message}</span>
               </div>
             ))
           )}

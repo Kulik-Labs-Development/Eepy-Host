@@ -162,9 +162,9 @@ export default function ServersPage() {
 
   return (
     <div className="space-y-8">
-      <header className="flex justify-between items-center mb-2">
+      <header className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-2">
         <div>
-          <h2 className="text-3xl font-bold font-console text-white">MCP Server Engine</h2>
+          <h2 className="text-2xl sm:text-3xl font-bold font-console text-white">MCP Server Engine</h2>
           <p className="text-gray-500 font-console text-sm mt-1 flex items-center gap-1">
             <ShieldCheck size={14} className="text-eepy-mint" />
             Admin-approved integrations. Credentials encrypted at rest.
@@ -172,7 +172,7 @@ export default function ServersPage() {
         </div>
         <button
           onClick={refresh}
-          className="px-4 py-2 bg-void border border-void-border rounded-xl hover:bg-void-border transition-all flex items-center gap-2 font-console text-sm"
+          className="px-4 py-2 bg-void border border-void-border rounded-xl hover:bg-void-border transition-all flex items-center gap-2 font-console text-sm shrink-0 self-start sm:self-auto"
         >
           <PlugZap size={16} /> Refresh
         </button>
@@ -194,7 +194,7 @@ export default function ServersPage() {
       ) : (
         <>
           {/* Active servers (primary, at top) */}
-          <section className="p-8 bg-void-surface/30 border border-void-border rounded-eepy backdrop-blur-sm">
+          <section className="p-4 sm:p-6 md:p-8 bg-void-surface/30 border border-void-border rounded-eepy backdrop-blur-sm">
             <h3 className="text-xl font-bold font-console mb-6 flex items-center gap-2">
               <Server size={20} className="text-eepy-mint" /> Your Active Servers
             </h3>
@@ -209,23 +209,23 @@ export default function ServersPage() {
                   const result = testResults[config.id];
                   const isTemplate = templates.find((t) => t.id === config.template_name);
                   return (
-                    <div key={config.id} className="p-5 bg-void border border-void-border rounded-xl">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <div className={`p-2 rounded-lg ${config.is_active ? 'bg-eepy-mint/10 text-eepy-mint' : 'bg-void border border-void-border text-gray-500'}`}>
+                    <div key={config.id} className="p-4 sm:p-5 bg-void border border-void-border rounded-xl">
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`p-2 rounded-lg shrink-0 ${config.is_active ? 'bg-eepy-mint/10 text-eepy-mint' : 'bg-void border border-void-border text-gray-500'}`}>
                             {config.is_active ? <Wifi size={18} /> : <WifiOff size={18} />}
                           </div>
-                          <div>
-                            <p className="font-console text-white font-bold">
+                          <div className="min-w-0">
+                            <p className="font-console text-white font-bold truncate">
                               {isTemplate?.name || config.name_display || config.template_name}
                             </p>
-                            <p className="text-xs text-gray-500 font-console">
+                            <p className="text-xs text-gray-500 font-console truncate">
                               {config.template_name}
                               {config.last_used_at ? ` · last used ${new Date(config.last_used_at).toLocaleDateString()}` : ' · never used'}
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 shrink-0 self-end lg:self-auto">
                           <button
                             onClick={() => runTest(config.template_name, config.id)}
                             disabled={testingId === config.id}
@@ -243,7 +243,7 @@ export default function ServersPage() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
                         <span className="text-xs font-console text-gray-500 flex items-center gap-1 shrink-0">
                           <ExternalLink size={13} />
                         </span>
@@ -304,7 +304,7 @@ export default function ServersPage() {
                 No integrations match "{search}".
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                 {filteredTemplates.map((template) => {
                   const isConnected = configs.some((c) => c.template_name === template.id);
                   return (

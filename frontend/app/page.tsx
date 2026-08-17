@@ -30,11 +30,11 @@ export default function LandingPage() {
           </div>
         </div>
 
-        <div className="space-y-4">
-          <h1 className="text-7xl font-bold tracking-tight leading-tight">
+        <div className="space-y-4 sm:space-y-6">
+          <h1 className="text-5xl sm:text-6xl md:text-7xl font-bold tracking-tight leading-tight">
             Eepy <span className="text-eepy-lavender italic">Host</span>
           </h1>
-          <p className="text-gray-400 text-2xl max-w-2xl mx-auto leading-relaxed font-light">
+          <p className="text-gray-400 text-lg sm:text-2xl max-w-2xl mx-auto leading-relaxed font-light">
             The ultimate playground for the <span className="text-eepy-peach font-semibold">Vibe Coder</span>. 
             Host your MCP servers in a space designed for focus and flow.
           </p>
@@ -42,26 +42,26 @@ export default function LandingPage() {
 
         <div className="flex gap-4 justify-center pt-4">
           <Link href="/auth">
-            <button className="px-10 py-4 bg-eepy-lavender text-void font-bold rounded-full hover:bg-opacity-90 transition-all transform hover:scale-105 shadow-[0_0_20px_rgba(195,177,225,0.5)] animate-gradient-border font-console">
+            <button className="px-8 sm:px-10 py-3.5 sm:py-4 bg-eepy-lavender text-void font-bold rounded-full hover:bg-opacity-90 transition-all transform hover:scale-105 shadow-[0_0_20px_rgba(195,177,225,0.5)] animate-gradient-border font-console text-sm sm:text-base">
               Get Started
             </button>
           </Link>
         </div>
 
         {/* Core Feature Highlight */}
-        <div className="mt-16 p-8 bg-void-surface/30 border border-void-border rounded-eepy backdrop-blur-sm max-w-2xl mx-auto space-y-4 relative overflow-hidden group">
+        <div className="mt-12 sm:mt-16 p-5 sm:p-8 bg-void-surface/30 border border-void-border rounded-eepy backdrop-blur-sm max-w-2xl mx-auto space-y-4 relative overflow-hidden group">
           <div className="absolute top-0 left-0 w-1 h-full bg-eepy-lavender" />
           <div className="flex items-center gap-3 mb-2 justify-center">
             <Globe size={20} className="text-eepy-mint" />
             <span className="text-xs font-console uppercase tracking-widest text-gray-500">The Engine</span>
           </div>
-          <h2 className="text-xl font-semibold text-white">Connecting Models to the World</h2>
+          <h2 className="text-lg sm:text-xl font-semibold text-white">Connecting Models to the World</h2>
           <p className="text-gray-400 text-sm leading-relaxed">
             Eepy Host is a powerful MCP platform that lets you pick from a curated library of 
             <span className="text-eepy-mint font-medium"> pre-configured servers</span>. 
             Instantly connect your AI models to real-time data, APIs, and local tools.
           </p>
-          <div className="pt-4 flex justify-center gap-6 text-xs font-console text-gray-500">
+          <div className="pt-4 flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs font-console text-gray-500">
              <span className="flex items-center gap-1"><Zap size={12} /> High Performance</span>
              <span className="flex items-center gap-1"><Moon size={12} /> Zero Friction</span>
           </div>
@@ -72,7 +72,7 @@ export default function LandingPage() {
           ✨ Best paired with self-hosted LLM interfaces like <span className="text-eepy-peach">Open WebUI</span> for a <span className="text-white underline decoration-eepy-mint">fully private stack</span>. Your data, your vibes, zero leaks.
         </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-20 pb-12">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mt-12 sm:mt-20 pb-12">
           {[
             { icon: <Zap size={24} />, title: "Fast", desc: "Streamable HTTP endpoints." },
             { icon: <ShieldCheck size={24} />, title: "Private", desc: "Fully self-hosted, total data sovereignty." },

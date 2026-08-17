@@ -113,18 +113,18 @@ export default function OpenWebUIPanel({ onClose }: Props) {
   const newestKey = keys.find((k) => k.key);
 
   return (
-    <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-[999] backdrop-blur-sm">
-      <div className="bg-void-surface border-2 border-eepy-lavender rounded-xl p-6 max-w-2xl w-full relative shadow-2xl max-h-[90vh] overflow-y-auto">
-        <header className="flex items-center justify-between mb-5 pb-4 border-b border-void-border">
+    <div className="fixed inset-0 bg-black/75 flex items-end sm:items-center justify-center sm:p-4 z-[999] backdrop-blur-sm">
+      <div className="bg-void-surface border-2 border-eepy-lavender rounded-t-2xl sm:rounded-xl p-4 sm:p-6 max-w-2xl w-full relative shadow-2xl max-h-[92vh] overflow-y-auto">
+        <header className="flex items-center justify-between mb-5 pb-4 border-b border-void-border gap-3">
           <div>
-            <h2 className="text-lg font-bold flex items-center gap-2">
+            <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
               <Plug className="text-eepy-mint" size={18} /> Connect Open WebUI to Eepy
             </h2>
             <p className="text-xs text-gray-500 mt-1">
               One connection. Every Eepy integration - now and in the future.
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors shrink-0 p-1">
             <X size={20} />
           </button>
         </header>
@@ -143,18 +143,20 @@ export default function OpenWebUIPanel({ onClose }: Props) {
 
           {newestKey ? (
             <div className="mb-4">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-console text-gray-500 shrink-0">Shown once:</span>
-                <code className="flex-1 text-sm bg-void border border-eepy-mint/40 rounded px-3 py-2 text-eepy-mint break-all">
-                  {newestKey.key}
-                </code>
-                <button
-                  onClick={() => copy(newestKey.key!, 'newkey')}
-                  className="p-2 border border-void-border rounded-lg hover:bg-void-border transition-colors"
-                  title="Copy key"
-                >
-                  {copied === 'newkey' ? <Check size={16} className="text-eepy-mint" /> : <Copy size={16} />}
-                </button>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <span className="text-xs font-console text-gray-500 shrink-0 sm:w-auto">Shown once:</span>
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <code className="flex-1 min-w-0 text-sm bg-void border border-eepy-mint/40 rounded px-3 py-2 text-eepy-mint break-all">
+                    {newestKey.key}
+                  </code>
+                  <button
+                    onClick={() => copy(newestKey.key!, 'newkey')}
+                    className="p-2 border border-void-border rounded-lg hover:bg-void-border transition-colors shrink-0"
+                    title="Copy key"
+                  >
+                    {copied === 'newkey' ? <Check size={16} className="text-eepy-mint" /> : <Copy size={16} />}
+                  </button>
+                </div>
               </div>
               <p className="text-xs text-amber-400/90 flex items-center gap-1 mt-2">
                 <ShieldAlert size={13} /> Copy it now - it is not stored in plain text and cannot be retrieved again.
@@ -217,18 +219,20 @@ export default function OpenWebUIPanel({ onClose }: Props) {
 
         {/* Step 2 - spec URL */}
         <Step title="2. Copy the Eepy OpenAPI URL">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 min-w-0">
             <span className="text-xs font-console text-gray-500 shrink-0">OpenAPI:</span>
-            <code className="flex-1 text-xs bg-void border border-void-border rounded px-3 py-2 text-eepy-lavender break-all">
-              {specUrl}
-            </code>
-            <button
-              onClick={() => copy(specUrl, 'spec')}
-              className="p-2 border border-void-border rounded-lg hover:bg-void-border transition-colors"
-              title="Copy spec URL"
-            >
-              {copied === 'spec' ? <Check size={16} className="text-eepy-mint" /> : <Copy size={16} />}
-            </button>
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <code className="flex-1 min-w-0 text-xs bg-void border border-void-border rounded px-3 py-2 text-eepy-lavender break-all">
+                {specUrl}
+              </code>
+              <button
+                onClick={() => copy(specUrl, 'spec')}
+                className="p-2 border border-void-border rounded-lg hover:bg-void-border transition-colors shrink-0"
+                title="Copy spec URL"
+              >
+                {copied === 'spec' ? <Check size={16} className="text-eepy-mint" /> : <Copy size={16} />}
+              </button>
+            </div>
           </div>
         </Step>
 

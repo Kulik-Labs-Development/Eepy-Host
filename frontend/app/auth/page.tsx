@@ -56,9 +56,9 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden bg-void">
-      <div className={`absolute top-[-10%] ${isLoginMode ? 'left' : 'right'}[-10%] w-[40%] h-[40%] ${isLoginMode ? 'bg-eepy-lavender/5' : 'bg-eepy-peach/5'} blur-[120px] rounded-full`} />
-      <div className={`absolute bottom-[-10%] ${isLoginMode ? 'right' : 'left'}[-10%] w-[40%] h-[40%] ${isLoginMode ? 'bg-eepy-mint/5' : 'bg-eepy-mint/5'} blur-[120px] rounded-full`} />
+    <div className="min-h-screen flex items-center justify-center p-4 sm:p-6 relative overflow-hidden bg-void">
+      <div className={`absolute top-[-10%] ${isLoginMode ? 'left-[-10%]' : 'right-[-10%]'} w-[40%] h-[40%] ${isLoginMode ? 'bg-eepy-lavender/5' : 'bg-eepy-peach/5'} blur-[120px] rounded-full`} />
+      <div className={`absolute bottom-[-10%] ${isLoginMode ? 'right-[-10%]' : 'left-[-10%]'} w-[40%] h-[40%] ${isLoginMode ? 'bg-eepy-mint/5' : 'bg-eepy-mint/5'} blur-[120px] rounded-full`} />
 
       <div className="z-10 w-full max-w-md space-y-8">
         <div className="text-center space-y-4">
@@ -68,7 +68,7 @@ export default function AuthPage() {
               {!isLoginMode && <Sparkles size={14} className="absolute -top-1 -right-1 text-eepy-mint animate-pulse" />}
             </div>
           </div>
-          <h1 className="text-4xl font-bold tracking-tight text-white">
+          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-white">
             {isLoginMode ? 'Welcome ' : 'Sync your '} <span className={`${isLoginMode ? 'text-eepy-lavender' : 'text-eepy-peach'} italic`}>{isLoginMode ? 'Back' : 'Vibe'}</span>
           </h1>
           <p className="text-gray-500 font-console text-sm">
@@ -79,7 +79,7 @@ export default function AuthPage() {
         </div>
 
         {success ? (
-          <div className="bg-void-surface border border-eepy-mint/30 p-8 rounded-eepy shadow-xl space-y-6 text-center backdrop-blur-sm animate-in fade-in zoom-in duration-300">
+          <div className="bg-void-surface border border-eepy-mint/30 p-6 sm:p-8 rounded-eepy shadow-xl space-y-6 text-center backdrop-blur-sm animate-in fade-in zoom-in duration-300">
             <div className="flex justify-center mb-4">
               <div className="p-3 bg-eepy-mint/20 rounded-full text-eepy-mint">
                 <Sparkles size={32} />
@@ -97,7 +97,7 @@ export default function AuthPage() {
             </button>
           </div>
         ) : (
-          <form onSubmit={handleAuth} className="bg-void-surface border border-void-border p-8 rounded-eepy shadow-xl space-y-6 backdrop-blur-sm">
+          <form onSubmit={handleAuth} className="bg-void-surface border border-void-border p-5 sm:p-8 rounded-eepy shadow-xl space-y-6 backdrop-blur-sm">
             {error && (
               <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-console rounded-lg text-center">
                 {error}

@@ -96,14 +96,14 @@ export default function AccountPage() {
 
   return (
     <div className="space-y-8">
-      <header className="mb-8 flex justify-between items-center">
+      <header className="mb-8 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h2 className="text-3xl font-bold font-console text-white">Account Profile</h2>
+          <h2 className="text-2xl sm:text-3xl font-bold font-console text-white">Account Profile</h2>
           <p className="text-gray-500 font-console text-sm mt-1 italic">Manage your identity and presence in the void.</p>
         </div>
         <button 
           onClick={logout}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl text-gray-400 hover:bg-red-500/10 hover:text-red-400 transition-all font-console text-xs border border-void-border"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl text-gray-400 hover:bg-red-500/10 hover:text-red-400 transition-all font-console text-xs border border-void-border shrink-0 self-start sm:self-auto"
         >
           <LogOut size={16} /> Sign Out
         </button>
@@ -111,7 +111,7 @@ export default function AccountPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Profile Sidebar */}
-        <div className="p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl text-center space-y-6 h-fit sticky top-8">
+        <div className="p-4 sm:p-6 md:p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl text-center space-y-6 h-fit sm:sticky sm:top-8">
           <div className="relative inline-block group">
             <div className={`p-1 rounded-full border-2 transition-colors ${profileData.profilePicture ? 'border-eepy-mint' : 'border-void-border'} overflow-hidden`}>
               {profileData.profilePicture ? (
@@ -149,12 +149,12 @@ export default function AccountPage() {
         {/* Settings Content */}
         <div className="lg:col-span-2 space-y-8">
           {/* Personal Information Section */}
-          <div className="p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl space-y-6 backdrop-blur-sm relative overflow-hidden group">
+          <div className="p-4 sm:p-6 md:p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl space-y-6 backdrop-blur-sm relative overflow-hidden group">
             <div className="absolute top-0 left-0 w-1 h-full bg-eepy-lavender" />
             <h3 className="text-lg font-bold font-console text-eepy-lavender mb-4 flex items-center gap-2">
               <UserCircle size={18} /> Personal Information
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
               <div className="space-y-2">
                 <label className="text-[10px] font-console uppercase text-gray-500 ml-1">Full Name</label>
                 <div className="relative">
@@ -185,7 +185,7 @@ export default function AccountPage() {
           </div>
 
           {/* Security Section */}
-          <div className="p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl space-y-6 backdrop-blur-sm relative overflow-hidden group">
+          <div className="p-4 sm:p-6 md:p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl space-y-6 backdrop-blur-sm relative overflow-hidden group">
             <div className="absolute top-0 left-0 w-1 h-full bg-eepy-peach" />
             <h3 className="text-lg font-bold font-console text-eepy-peach mb-4 flex items-center gap-2">
               <Lock size={18} /> Security & Access
@@ -212,9 +212,9 @@ export default function AccountPage() {
           </div>
 
           {/* Billing & Payments Placeholder */}
-          <div className="p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl space-y-6 backdrop-blur-sm relative overflow-hidden group">
+          <div className="p-4 sm:p-6 md:p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl space-y-6 backdrop-blur-sm relative overflow-hidden group">
             <div className="absolute top-0 left-0 w-1 h-full bg-eepy-mint" />
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-4">
               <h3 className="text-lg font-bold font-console text-eepy-mint flex items-center gap-2">
                 <Wallet size={18} /> Billing & Subscription
               </h3>
