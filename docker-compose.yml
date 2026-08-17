@@ -1,5 +1,5 @@
-# All secrets are supplied via a local (git-ignored) .env file next to this
-# compose file. See .env.example for the full list of required variables.
+# Secrets are supplied from a local (git-ignored) .env file next to this
+# compose file:  cp .env.example .env  and fill in the values.
 # No secret has a hardcoded default: the stack refuses to start if one is missing.
 services:
   db:
@@ -7,9 +7,13 @@ services:
     container_name: eepy-db
     restart: always
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required - see .env.example}
+      POSTGRES_USER: ${POSTGRES_USER:-eepy_admin}
+      # NOTE: this value must MATCH the password the existing postgres_data
+      # volume was initialized with. Put the old value in .env until you do a
+      # planned, backed-up data migration - the volume keeps its original
+      # password even when you change .env.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - see .env.example}
-      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required - see .env.example}
+      POSTGRES_DB: ${POSTGRES_DB:-eepy_host}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -21,13 +25,15 @@ services:
     restart: always
     environment:
       - DATABASE_URL=${DATABASE_URL:?DATABASE_URL is required - see .env.example}
-      # Long random string that signs JWTs (HS256).
+      # Long random string that signs JWTs (HS256). Rotating this invalidates
+      # all existing login sessions (users just sign in again).
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required - see .env.example}
       # Fernet key (44-char url-safe Base64) for MCP credential encryption at rest.
-      # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      # MUST stay the same as the one that encrypted existing stored credentials,
+      # otherwise they can no longer be decrypted.
       - MCP_ENCRYPTION_KEY=${MCP_ENCRYPTION_KEY:?MCP_ENCRYPTION_KEY is required - see .env.example}
     ports:
-      - "8000:8000"
+      - "8068:8000"
     depends_on:
       - db
     networks:
@@ -38,9 +44,12 @@ services:
     container_name: eepy-frontend
     restart: always
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      # NEXT_PUBLIC_* values are baked into the Next.js build at image-build
+      # time, so this container env does not change the client URL. It is kept
+      # for parity and documentation.
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8068}
     ports:
-      - "3000:3000"
+      - "8067:3000"
     depends_on:
       - backend
     networks:
