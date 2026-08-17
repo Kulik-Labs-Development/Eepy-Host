@@ -1,9 +1,11 @@
 'use client';
 
-// Open WebUI export panel - generates a scoped, revocable Eepy Tool API Key,
-// surfaces the public OpenAPI spec URL, and walks the user through pasting both
-// into Open WebUI's external "Tool Server" connector. The plaintext key is shown
-// ONCE (the backend stores only a SHA-256 hash). Steps are copy-friendly.
+// Open WebUI setup panel - ONE connection for the entire Eepy tool surface.
+// Generates a user-scoped, revocable Eepy Tool API Key (plaintext shown ONCE;
+// only a SHA-256 hash is stored) and walks the user through importing the
+// single OpenAPI spec URL into Open WebUI's external "Tool Server" connector.
+// Every integration the user has connected - now and in the future - is exposed
+// through this one connection; no per-server imports, ever.
 
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -12,23 +14,19 @@ import {
   Check,
   KeyRound,
   Loader2,
-  PlugZap,
+  Plug,
   Trash2,
   ShieldAlert,
-  Download,
 } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
 
 interface Props {
-  templateId: string;
-  templateName: string;
   onClose: () => void;
 }
 
 interface ToolKey {
   id: number;
   name: string;
-  template_name: string;
   key_prefix: string;
   is_active: boolean;
   created_at: string | null;
@@ -42,15 +40,15 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export default function OpenWebUIExportPanel({ templateId, templateName, onClose }: Props) {
+export default function OpenWebUIPanel({ onClose }: Props) {
   const [keys, setKeys] = useState<ToolKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
 
-  // The full OpenAPI spec URL the user pastes into Open WebUI.
-  const specUrl = `${getApiUrl()}/api/mcp/openapi/${templateId}`;
+  // The single spec URL the user pastes into Open WebUI - covers ALL of Eepy.
+  const specUrl = `${getApiUrl()}/api/mcp/openapi.json`;
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -61,7 +59,7 @@ export default function OpenWebUIExportPanel({ templateId, templateName, onClose
         setKeys(Array.isArray(data) ? data : []);
       }
     } catch {
-      setError('Could not load your tool API keys.');
+      setError('Could not load your Eepy API keys.');
     } finally {
       setLoading(false);
     }
@@ -78,11 +76,10 @@ export default function OpenWebUIExportPanel({ templateId, templateName, onClose
       const res = await fetch(`${getApiUrl()}/api/mcp/api-keys`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ template_id: templateId, name: 'Open WebUI' }),
+        body: JSON.stringify({ name: 'Open WebUI' }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || `Backend returned ${res.status}`);
-      // Prepend the new key (carries the plaintext, shown once).
       setKeys((prev) => [data, ...prev]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -121,10 +118,10 @@ export default function OpenWebUIExportPanel({ templateId, templateName, onClose
         <header className="flex items-center justify-between mb-5 pb-4 border-b border-void-border">
           <div>
             <h2 className="text-lg font-bold flex items-center gap-2">
-              <PlugZap className="text-eepy-mint" size={18} /> Add {templateName} to Open WebUI
+              <Plug className="text-eepy-mint" size={18} /> Connect Open WebUI to Eepy
             </h2>
             <p className="text-xs text-gray-500 mt-1">
-              One connection exposes every {templateName} tool to your agent.
+              One connection. Every Eepy integration - now and in the future.
             </p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
@@ -137,10 +134,11 @@ export default function OpenWebUIExportPanel({ templateId, templateName, onClose
         )}
 
         {/* Step 1 - generate / show key */}
-        <Step title="1. Create a scoped Tool API Key">
+        <Step title="1. Create your Eepy API Key">
           <p className="text-xs text-gray-500 mb-3 leading-relaxed">
-            This key is scoped to <span className="text-eepy-mint">{templateName}</span> for your account only. It
-            cannot touch anything else in Eepy, and you can revoke it here at any time.
+            This key covers <span className="text-eepy-mint">every integration you have connected</span> - and every
+            one you connect later. It only works on Eepy&apos;s MCP routes (never on your account or billing), and
+            you can revoke it here at any time.
           </p>
 
           {newestKey ? (
@@ -159,13 +157,13 @@ export default function OpenWebUIExportPanel({ templateId, templateName, onClose
                 </button>
               </div>
               <p className="text-xs text-amber-400/90 flex items-center gap-1 mt-2">
-                <ShieldAlert size={13} /> Copy it now — it is not stored in plain text and cannot be retrieved again.
+                <ShieldAlert size={13} /> Copy it now - it is not stored in plain text and cannot be retrieved again.
               </p>
             </div>
           ) : (
             <button
               onClick={generate}
-              disabled={generating}
+              disabled={generating || (loading && keys.length > 0)}
               className="w-full py-2.5 bg-eepy-lavender text-void rounded-lg text-xs font-console font-bold hover:bg-opacity-90 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {generating ? (
@@ -174,7 +172,7 @@ export default function OpenWebUIExportPanel({ templateId, templateName, onClose
                 </>
               ) : (
                 <>
-                  <KeyRound size={16} /> Generate Tool API Key
+                  <KeyRound size={16} /> Create Eepy API Key
                 </>
               )}
             </button>
@@ -183,7 +181,7 @@ export default function OpenWebUIExportPanel({ templateId, templateName, onClose
           {/* Existing keys */}
           {keys.length > 0 && (
             <div className="mt-4 space-y-2">
-              <p className="text-xs font-console text-gray-500">Your keys for this integration</p>
+              <p className="text-xs font-console text-gray-500">Your Eepy API keys</p>
               {keys.map((k) => (
                 <div
                   key={k.id}
@@ -218,7 +216,7 @@ export default function OpenWebUIExportPanel({ templateId, templateName, onClose
         </Step>
 
         {/* Step 2 - spec URL */}
-        <Step title="2. Copy the OpenAPI spec URL">
+        <Step title="2. Copy the Eepy OpenAPI URL">
           <div className="flex items-center gap-2">
             <span className="text-xs font-console text-gray-500 shrink-0">OpenAPI:</span>
             <code className="flex-1 text-xs bg-void border border-void-border rounded px-3 py-2 text-eepy-lavender break-all">
@@ -242,21 +240,22 @@ export default function OpenWebUIExportPanel({ templateId, templateName, onClose
               <span className="text-white font-medium">Add New → Tool Server</span> (external / OpenAPI).
             </li>
             <li>
-              Set the <span className="text-white font-medium">URL</span> to the OpenAPI spec URL from step 2. Open
-              WebUI fetches it and lists every {templateName} tool automatically.
+              Set the <span className="text-white font-medium">URL</span> to the Eepy OpenAPI URL from step 2. Open
+              WebUI fetches it and lists every Eepy tool automatically.
             </li>
             <li>
               For <span className="text-white font-medium">authentication</span>, select <span className="text-eepy-mint">Bearer</span>{' '}
-              and paste the Tool API Key from step 1 as the token.
+              and paste the Eepy API Key from step 1 as the token.
             </li>
             <li>
-              Save. The {templateName} tools now appear in your agent&apos;s tool list and route through Eepy, where
-              your credentials stay encrypted.
+              Save. Done - one connection for all of Eepy. When you connect new integrations in the dashboard
+              (Slack, Notion, …) their tools show up here automatically. No re-import, no second connection.
             </li>
           </ol>
           <p className="text-[11px] text-gray-600 mt-3 leading-relaxed">
-            If your Open WebUI build expects the raw spec instead of a URL, the spec is standard OpenAPI 3 — download
-            it and paste its contents into the import field. The URL above always returns the latest document.
+            Security note: the key only authenticates MCP tool calls for your account - it cannot access your Eepy
+            profile, billing, or other areas - and every tool call still requires that you have that integration
+            connected. Revoke the key here at any time to cut access instantly.
           </p>
         </Step>
       </div>

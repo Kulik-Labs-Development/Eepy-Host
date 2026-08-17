@@ -55,7 +55,7 @@ export default function ServersPage() {
   const [error, setError] = useState('');
 
   const [wizardTemplate, setWizardTemplate] = useState<Template | null>(null);
-  const [openwebuiTemplate, setOpenWebUITemplate] = useState<string | null>(null);
+  const [openWebUIOpen, setOpenWebUIOpen] = useState(false);
 
   // Per-config ephemeral UI state.
   const [copiedId, setCopiedId] = useState<number | null>(null);
@@ -234,13 +234,6 @@ export default function ServersPage() {
                             <FlaskConical size={14} /> {testingId === config.id ? 'Testing...' : 'Run Live Test'}
                           </button>
                           <button
-                            onClick={() => setOpenWebUITemplate(config.template_name)}
-                            className="px-3 py-2 bg-void border border-void-border rounded-lg text-xs font-console hover:bg-void-border transition-colors flex items-center gap-1.5"
-                            title="Export for Open WebUI"
-                          >
-                            <Plug size={14} className="text-eepy-mint" /> Add to Open WebUI
-                          </button>
-                          <button
                             onClick={() => disconnect(config.template_name, config.id)}
                             className="p-2 border border-void-border rounded-lg hover:bg-red-500/10 hover:text-red-400 transition-colors"
                             title="Disconnect"
@@ -280,6 +273,31 @@ export default function ServersPage() {
                 })}
               </div>
             )}
+          </section>
+
+          {/* Open WebUI - one connection for the entire Eepy tool surface */}
+          <section className="p-8 bg-void-surface/30 border border-void-border rounded-eepy backdrop-blur-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-eepy-lavender/10 rounded-lg text-eepy-lavender shrink-0">
+                  <Plug size={22} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold font-console">Open WebUI</h3>
+                  <p className="text-gray-500 font-console text-sm mt-1 max-w-xl leading-relaxed">
+                    One connection gives your agent every Eepy tool - all integrations you have connected, plus
+                    every one you connect later. No per-server setup, ever.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setOpenWebUIOpen(true)}
+                className="px-4 py-2.5 bg-eepy-lavender text-void rounded-lg text-xs font-console font-bold hover:bg-opacity-90 transition-all flex items-center gap-2 self-start"
+              >
+                <Plug size={15} />
+                {configs.length > 0 ? 'Open WebUI Tool Server Setup' : 'Set Up Tool Server'}
+              </button>
+            </div>
           </section>
 
           {/* Integration Library (browsable catalog, filtered) */}
@@ -365,12 +383,8 @@ export default function ServersPage() {
         />
       )}
 
-      {openwebuiTemplate && (
-        <OpenWebUIExportPanel
-          templateId={openwebuiTemplate}
-          templateName={templates.find((t) => t.id === openwebuiTemplate)?.name || openwebuiTemplate}
-          onClose={() => setOpenWebUITemplate(null)}
-        />
+      {openWebUIOpen && (
+        <OpenWebUIExportPanel onClose={() => setOpenWebUIOpen(false)} />
       )}
     </div>
   );

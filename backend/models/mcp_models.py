@@ -45,25 +45,28 @@ class UserMCPConfig(Base):
     updated_at = Column(DateTime, onupdate=datetime.utcnow)
 
 
-class MCPToolApiKey(Base):
-    """Scoped, revocable API keys for Open WebUI / third-party tool integrations.
+class MCPUserToolKey(Base):
+    """User-scoped, revocable API keys for external tool servers (e.g. Open WebUI).
 
-    A tool API key is:
-      - Long-lived (no short-lived expiry) but scoped to ONE template for ONE user.
-      - Accepted only on the /api/mcp/proxy/* routes (never on /user/*, /auth/*, /superuser/*).
-      - Stored only as a SHA-256 hash. Plaintext is shown ONCE at creation and never persisted.
+    A single key authenticates the WHOLE Eepy tool surface for one user — every
+    integration they have connected (HappyFox today, future templates tomorrow).
+    Users make ONE connection in Open WebUI; new Eepy servers appear automatically
+    with no re-import.
+
+    Security:
+      - Long-lived but narrow: accepted ONLY on /api/mcp/proxy/* and
+        /api/mcp/config/* — never on /user/*, /auth/*, /superuser/*, billing, etc.
+      - Per-call the proxy still requires the user to have an active connection to
+        the requested template, so a key can only ever reach integrations the
+        owner has actually connected.
+      - Stored only as a SHA-256 hash; plaintext shown ONCE at creation.
       - Revocable from the Eepy UI; a revoked key is rejected on the next call.
-
-    This is what the user pastes as the Bearer token in Open WebUI's Tool Server
-    connection. If it leaks, the blast radius is one user's one tool integration,
-    not the entire Eepy account, and the owner can kill it instantly.
     """
 
-    __tablename__ = 'mcp_tool_api_keys'
+    __tablename__ = 'mcp_user_tool_keys'
 
     id = Column(Integer, primary_key=True, index=True)
     owner_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    template_name = Column(String, nullable=False)  # e.g. 'happyfox' — key is scoped to this integration
 
     name = Column(String, nullable=False, default='Open WebUI')  # Label shown in the Eepy UI
 
