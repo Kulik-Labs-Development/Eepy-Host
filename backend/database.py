@@ -1,9 +1,10 @@
-from sqlalchemy import create_engine, Column, Integer, String, Enum, DateTime
+import enum
+import os
+from datetime import datetime
+
+from sqlalchemy import Column, DateTime, Enum, Integer, String, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-import enum
-from datetime import datetime
-import os
 
 # Database URL from environment variable (no hardcoded fallback - fail fast if unset)
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -14,7 +15,7 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-class UserRole(str, enum.Enum):
+class UserRole(enum.StrEnum):
     USER = "user"
     SUPERUSER = "superuser"
 

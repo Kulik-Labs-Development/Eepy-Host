@@ -1,9 +1,8 @@
-from datetime import datetime, timedelta
-from typing import Optional
-from jose import JWTError, jwt
-import bcrypt
-
 import os
+from datetime import datetime, timedelta
+
+import bcrypt
+from jose import JWTError, jwt
 
 # JWT signing key — MUST be provided via the SECRET_KEY environment variable.
 # No default is hardcoded so the service fails fast if misconfigured.
@@ -40,7 +39,7 @@ def get_password_hash(password: str):
     hashed = bcrypt.hashpw(password_bytes, salt)
     return hashed.decode('utf-8')
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     # Use utcnow for consistency with decode
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
@@ -50,7 +49,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 def decode_access_token(token: str):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        # jose handles 'exp' validation automatically unless specified otherwise, 
+        # jose handles 'exp' validation automatically unless specified otherwise,
         # but we can explicitly check if we want a custom behavior.
         return payload
     except JWTError:
