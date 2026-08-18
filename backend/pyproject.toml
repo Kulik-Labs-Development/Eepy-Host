@@ -1,0 +1,37 @@
+[project]
+name = "eepy-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 110
+src = ["."]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade (keep annotations modern)
+]
+ignore = [
+    "E501",   # long lines (handled by line-length where practical)
+    "B008",   # function call in default argument (FastAPI Depends() idiom)
+    "UP007",  # X | Y unions (keep Optional[...] for readability parity)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["api", "models", "utils"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.4",
+]

@@ -301,7 +301,7 @@ export default function ServersPage() {
               </div>
             ) : filteredTemplates.length === 0 ? (
               <div className="p-8 bg-void-surface/30 border border-void-border rounded-eepy text-center text-gray-600 font-console text-sm italic">
-                No integrations match "{search}".
+                No integrations match “{search}”.
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">

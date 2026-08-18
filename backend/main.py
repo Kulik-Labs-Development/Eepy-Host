@@ -1,20 +1,23 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import text
-from typing import List, Optional
+import base64
+import datetime
 import logging
 import os
-import base64
 from collections import deque
-import datetime
 
-from database import engine, Base, get_db, User, UserRole, SessionLocal
-from auth import get_password_hash, verify_password, create_access_token, decode_access_token
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from auth import create_access_token, decode_access_token, get_password_hash, verify_password
+from database import Base, SessionLocal, User, UserRole, engine, get_db
+from models import (
+    mcp_models,  # noqa: F401  - register MCP tables on the shared Base so create_all builds them
+)
 from schemas import UserCreate, UserLogin
-from models import mcp_models  # noqa: F401  - register MCP tables on the shared Base so create_all builds them
+
 
 # --- LOGGING SYSTEM ---
 class MemoryLogHandler(logging.Handler):
@@ -45,7 +48,7 @@ def sync_database_schema():
 
             required_columns = {
                 "full_name": "VARCHAR",
-                "profile_picture": "TEXT", 
+                "profile_picture": "TEXT",
                 "total_requests": "INTEGER DEFAULT 0 NOT NULL"
             }
 
@@ -53,7 +56,7 @@ def sync_database_schema():
                 if col not in existing_columns:
                     logger.info(f"Adding missing column {col} to users table...")
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
-            
+
             conn.commit()
             logger.info("Database columns synchronized.")
     except Exception as e:
@@ -154,7 +157,7 @@ except Exception as e:
 
 # MCP endpoints (Phase 5: HappyFox template #1). Absolute import (never relative):
 # Uvicorn runs this module top-level.
-from api.mcp_endpoints import router as mcp_router
+from api.mcp_endpoints import router as mcp_router  # noqa: E402
 
 app = FastAPI(title="Eepy Host API")
 
@@ -182,12 +185,12 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)):
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
-    
+
     token = auth_header.split(" ")[1]
     payload = decode_access_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
-    
+
     username = payload.get("sub")
     user = db.query(User).filter(User.username == username).first()
     if not user:
@@ -234,10 +237,11 @@ def signup(user_in: UserCreate, db: Session = Depends(get_db)):
         db.refresh(new_user)
         logger.info(f"New user created: {user_in.username}")
         return {"message": "Account created successfully", "user_id": new_user.id}
-    except HTTPException as he: raise he
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unexpected error during signup")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}") from e
 
 @app.post("/auth/login")
 def login(credentials: UserLogin, db: Session = Depends(get_db)):
@@ -252,10 +256,11 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
             "token_type": "bearer",
             "user": {"username": user.username, "role": user.role, "email": user.email, "full_name": user.full_name}
         }
-    except HTTPException as he: raise he
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unexpected error during login")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}") from e
 
 @app.get("/user/profile")
 def get_profile(current_user: User = Depends(get_current_user)):
@@ -272,7 +277,7 @@ async def update_profile(request: Request, current_user: User = Depends(get_curr
         return {"message": "Profile updated successfully", "full_name": current_user.full_name}
     except Exception as e:
         logger.error(f"Error updating profile: {e}")
-        raise HTTPException(status_code=500, detail="Failed to update profile")
+        raise HTTPException(status_code=500, detail="Failed to update profile") from e
 
 @app.post("/user/avatar")
 async def upload_avatar(file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -290,12 +295,13 @@ async def upload_avatar(file: UploadFile = File(...), current_user: User = Depen
         db.refresh(current_user)
         logger.info(f"Avatar successfully persisted to database for {current_user.username}.")
         return {"message": "Avatar uploaded successfully", "profile_picture": data_uri}
-    except HTTPException as he: raise he
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"Unexpected error uploading avatar for {current_user.username}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to upload avatar")
+        raise HTTPException(status_code=500, detail="Failed to upload avatar") from e
 
-@app.get("/superuser/users", response_model=List[dict])
+@app.get("/superuser/users", response_model=list[dict])
 def list_all_users(superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
     users = db.query(User).all()
     return [{"id": u.id, "username": u.username, "email": u.email, "full_name": u.full_name, "role": u.role, "total_requests": u.total_requests, "created_at": u.created_at} for u in users]
@@ -310,17 +316,17 @@ def update_user_role(user_id: int, role: str, superuser: User = Depends(get_supe
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        
+
         new_role = UserRole(role)
         user.role = new_role
         db.commit()
         logger.info(f"Superuser {superuser.username} updated user {user.username} role to {role}")
         return {"message": f"User {user.username} role updated to {role}"}
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid role specified")
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail="Invalid role specified") from err
     except Exception as e:
         logger.error(f"Error updating user role: {e}")
-        raise HTTPException(status_code=500, detail="Failed to update user role")
+        raise HTTPException(status_code=500, detail="Failed to update user role") from e
 
 @app.post("/superuser/users/{user_id}/password")
 def reset_user_password(user_id: int, password: str, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
@@ -349,14 +355,18 @@ async def update_user_details(user_id: int, request: Request, superuser: User = 
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        if "full_name" in data: user.full_name = data["full_name"]
-        if "email" in data: user.email = data["email"]
+        if "full_name" in data:
+            user.full_name = data["full_name"]
+        if "email" in data:
+            user.email = data["email"]
         if "role" in data:
-            try: user.role = UserRole(data["role"])
-            except ValueError: raise HTTPException(status_code=400, detail="Invalid role specified")
+            try:
+                user.role = UserRole(data["role"])
+            except ValueError as err:
+                raise HTTPException(status_code=400, detail="Invalid role specified") from err
         db.commit()
         db.refresh(user)
         return {"message": "User updated successfully", "user": user.username}
     except Exception as e:
         logger.error(f"Admin update error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to update user")
+        raise HTTPException(status_code=500, detail="Failed to update user") from e

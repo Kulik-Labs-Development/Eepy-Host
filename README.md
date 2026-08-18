@@ -17,6 +17,7 @@
   <img alt="Auth" src="https://img.shields.io/badge/Auth-JWT_%2B_bcrypt-4f46e5" />
   <img alt="Encryption" src="https://img.shields.io/badge/Credentials-Fernet_encrypted_0f9d58" />
   <img alt="License" src="https://img.shields.io/badge/License-Proprietary-lightgrey" />
+  <img alt="CI" src="https://github.com/Kulik-Labs-Development/Eepy-Host/actions/workflows/ci.yml/badge.svg" />
 </p>
 
 ---
@@ -157,6 +158,29 @@ The backend creates missing tables on startup and seeds the approved template re
 | `NEXT_PUBLIC_API_URL` | Backend base URL used by the frontend |
 
 See [deploy/stack.env.example](deploy/stack.env.example) for the full reference.
+
+### Testing & CI
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push/PR to `main`:
+
+- **Backend:** `ruff check` (lint) + `pytest` (unit tests for auth, JWT, and credential encryption — no live database required).
+- **Frontend:** ESLint (`next/core-web-vitals`) + `tsc --noEmit`.
+
+Run locally:
+
+```bash
+# Backend (no DB needed for the unit test suite)
+cd backend
+pip install -r requirements.txt pytest ruff
+ruff check .
+pytest tests/ -q
+
+# Frontend
+cd frontend
+npm install
+npm run lint
+npx tsc --noEmit
+```
 
 ## API Overview
 

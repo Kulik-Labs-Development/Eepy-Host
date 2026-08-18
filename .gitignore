@@ -13,3 +13,7 @@ stack.env
 env/
 venv/
 .DS_Store
+tsconfig.tsbuildinfo
+.ruff_cache/
+coverage/
+htmlcov/

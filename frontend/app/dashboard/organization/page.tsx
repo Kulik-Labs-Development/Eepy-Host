@@ -241,7 +241,7 @@ export default function OrganizationPage() {
             {/* Mobile card list */}
             <div className="md:hidden divide-y divide-void-border">
               {filteredUsers.length === 0 ? (
-                <div className="p-8 text-center text-gray-600 font-console text-sm italic">No users match "{searchQuery}".</div>
+                <div className="p-8 text-center text-gray-600 font-console text-sm italic">No users match “{searchQuery}”.</div>
               ) : (
                 filteredUsers.map((user) => (
                   <div key={user.id} className="p-4 space-y-3">
