@@ -1,6 +1,7 @@
 # Core API and Server
 fastapi==0.141.1
-uvicorn[standard]==0.30.6
+# NOTE: mcp[client-side] requires uvicorn>=0.31.1 — do not pin uvicorn below that.
+uvicorn[standard]==0.35.0
 python-multipart==0.0.32
 
 # Database
