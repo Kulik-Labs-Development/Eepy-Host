@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img alt="Frontend" src="https://img.shields.io/badge/Frontend-Next.js_14-38bdf8?logo=next.js&logoColor=white" />
+  <img alt="Frontend" src="https://img.shields.io/badge/Frontend-Next.js_15-38bdf8?logo=next.js&logoColor=white" />
   <img alt="Backend" src="https://img.shields.io/badge/Backend-FastAPI-009688?logo=fastapi&logoColor=white" />
   <img alt="Database" src="https://img.shields.io/badge/Database-PostgreSQL-336791?logo=postgresql&logoColor=white" />
   <img alt="Auth" src="https://img.shields.io/badge/Auth-JWT_%2B_bcrypt-4f46e5" />
@@ -49,11 +49,12 @@ Eepy Host is a **managed integration layer between LLM agents and real-world Saa
 
 ## Features
 
-- **Unified authentication portal** — single `/auth` flow for sign-in and sign-up with JWT sessions (`python-jose` + bcrypt).
+- **Unified authentication portal** — single `/auth` flow for sign-in and sign-up with JWT sessions (PyJWT + bcrypt), plus brute-force rate limiting on `/auth/login` and `/auth/signup`.
 - **Role hierarchy** — strict `USER` / `SUPERUSER` roles enforced at the API layer (the frontend is never the source of truth). Superusers manage the organization hub: user directory, role changes, account purging.
 - **Integration library** — admin-approved MCP templates with schema-driven connect wizards. Credentials are collected, encrypted server-side (Fernet), and never returned to the client.
 - **Unified proxy** — every tool call for every integration flows through `/api/mcp/proxy/{template_id}/{tool}`. Credentials are decrypted in memory for the duration of the request only — never logged, never persisted in plaintext.
 - **Live connection testing** — users validate stored credentials against the real upstream API from the dashboard in one click.
+- **Modular integration runtime** — new integrations ship as third-party MCP server images; the gateway spawns short-lived, idle-reaped per-user sidecars (subprocess or container), speaks MCP over stdio/streamable-HTTP, and never vendors integration code into the backend.
 - **Open WebUI as a single tool server** — one user-scoped, revocable API key + one OpenAPI spec URL covers *every* integration the user has connected, now and in the future. No per-server imports, ever.
 - **Dashboard** — Overview hub with the Open WebUI tool-server connection and a live status flag; account & profile management; per-server observability (last used, live tests); organization tools for superusers.
 
@@ -61,7 +62,7 @@ Eepy Host is a **managed integration layer between LLM agents and real-world Saa
 
 ### HappyFox Help Desk (live)
 
-Nine tools are exposed through the proxy, mapped to the HappyFox REST API v1.1:
+HappyFox runs on the modular sidecar runtime: the backend spawns per-user sidecars of the upstream `ghcr.io/glitch3dpenguin/happyfox-mcp` image and speaks MCP to it. Its nine tools are exposed through the proxy:
 
 | Tool | Description |
 |------|-------------|
@@ -155,6 +156,8 @@ The backend creates missing tables on startup and seeds the approved template re
 | `DATABASE_URL` | PostgreSQL connection string |
 | `SECRET_KEY` | Long random string; signs JWTs |
 | `MCP_ENCRYPTION_KEY` | Fernet key for credential encryption at rest. Generate with `Fernet.generate_key()`. |
+| `EEPY_MCP_INSTANCE_BACKEND` | How `mcp-server` runtime templates run: `docker` (compose default, pulls the integration image per user) or `subprocess` (local process). |
+| `EEPY_MCP_INSTANCE_IDLE_TIMEOUT` | Seconds before an idle MCP sidecar is reaped (default `300`). |
 | `NEXT_PUBLIC_API_URL` | Backend base URL used by the frontend |
 
 See [deploy/stack.env.example](deploy/stack.env.example) for the full reference.
@@ -163,7 +166,7 @@ See [deploy/stack.env.example](deploy/stack.env.example) for the full reference.
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push/PR to `main`:
 
-- **Backend:** `ruff check` (lint) + `pytest` (unit tests for auth, JWT, and credential encryption — no live database required).
+- **Backend:** `ruff check` (lint) + `pytest` (auth/JWT, credential encryption, and end-to-end tests for the MCP sidecar bridge against a fake stdio MCP server — no live database or Docker required).
 - **Frontend:** ESLint (`next/core-web-vitals`) + `tsc --noEmit`.
 
 Run locally:
@@ -196,6 +199,8 @@ All endpoints live under a single FastAPI app. Interactive docs at `/docs` when 
 | `POST /api/mcp/config/{template}/test` | Live validation against the upstream API | JWT or tool key |
 | `DELETE /api/mcp/config/{template}` | Disconnect an integration | JWT |
 | `POST/GET/PUT /api/mcp/proxy/{template}/{tool}` | Execute a tool call through the gateway | JWT or tool key |
+| `POST /superuser/mcp/templates/{id}/discover` | Capture the template's upstream `tools/list` schemas | SUPERUSER |
+| `PATCH /superuser/mcp/templates/{id}/runtime` | Set a template's sidecar spec + approval flags | SUPERUSER |
 | `GET /api/mcp/openapi.json` | Unified OpenAPI spec for Open WebUI | public |
 | `POST /api/mcp/api-keys` | Create a user-scoped, revocable tool key | JWT |
 | `GET /api/mcp/api-keys` | List keys (hash-only; prefixes only) | JWT |
@@ -213,36 +218,60 @@ All endpoints live under a single FastAPI app. Interactive docs at `/docs` when 
 
 ```
 ├── frontend/                 # Next.js (App Router) + Tailwind
-│   └── app/
-│       ├── auth/             # Unified sign-in / sign-up portal
-│       └── dashboard/
-│           ├── page.tsx    # Overview: Open WebUI tool server + status flag
-│           ├── servers/    # Active integrations + browsable library
-│           ├── account/      # Profile & identity management
-│           ├── organization/ # Superuser org hub
-│           ├── debug/        # Live console log
-│           └── settings/
+│   ├── app/
+│   │   ├── auth/             # Unified sign-in / sign-up portal
+│   │   └── dashboard/
+│   │       ├── page.tsx      # Overview: Open WebUI tool server + status flag
+│   │       ├── servers/      # Active integrations + browsable library
+│   │       ├── account/      # Profile & identity management
+│   │       ├── organization/ # Superuser org hub
+│   │       ├── debug/        # Live console log
+│   │       └── settings/
+│   ├── context/AuthContext.tsx
+│   ├── lib/api.ts
+│   └── src/components/       # MCPConnectionWizard, OpenWebUIExportPanel
 ├── backend/
-│   ├── main.py               # FastAPI app, router mounting, template seeding
-│   ├── auth.py               # JWT encode/decode (python-jose)
+│   ├── main.py               # FastAPI app, router mounting, template seeding,
+│   │                         #   superuser routes, superuser bootstrap
+│   ├── auth.py               # JWT encode/decode (PyJWT)
+│   ├── database.py           # engine/session (DATABASE_URL from env)
+│   ├── run_migrations.py     # idempotent schema bootstrap
 │   ├── api/
-│   │   └── mcp_endpoints.py  # Proxy, config lifecycle, tool keys, OpenAPI spec
+│   │   ├── mcp_endpoints.py  # ALL MCP routes: proxy (routes by runtime),
+│   │   │                     #   config lifecycle, tool keys, OpenAPI spec
+│   │   └── mcp_bridge.py     # modular sidecar bridge: spawn/reuse per-user
+│   │                         #   MCP sidecars (subprocess or docker), idle reaper
 │   ├── models/
 │   │   └── mcp_models.py     # Templates, user configs, tool keys
 │   ├── utils/
-│   │   └── crypto.py         # Fernet credential encryption
+│   │   ├── crypto.py         # Fernet credential encryption
+│   │   └── logging_setup.py  # shared logger config
 │   ├── alembic/              # Migration structure
 │   └── requirements.txt
 └── deploy/
     ├── docker-compose.yml    # db + backend + frontend (no secrets in the file)
-    └── stack.env.example     # secret reference - copy to stack.env and fill in
+    └── stack.env.example     # secret reference — copy to stack.env and fill in
 ```
 
 ## Adding a New Integration
 
-1. **Register the template** — add an `MCPTemplate` (id, display name, description, `config_schema` describing which credentials to collect). It becomes visible to users once a superuser sets `approved_by_admin` and `enabled_global`.
-2. **Implement proxy routing** — add the template to `TEMPLATE_REGISTRY` in `backend/api/mcp_endpoints.py` (tool map: tool name → upstream HTTP method + path) and the corresponding handler logic in the proxy route.
-3. **Done.** The template appears in the library, the connect wizard renders from its `config_schema`, and — because the OpenAPI export is unified — the new tools appear in every user's existing Open WebUI connection automatically.
+Two runtimes exist — prefer `mcp-server` (the modular path; no per-integration
+code in this repo):
+
+1. **`runtime=mcp-server` (recommended)** — register an `MCPTemplate` with the
+   upstream MCP server's `runtime_config` (image or command, `env_mapping` of
+   user credential fields → upstream env vars, `test_tool`) and its
+   `config_schema`. Approve it (`approved_by_admin=True`, `enabled_global=True`),
+   then as superuser connect it once and call
+   `POST /superuser/mcp/templates/{id}/discover` to capture the upstream's real
+   tool schemas. Re-run discovery after the upstream image changes.
+2. **`runtime=native` (legacy/reference)** — add the template's tool map to
+   `TEMPLATE_REGISTRY` in `backend/api/mcp_endpoints.py`. Only HappyFox uses
+   this path today (kept for rollback).
+
+Either way, the connect wizard renders from `config_schema`, and because the
+OpenAPI export is unified, the new tools appear in every user's existing Open
+WebUI connection automatically — no re-import.
 
 ## Development Notes
 
@@ -259,6 +288,7 @@ A few hard-learned conventions for this codebase:
 - [x] HappyFox integration (9 tools) + encrypted credential lifecycle
 - [x] Unified MCP proxy + live connection testing
 - [x] Single-connection Open WebUI tool server (user-scoped keys, unified spec)
+- [x] Modular MCP sidecar runtime (`mcp-server` templates, idle-reaped per-user sidecars)
 - [ ] Additional integrations (calendar, workspace chat, notes/databases)
 - [ ] Usage analytics (per-template call volume, health)
 - [ ] Template pricing tiers and billing

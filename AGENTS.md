@@ -68,7 +68,9 @@ part of the user-facing control plane. No persistent per-user containers.
   aesthetic: `eepy-lavender` / `eepy-peach` / `eepy-mint` accents), Lucide
   React icons, "console feel" UI convention.
 - **Backend:** FastAPI, PostgreSQL via SQLAlchemy (sync), Alembic migrations
-  (also an idempotent `backend/run_migrations.py`), JWT auth (python-jose).
+  (also an idempotent `backend/run_migrations.py`), JWT auth (PyJWT),
+  slowapi rate limiting on auth routes, `mcp` SDK + `docker` SDK for the
+  modular sidecar bridge.
 - **Deploy:** Docker Compose in `deploy/` (db + backend + frontend), GHCR
   images via CI.
 
@@ -78,7 +80,8 @@ part of the user-facing control plane. No persistent per-user containers.
 ├── backend/
 │   ├── main.py               # FastAPI app, router mounting, template seeding,
 │   │                         #   superuser routes, superuser bootstrap
-│   ├── auth.py               # JWT encode/decode (python-jose)
+│   ├── auth.py               # JWT encode/decode (PyJWT; migrated from
+│   │                         #   python-jose — jose is unmaintained, CVE-2024-29370)
 │   ├── database.py           # engine/session (DATABASE_URL from env)
 │   ├── run_migrations.py     # idempotent schema bootstrap
 │   ├── api/
@@ -93,7 +96,8 @@ part of the user-facing control plane. No persistent per-user containers.
 │   │   └── mcp_models.py     # MCPTemplate, UserMCPConfig, MCPUserToolKey,
 │   │                         #   MCPTemplateRequest
 │   ├── utils/
-│   │   └── crypto.py         # Fernet encrypt/decrypt (+ SECRET_KEY fallback)
+│   │   ├── crypto.py         # Fernet encrypt/decrypt (+ SECRET_KEY fallback)
+│   │   └── logging_setup.py  # shared logger config (used across backend)
 │   ├── alembic/              # migration structure + MCP migration
 │   └── requirements.txt
 ├── frontend/
@@ -261,9 +265,9 @@ curl http://localhost:8000/health
 ### Frontend development
 ```bash
 cd frontend
-pnpm install
-NEXT_PUBLIC_API_URL=http://localhost:8000 pnpm dev
-pnpm build && pnpm start
+npm install                      # npm (package-lock.json) — not pnpm
+NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev
+npm run build && npm start
 ```
 
 ### Docker deployment (compose file lives in `deploy/`)
@@ -284,8 +288,11 @@ keeps stack secrets distinct from any host-level dotfiles.
 ### Testing
 ```bash
 cd backend && pytest tests/ --cov=. -v || echo "Tests failed"
-cd frontend && pnpm vitest run --reporter=verbose && pnpm lint
+cd frontend && npm run lint && npx tsc --noEmit
 ```
+
+(CI mirrors this: ruff+pytest for the backend, eslint+tsc for the frontend —
+there is no vitest in the frontend.)
 
 ## Critical Developer Nuances (learn the hard way)
 
