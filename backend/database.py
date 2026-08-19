@@ -1,6 +1,6 @@
 import enum
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import Column, DateTime, Enum, Integer, String, create_engine
 from sqlalchemy.ext.declarative import declarative_base
@@ -30,7 +30,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)
     total_requests = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
 def get_db():
     db = SessionLocal()

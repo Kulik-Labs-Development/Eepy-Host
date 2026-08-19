@@ -22,7 +22,7 @@ import hashlib
 import logging
 import re
 import secrets
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -168,7 +168,7 @@ def _resolve_scoped_user(request: Request, db: Session) -> User:
         user = db.query(User).filter(User.id == key_row.owner_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="Key owner no longer exists.")
-        key_row.last_used_at = datetime.utcnow()
+        key_row.last_used_at = datetime.now(UTC)
         db.commit()
         return user
 
@@ -284,7 +284,7 @@ async def revoke_tool_api_key(
     if not row:
         raise HTTPException(status_code=404, detail="Not found")
     row.is_active = False
-    row.revoked_at = datetime.utcnow()
+    row.revoked_at = datetime.now(UTC)
     db.commit()
     logger.info(f"User {current_user.username} revoked tool API key id={row.id}")
     return {"status": "revoked", "id": row.id}
@@ -629,7 +629,7 @@ async def mcp_proxy(
         .first()
     )
     if cfg:
-        cfg.last_used_at = datetime.utcnow()
+        cfg.last_used_at = datetime.now(UTC)
         db.commit()
 
     try:

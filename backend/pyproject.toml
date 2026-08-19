@@ -20,7 +20,6 @@ select = [
 ignore = [
     "E501",   # long lines (handled by line-length where practical)
     "B008",   # function call in default argument (FastAPI Depends() idiom)
-    "UP007",  # X | Y unions (keep Optional[...] for readability parity)
 ]
 
 [tool.ruff.lint.isort]

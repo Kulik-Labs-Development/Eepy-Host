@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 
@@ -21,8 +21,8 @@ class MCPTemplate(Base):
     approved_by_admin = Column(Boolean, default=False, nullable=False)  # Admin approval gate
     enabled_global = Column(Boolean, default=True, nullable=False)       # Feature flag for global enable/disable
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, onupdate=lambda: datetime.now(UTC))
 
 
 class UserMCPConfig(Base):
@@ -42,8 +42,8 @@ class UserMCPConfig(Base):
     is_active = Column(Boolean, default=True, nullable=False)         # Toggle on/off without deleting config
     last_used_at = Column(DateTime, nullable=True)                     # Usage tracking for monetization later
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, onupdate=lambda: datetime.now(UTC))
 
 
 class MCPUserToolKey(Base):
@@ -76,7 +76,7 @@ class MCPUserToolKey(Base):
 
     is_active = Column(Boolean, default=True, nullable=False)
     last_used_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     revoked_at = Column(DateTime, nullable=True)
 
 
@@ -94,5 +94,5 @@ class MCPTemplateRequest(Base):
     status = Column(String, default='pending', nullable=False)  # 'pending' | 'approved' | 'rejected'
     admin_notes = Column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, onupdate=lambda: datetime.now(UTC))
