@@ -91,7 +91,17 @@ def sync_database_schema():
 def seed_mcp_templates():
     """Seed the admin-approved HappyFox template (template #1) into the library.
 
-    Idempotent: only inserts if the slug does not already exist.
+    The HappyFox MCP server code lives OUTSIDE this backend, in the
+    integrations/happyfox-mcp git submodule (github.com/Glitch3dPenguin/
+    happyfox-mcp). This row only registers *how to run* it:
+
+    - docker backend (production/Portainer): CI builds the submodule into
+      ghcr.io/kulik-labs-development/eepy-host-happyfox:latest on every
+      push (the submodule pin in git = exactly that code).
+    - subprocess backend (local dev): runs the submodule in-repo directly.
+
+    Updating HappyFox = update the submodule ref + re-run admin discovery;
+    never edit its code inside the backend.
     """
     from models.mcp_models import MCPTemplate
 
@@ -130,16 +140,17 @@ def seed_mcp_templates():
             },
             "required": ["HAPPYFOX_DOMAIN", "HAPPYFOX_API_KEY", "HAPPYFOX_AUTH_CODE"],
         },
-        image_tag="ghcr.io/glitch3dpenguin/happyfox-mcp",
+        image_tag="ghcr.io/kulik-labs-development/eepy-host-happyfox",
         runtime="mcp-server",
-        # Modular sidecar spec: the upstream happyfox-mcp server (its own repo)
-        # is spawned per user with their decrypted credentials injected as env
-        # vars. Docker backend (compose/Portainer) uses `image`; a local
-        # subprocess backend would use `command` instead. When the upstream
-        # repo changes, only the image reference needs updating -- not this code.
+        # Modular sidecar spec. Production (docker backend): CI builds the
+        # integrations/happyfox-mcp submodule into the image below on every
+        # push, so the sidecar always runs exactly the upstream commit this
+        # repo pins. Local (subprocess backend): the command + cwd run the
+        # submodule's server straight from the repo (stdio transport).
         runtime_config={
-            "image": "ghcr.io/glitch3dpenguin/happyfox-mcp:latest",
+            "image": "ghcr.io/kulik-labs-development/eepy-host-happyfox:latest",
             "command": ["python", "happyfox_mcp.py"],
+            "cwd": "integrations/happyfox-mcp",
             "env": {
                 "MCP_TRANSPORT": "streamable-http",
                 "PORT": "8000",
@@ -156,12 +167,15 @@ def seed_mcp_templates():
             "test_tool": {"name": "list_tickets", "arguments": {"status": "_pending", "size": 1}},
             # Best-effort tool list for the OpenAPI spec until admin discovery
             # stores the authoritative tools/list (from the upstream repo).
+            # Kept in sync with integrations/happyfox-mcp (16 tools at submodule
+            # commit 91906dc, verified through the subprocess sidecar path).
             "tool_names": [
                 "list_tickets", "get_ticket_details", "get_ticket_messages",
-                "get_ticket_attachments", "download_attachment",
-                "list_statuses", "list_categories", "list_staff",
-                "add_ticket_update", "create_ticket", "suggest_ticket_rename",
-                "change_ticket_status",
+                "get_ticket_attachments", "download_attachment", "list_statuses",
+                "list_categories", "list_staff", "list_priorities",
+                "add_ticket_update", "create_ticket", "assign_ticket",
+                "suggest_ticket_rename", "change_ticket_status",
+                "change_ticket_priority", "change_ticket_category",
             ],
         },
         approved_by_admin=True,

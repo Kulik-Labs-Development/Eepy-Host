@@ -34,15 +34,17 @@ services:
       # MUST stay the same as the one that encrypted existing stored credentials,
       # otherwise they can no longer be decrypted.
       - MCP_ENCRYPTION_KEY=${MCP_ENCRYPTION_KEY:?MCP_ENCRYPTION_KEY is required - see deploy/stack.env.example}
-      # Modular MCP sidecar runtime: "docker" runs upstream MCP server repos as
-      # sidecar containers (needs the Docker socket below); "subprocess" spawns
-      # them as local processes (needs the server code vendored into the image).
-      # Default here is "docker" - that is the whole point of the modular path:
-      # we pull in other people's repos as images and never vendor their code.
+      # Modular MCP sidecar runtime: "docker" runs integrations' MCP servers
+      # (built from the integrations/ git submodules by CI) as sidecar
+      # containers (needs the Docker socket below); "subprocess" spawns them
+      # as local processes (local dev with the submodule checked out).
+      # Default here is "docker".
       - EEPY_MCP_INSTANCE_BACKEND=${EEPY_MCP_INSTANCE_BACKEND:-docker}
     # The Docker socket lets the backend spawn/kill per-user MCP sidecar
-    # containers. This grants host-level container control, so it is only
-    # mounted for the trusted backend service (not the frontend, not db).
+    # containers (e.g. ghcr.io/kulik-labs-development/eepy-host-happyfox,
+    # built from integrations/happyfox-mcp by CI). This grants host-level
+    # container control, so it is only mounted for the trusted backend
+    # service (not the frontend, not db).
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:

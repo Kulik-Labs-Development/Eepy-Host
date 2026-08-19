@@ -132,6 +132,7 @@ class Instance:
     image: str | None = None
     url: str | None = None
     env: dict[str, str] = field(default_factory=dict)
+    cwd: str | None = None
     proc: subprocess.Popen | None = None
     container_id: str | None = None
     ephemeral: bool = False
@@ -201,17 +202,43 @@ async def _spawn_subprocess(template: MCPTemplate, key: str, env: dict[str, str]
                             ephemeral: bool) -> Instance:
     cfg = _runtime_config(template)
     command = [str(c) for c in cfg["command"]]
+    # Optional working directory: relative paths resolve against the repo root
+    # (backend/api -> parents[2]). Lets the subprocess backend run integration
+    # code that lives in this repo (e.g. the integrations/happyfox-mcp
+    # submodule); the docker backend remains the production path. Relative
+    # command args are resolved to ABSOLUTE paths here, because the SDK's
+    # stdio_client (used per call in open_session) cannot take a cwd — the
+    # command must work from any cwd the backend process happens to have.
+    cwd: str | None = None
+    if cfg.get("cwd"):
+        from pathlib import Path
+        p = Path(str(cfg["cwd"]))
+        if not p.is_absolute():
+            p = Path(__file__).resolve().parents[2] / p
+        cwd = str(p)
+        command = [str(c) for c in command]
+        # Resolve only tokens that LOOK like relative paths (./ or ../);
+        # a bare first token like "python" is an interpreter resolved via PATH.
+        command = [c if os.path.isabs(c) or not (c.startswith("./") or c.startswith("../"))
+                   else str(p / c) for c in command]
+    # Put the backend's interpreter first on PATH so a bare "python" command
+    # resolves to it (the sidecar's deps, e.g. mcp SDK + requests, are then
+    # importable) while still honoring the minimal allowlist env.
+    import sys as _sys
+    env = dict(env)
+    env["PATH"] = f"{os.path.dirname(_sys.executable)}{os.pathsep}{env.get('PATH', '')}"
     try:
         proc = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,  # keep the stdio channel pristine
             env=env,
+            cwd=cwd,
         )
     except OSError as exc:
         raise BridgeError(f"Failed to start MCP server process ({exc.__class__.__name__}).") from exc
-    inst = Instance(key=key, kind="subprocess", command=command, env=env, proc=proc,
-                    ephemeral=ephemeral)
+    inst = Instance(key=key, kind="subprocess", command=command, env=env, cwd=cwd,
+                    proc=proc, ephemeral=ephemeral)
     _REGISTRY[key] = inst
     logger.info(f"mcp-bridge: spawned subprocess sidecar for {template.id} key={key[:12]} pid={proc.pid}")
     return inst
@@ -457,6 +484,7 @@ async def open_session(inst: Instance) -> McpSession:
                 command=inst.command[0],
                 args=inst.command[1:],
                 env=inst.env,
+                cwd=inst.cwd,
             )
             streams = await stack.enter_async_context(stdio_client(params))
             sess = McpSession(kind="subprocess", command=inst.command, env=inst.env,

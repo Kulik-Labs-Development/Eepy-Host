@@ -54,7 +54,7 @@ Eepy Host is a **managed integration layer between LLM agents and real-world Saa
 - **Integration library** — admin-approved MCP templates with schema-driven connect wizards. Credentials are collected, encrypted server-side (Fernet), and never returned to the client.
 - **Unified proxy** — every tool call for every integration flows through `/api/mcp/proxy/{template_id}/{tool}`. Credentials are decrypted in memory for the duration of the request only — never logged, never persisted in plaintext.
 - **Live connection testing** — users validate stored credentials against the real upstream API from the dashboard in one click.
-- **Modular integration runtime** — new integrations ship as third-party MCP server images; the gateway spawns short-lived, idle-reaped per-user sidecars (subprocess or container), speaks MCP over stdio/streamable-HTTP, and never vendors integration code into the backend.
+- **Modular integration runtime** — integration MCP servers live in their own upstream repos, pulled in as git submodules under `integrations/`. CI builds each submodule into its own sidecar image on every push, and the gateway spawns short-lived, idle-reaped per-user sidecars (subprocess locally, container in production) — updating an integration is a submodule bump, never a backend change.
 - **Open WebUI as a single tool server** — one user-scoped, revocable API key + one OpenAPI spec URL covers *every* integration the user has connected, now and in the future. No per-server imports, ever.
 - **Dashboard** — Overview hub with the Open WebUI tool-server connection and a live status flag; account & profile management; per-server observability (last used, live tests); organization tools for superusers.
 
@@ -62,19 +62,9 @@ Eepy Host is a **managed integration layer between LLM agents and real-world Saa
 
 ### HappyFox Help Desk (live)
 
-HappyFox runs on the modular sidecar runtime: the backend spawns per-user sidecars of the upstream `ghcr.io/glitch3dpenguin/happyfox-mcp` image and speaks MCP to it. Its nine tools are exposed through the proxy:
+HappyFox runs on the modular sidecar runtime: its MCP server code lives in the **`integrations/happyfox-mcp` git submodule** (its own repo, `Glitch3dPenguin/happyfox-mcp`), which CI builds into a sidecar image on every push. The gateway spawns a per-user sidecar of that image, so HappyFox updates flow straight into Eepy — no HappyFox code is ever maintained inside the backend. Its tools are exposed through the proxy:
 
-| Tool | Description |
-|------|-------------|
-| `list_tickets` | List support tickets with status/pagination filters |
-| `list_statuses` | List all ticket statuses in the account |
-| `list_staff` | List staff members in the account |
-| `get_ticket_details` | Full details of a single ticket |
-| `get_ticket_messages` | All messages on a ticket thread |
-| `add_ticket_update` | Post a public reply or private internal note |
-| `create_ticket` | Create a new support ticket |
-| `rename_ticket` | Change a ticket's subject line |
-| `change_ticket_status` | Move a ticket to a new status |
+The upstream server exposes 16 tools (read: `list_tickets`, `list_statuses`, `list_categories`, `list_staff`, `list_priorities`, `get_ticket_details`, `get_ticket_messages`, `get_ticket_attachments`, `download_attachment`; write: `create_ticket`, `add_ticket_update`, `assign_ticket`, `suggest_ticket_rename`, `change_ticket_status`, `change_ticket_priority`, `change_ticket_category`). Write tools require user confirmation per the upstream spec. The dashboard shows the authoritative tool list after admin discovery (see AGENTS.md).
 
 Connecting requires three values from your HappyFox account: **domain**, **API key**, and **auth code** (found in *Settings → API* on your HappyFox site).
 
@@ -248,6 +238,9 @@ All endpoints live under a single FastAPI app. Interactive docs at `/docs` when 
 │   │   └── logging_setup.py  # shared logger config
 │   ├── alembic/              # Migration structure
 │   └── requirements.txt
+├── integrations/             # upstream MCP server repos, as git submodules
+│   ├── Dockerfile.happyfox   #   CI builds the submodule into the sidecar image
+│   └── happyfox-mcp/         #   → Glitch3dPenguin/happyfox-mcp (submodule)
 └── deploy/
     ├── docker-compose.yml    # db + backend + frontend (no secrets in the file)
     └── stack.env.example     # secret reference — copy to stack.env and fill in
@@ -258,13 +251,7 @@ All endpoints live under a single FastAPI app. Interactive docs at `/docs` when 
 Two runtimes exist — prefer `mcp-server` (the modular path; no per-integration
 code in this repo):
 
-1. **`runtime=mcp-server` (recommended)** — register an `MCPTemplate` with the
-   upstream MCP server's `runtime_config` (image or command, `env_mapping` of
-   user credential fields → upstream env vars, `test_tool`) and its
-   `config_schema`. Approve it (`approved_by_admin=True`, `enabled_global=True`),
-   then as superuser connect it once and call
-   `POST /superuser/mcp/templates/{id}/discover` to capture the upstream's real
-   tool schemas. Re-run discovery after the upstream image changes.
+1. **`runtime=mcp-server` (recommended)** — bring the integration's MCP server repo into `integrations/` as a git submodule, add a `Dockerfile.<name>` next to it (build context = repo root) plus a build step in `.github/workflows/main.yml`, and register an `MCPTemplate` with its `runtime_config` (image, `env_mapping` of user credential fields → upstream env vars, `test_tool`) and its `config_schema`. Approve it (`approved_by_admin=True`, `enabled_global=True`), then as superuser connect it once and call `POST /superuser/mcp/templates/{id}/discover` to capture the upstream's real tool schemas. **Updating the integration later = update the submodule ref and push** — CI rebuilds the sidecar image from exactly that commit; re-run discovery after the bump.
 2. **`runtime=native` (legacy/reference)** — add the template's tool map to
    `TEMPLATE_REGISTRY` in `backend/api/mcp_endpoints.py`. Only HappyFox uses
    this path today (kept for rollback).

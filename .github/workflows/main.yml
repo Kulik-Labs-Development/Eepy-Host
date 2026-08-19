@@ -17,8 +17,10 @@ jobs:
       packages: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (with integration submodules)
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Log in to the Container registry
         uses: docker/login-action@v3
@@ -40,9 +42,21 @@ jobs:
       - name: Build and push Backend image
         uses: docker/build-push-action@v5
         with:
-          context: ./backend
+          context: ./
+          file: ./backend/Dockerfile
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:latest
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Build and push HappyFox MCP sidecar image
+        # Built from the integrations/happyfox-mcp submodule so the deployed
+        # sidecar always matches the exact upstream commit this repo pins.
+        uses: docker/build-push-action@v5
+        with:
+          context: ./
+          file: ./integrations/Dockerfile.happyfox
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-happyfox:latest
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Build and push Frontend image

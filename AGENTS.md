@@ -16,21 +16,26 @@ tools without operational overhead.
 
 **Core architecture principle:** this is NOT a container orchestration
 platform for the *control plane*. One unified FastAPI backend owns auth,
-credentials (encrypted at rest), and all proxy routing. For **modular
-integrations** (`runtime=mcp-server`) the backend may spawn short-lived
-per-user MCP *sidecars* (subprocesses or containers) running upstream
-third-party MCP servers — but those are ephemeral, idle-reaped, and never
-part of the user-facing control plane. No persistent per-user containers.
+credentials (encrypted at rest), and all proxy routing. Integration MCP
+server code lives in **separate upstream repos**, pulled into this project as
+git submodules under `integrations/` (HappyFox:
+`integrations/happyfox-mcp` → github.com/Glitch3dPenguin/happyfox-mcp).
+CI builds each submodule's code into its own GHCR sidecar image on every
+push, so the deployed gateway always runs exactly the code this repo pins —
+updating an integration is "bump the submodule ref", never editing its code
+here. The backend spawns those sidecars per user (subprocess locally,
+docker container in production), short-lived and idle-reaped.
 
 ## Current State (Phase 5 complete: modular MCP sidecar runtime)
 
 - Unified auth portal + dashboard hub (account, debug console, organization
   admin tools for superusers, servers).
 - HappyFox Help Desk is Template #1: seeded at startup in `main.py`
-  (`seed_mcp_templates()`, idempotent) with `approved_by_admin=True`, and now
-  runs on the **modular sidecar runtime** (`runtime=mcp-server`) using the
-  upstream `ghcr.io/glitch3dpenguin/happyfox-mcp` image — the reference
-  implementation for every future integration.
+  (`seed_mcp_templates()`, idempotent) with `approved_by_admin=True`, and runs
+  on the **modular sidecar runtime** (`runtime=mcp-server`) from the
+  `integrations/happyfox-mcp` git submodule (its own upstream repo) — CI
+  builds that submodule into the `eepy-host-happyfox` GHCR sidecar image —
+  the reference implementation for every future integration.
 - The unified proxy (`/api/mcp/proxy/{template_id}/{tool_name}`) routes by
   template `runtime`: `mcp-server` → generic bridge (`api/mcp_bridge.py`),
   `native` → hardcoded `TEMPLATE_REGISTRY` (HappyFox reference path, kept for
@@ -110,6 +115,10 @@ part of the user-facing control plane. No persistent per-user containers.
 │   └── stack.env.example     # secret reference — copy to stack.env and fill in
 │                             #   (named stack.env, not .env, because the stack
 │                             #   is normally deployed via Portainer)
+├── integrations/
+│   ├── Dockerfile.happyfox   # builds the submodule into the sidecar image
+│   │                         #   (build context = repo root; see .github/workflows/main.yml)
+│   └── happyfox-mcp/         # GIT SUBMODULE → Glitch3dPenguin/happyfox-mcp
 └── assets/
 ```
 
@@ -157,10 +166,11 @@ admin-discovery time from the upstream server's own `tools/list`.
    - `runtime_config` (JSON), e.g.:
      ```json
      {
-       "image": "ghcr.io/whoever/some-mcp:latest",
+       "image": "ghcr.io/kulik-labs-development/eepy-host-happyfox:latest",
        "command": ["python", "server.py"],
+       "cwd": "integrations/happyfox-mcp",
        "env": {"MCP_TRANSPORT": "streamable-http", "PORT": "8000"},
-       "endpoint": "/mcp",
+       "endpoint": "/",
        "port": "8000",
        "env_mapping": {"USER_FIELD_A": "UPSTREAM_ENV_A", "USER_FIELD_B": "UPSTREAM_ENV_B"},
        "test_tool": {"name": "some_read_only_tool", "arguments": {}},
@@ -170,10 +180,13 @@ admin-discovery time from the upstream server's own `tools/list`.
      - `env_mapping` maps each **user credential field** (from
        `config_schema`) to the **upstream env var** the sidecar reads.
        Unmapped fields are never passed to the sidecar.
-     - `image` → docker backend (pulls + runs a sidecar container, needs the
-       Docker socket). `command` → subprocess backend (spawns a local process;
-       the server code must be reachable from the backend). Set
-       `EEPY_MCP_INSTANCE_BACKEND` to pick; compose defaults to `docker`.
+     - `image` → docker backend (production: the image is built from the
+       integration's git submodule by CI on every push — needs the Docker
+       socket). `command` (+ optional relative `cwd`, resolved against the
+       repo root) → subprocess backend (local dev; the sidecar's deps are
+       picked up from the backend's own interpreter, which the bridge puts
+       first on PATH). Set `EEPY_MCP_INSTANCE_BACKEND` to pick; compose
+       defaults to `docker`.
      - `test_tool` is a read-only tool used by `/config/{id}/test`.
      - `tool_names` is a best-effort list so the OpenAPI spec has entries
        before discovery (discovery overwrites `discovered_tools` with the real
@@ -190,9 +203,12 @@ admin-discovery time from the upstream server's own `tools/list`.
    `config_schema`; proxy + test route through the generic bridge; its tools
    appear in every user's single Open WebUI connection automatically.
 
-**Maintenance when the upstream repo changes:** bump the `image` tag in
-`runtime_config` (or let it track `:latest`) and re-run discovery. No Eepy
-backend code changes — that is the whole point of the modular path.
+**Maintenance when the upstream repo changes:** the upstream repo is a git
+submodule under `integrations/` — update its ref
+(`cd integrations/happyfox-mcp && git fetch && git checkout <new-commit>`
+then `git add integrations/happyfox-mcp`), push, and CI rebuilds the sidecar
+image from that exact commit. Re-run discovery. No Eepy backend code changes
+— that is the whole point of the modular path.
 
 ### B. Legacy/reference: `runtime=native` (hardcoded, only for HappyFox today)
 
@@ -229,12 +245,15 @@ backend code changes — that is the whole point of the modular path.
   credentials, tool keys, discovered tools) lives in the shared PostgreSQL, so
   any node can serve any user — it just (re)spawns a sidecar on demand. This is
   what keeps the stack horizontally scalable/load-balancable.
-- **Instance backends:** `subprocess` (default; spawns `command`, needs the
-  MCP server's deps in the backend env) or `docker` (runs `image`, pulls on
-  demand, binds the container to 127.0.0.1 on an ephemeral host port — needs
-  the Docker socket, which `deploy/docker-compose.yml` mounts on the backend
-  service only). The bridge speaks MCP over stdio (subprocess) or
-  streamable-HTTP (docker/url).
+- **Instance backends:** `subprocess` (local dev; spawns `command`, with an
+  optional relative `cwd` resolved against the repo root so the integration
+  can be run straight from its `integrations/` submodule; the backend's
+  interpreter is put first on PATH so the sidecar's deps resolve) or `docker`
+  (production: runs `image` — built from the integration's git submodule by
+  CI — pulls on demand, binds the container to 127.0.0.1 on an ephemeral
+  host port, needs the Docker socket, which `deploy/docker-compose.yml`
+  mounts on the backend service only). The bridge speaks MCP over stdio
+  (subprocess) or streamable-HTTP (docker/url).
 
 **Security note (sidecars run third-party code):** the `approved_by_admin` /
 `enabled_global` gate is the moderation layer. Pin image tags to digests for

@@ -1,0 +1,32 @@
+# HappyFox MCP server sidecar image.
+#
+# SOURCE OF TRUTH: integrations/happyfox-mcp (git submodule →
+# github.com/Glitch3dPenguin/happyfox-mcp). This Dockerfile only builds that
+# code into an image; it is NOT where the server code lives.
+#
+# Build context must be the REPO ROOT (CI sets context: ./), so the
+# integrations/happyfox-mcp/ path below resolves. The submodule is checked out
+#   integrations/Dockerfile.happyfox), so the image
+# always contains exactly the happyfox-mcp commit this repo pins.
+#
+# Transport: streamable-HTTP on :8000 — the Eepy backend spawns this image
+# per user via the mcp-server sidecar runtime (api/mcp_bridge.py) and speaks
+# MCP to http://<container>:8000/ .
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install deps first (better layer caching — re-runs only if requirements change)
+COPY integrations/happyfox-mcp/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Server code (single-file upstream repo)
+COPY integrations/happyfox-mcp/happyfox_mcp.py .
+
+# Streamable HTTP is the transport for container deployments
+ENV MCP_TRANSPORT=streamable-http
+ENV PORT=8000
+
+EXPOSE 8000
+
+CMD ["python", "happyfox_mcp.py"]

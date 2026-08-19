@@ -1,0 +1,19 @@
+# Docker build context is the repo root (backend + happyfox sidecar images).
+# Keep only what the images need.
+.git
+.github
+assets
+frontend
+# The happyfox sidecar image copies only integrations/happyfox-mcp/*, and the
+# backend image copies only backend/* — so nothing else from integrations/ is
+# needed either, but the submodule's .git metadata should never be sent.
+integrations/happyfox-mcp/.git
+__pycache__
+*.pyc
+.venv
+venv
+node_modules
+*.db
+*.sqlite
+deploy/stack.env
+.env
