@@ -1,11 +1,14 @@
 import base64
 import logging
 import os
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -17,6 +20,7 @@ from database import Base, SessionLocal, User, UserRole, engine, get_db
 from models import (
     mcp_models,  # noqa: F401  - register MCP tables on the shared Base so create_all builds them
 )
+from models.mcp_models import MCPTemplate
 from schemas import PasswordResetIn, UserCreate, UserLogin
 from utils.logging_setup import MemoryLogHandler, logger
 
@@ -29,6 +33,7 @@ logger.addHandler(memory_handler)
 def sync_database_schema():
     try:
         with engine.connect() as conn:
+            # users table columns (existing behavior).
             result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='users'"))
             existing_columns = {row[0] for row in result}
 
@@ -42,6 +47,20 @@ def sync_database_schema():
                 if col not in existing_columns:
                     logger.info(f"Adding missing column {col} to users table...")
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
+
+            # mcp_templates columns for the modular MCP sidecar runtime.
+            result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='mcp_templates'"))
+            template_cols = {row[0] for row in result}
+            template_required = {
+                "runtime": "VARCHAR NOT NULL DEFAULT 'native'",
+                "runtime_config": "JSON",
+                "discovered_tools": "JSON",
+                "tools_discovered_at": "TIMESTAMP WITH TIME ZONE",
+            }
+            for col, col_type in template_required.items():
+                if col not in template_cols:
+                    logger.info(f"Adding missing column {col} to mcp_templates table...")
+                    conn.execute(text(f"ALTER TABLE mcp_templates ADD COLUMN {col} {col_type}"))
 
             conn.commit()
             logger.info("Database columns synchronized.")
@@ -112,6 +131,39 @@ def seed_mcp_templates():
             "required": ["HAPPYFOX_DOMAIN", "HAPPYFOX_API_KEY", "HAPPYFOX_AUTH_CODE"],
         },
         image_tag="ghcr.io/glitch3dpenguin/happyfox-mcp",
+        runtime="mcp-server",
+        # Modular sidecar spec: the upstream happyfox-mcp server (its own repo)
+        # is spawned per user with their decrypted credentials injected as env
+        # vars. Docker backend (compose/Portainer) uses `image`; a local
+        # subprocess backend would use `command` instead. When the upstream
+        # repo changes, only the image reference needs updating -- not this code.
+        runtime_config={
+            "image": "ghcr.io/glitch3dpenguin/happyfox-mcp:latest",
+            "command": ["python", "happyfox_mcp.py"],
+            "env": {
+                "MCP_TRANSPORT": "streamable-http",
+                "PORT": "8000",
+            },
+            "endpoint": "/",
+            "port": "8000",
+            "env_mapping": {
+                "HAPPYFOX_DOMAIN": "HAPPYFOX_DOMAIN",
+                "HAPPYFOX_API_KEY": "HAPPYFOX_API_KEY",
+                "HAPPYFOX_AUTH_CODE": "HAPPYFOX_AUTH_CODE",
+            },
+            # Read-only tool used by POST /config/{id}/test. The server returns
+            # "Error ..." as tool text on auth failure, so the test inspects it.
+            "test_tool": {"name": "list_tickets", "arguments": {"status": "_pending", "size": 1}},
+            # Best-effort tool list for the OpenAPI spec until admin discovery
+            # stores the authoritative tools/list (from the upstream repo).
+            "tool_names": [
+                "list_tickets", "get_ticket_details", "get_ticket_messages",
+                "get_ticket_attachments", "download_attachment",
+                "list_statuses", "list_categories", "list_staff",
+                "add_ticket_update", "create_ticket", "suggest_ticket_rename",
+                "change_ticket_status",
+            ],
+        },
         approved_by_admin=True,
         enabled_global=True,
     )
@@ -124,12 +176,17 @@ def seed_mcp_templates():
             existing.enabled_global = True
             existing.description = happyfox.description
             existing.config_schema = happyfox.config_schema
+            existing.image_tag = happyfox.image_tag
+            # Roll forward to the modular sidecar runtime on every boot so the
+            # seeded reference template always matches this code's expectations.
+            existing.runtime = happyfox.runtime
+            existing.runtime_config = happyfox.runtime_config
             db.commit()
-            logger.info("HappyFox MCP template exists; ensured enabled.")
+            logger.info("HappyFox MCP template exists; ensured enabled (mcp-server runtime).")
         else:
             db.add(happyfox)
             db.commit()
-            logger.info("Seeded HappyFox MCP template (approved).")
+            logger.info("Seeded HappyFox MCP template (approved, mcp-server runtime).")
     finally:
         db.close()
 
@@ -143,9 +200,24 @@ except Exception as e:
 
 # MCP endpoints (Phase 5: HappyFox template #1). Absolute import (never relative):
 # Uvicorn runs this module top-level.
+from api import mcp_bridge  # noqa: E402
 from api.mcp_endpoints import router as mcp_router  # noqa: E402
 
 app = FastAPI(title="Eepy Host API")
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Application lifecycle: start the MCP sidecar idle-reaper on boot,
+    tear down any live sidecars on shutdown."""
+    mcp_bridge.ensure_reaper_started()
+    try:
+        yield
+    finally:
+        mcp_bridge.shutdown_all_instances()
+
+
+app.router.lifespan_context = _lifespan
 
 # --- RATE LIMITING ---
 # Brute-force protection for credential endpoints. In-memory limiter (single
@@ -394,3 +466,91 @@ async def update_user_details(user_id: int, request: Request, superuser: User = 
     except Exception as e:
         logger.error(f"Admin update error: {e}")
         raise HTTPException(status_code=500, detail="Failed to update user") from e
+
+
+# ---------------------------------------------------------------------------
+# Superuser: MCP template runtime management (modular sidecar integrations)
+# ---------------------------------------------------------------------------
+class TemplateRuntimeIn(BaseModel):
+    runtime: str | None = None  # "native" | "mcp-server"
+    runtime_config: dict | None = None  # sidecar spec (image/command/env_mapping/...)
+    approved_by_admin: bool | None = None
+    enabled_global: bool | None = None
+
+
+@app.patch("/superuser/mcp/templates/{template_id}/runtime")
+async def update_mcp_template_runtime(
+    template_id: str,
+    body: TemplateRuntimeIn,
+    superuser: User = Depends(get_superuser),
+    db: Session = Depends(get_db),
+):
+    """Register/update the sidecar spec for an integration.
+
+    `runtime_config` never contains secrets -- only template-level static
+    config (image, command, env mapping, endpoint, test_tool). User secrets
+    come from each user's encrypted config and are injected per sidecar.
+    """
+    template = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found.")
+    if body.runtime is not None:
+        if body.runtime not in ("native", "mcp-server"):
+            raise HTTPException(status_code=400, detail="runtime must be 'native' or 'mcp-server'.")
+        template.runtime = body.runtime
+    if body.runtime_config is not None:
+        template.runtime_config = body.runtime_config
+    if body.approved_by_admin is not None:
+        template.approved_by_admin = body.approved_by_admin
+    if body.enabled_global is not None:
+        template.enabled_global = body.enabled_global
+    db.commit()
+    logger.info(f"Superuser {superuser.username} updated runtime for template '{template_id}'")
+    return {"status": "updated", "template_id": template_id, "runtime": template.runtime}
+
+
+@app.post("/superuser/mcp/templates/{template_id}/discover")
+async def discover_mcp_tools(
+    template_id: str,
+    superuser: User = Depends(get_superuser),
+    db: Session = Depends(get_db),
+):
+    """Run tools/list against the template's sidecar using the superuser's OWN
+    stored credentials for that template, and store the result on the row.
+
+    This is what makes a new upstream-repo integration appear in the unified
+    OpenAPI spec (and dashboard) with zero backend code: the upstream repo's
+    author owns the tool definitions; we just capture them. The sidecar is
+    ephemeral and is torn down immediately after discovery.
+    """
+    from api.mcp_bridge import discover_tools_for_template
+    from utils.crypto import decrypt_credentials
+
+    template = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found.")
+    if template.runtime != "mcp-server":
+        raise HTTPException(status_code=400, detail="Template does not use the mcp-server runtime.")
+
+    cfg_row = (
+        db.query(mcp_models.UserMCPConfig)
+        .filter(mcp_models.UserMCPConfig.owner_id == superuser.id,
+                mcp_models.UserMCPConfig.template_name == template_id,
+                mcp_models.UserMCPConfig.is_active == True)  # noqa: E712
+        .first()
+    )
+    if not cfg_row:
+        raise HTTPException(
+            status_code=400,
+            detail=f"You must first connect to '{template_id}' with your own account "
+                   f"(dashboard > Connect) before discovering its tools.",
+        )
+
+    credentials = decrypt_credentials(cfg_row.credentials_json)  # memory-only
+
+    tools = await discover_tools_for_template(db, superuser, template, credentials)
+    template.discovered_tools = tools
+    template.tools_discovered_at = datetime.now(UTC)
+    db.commit()
+    logger.info(f"Superuser {superuser.username} discovered {len(tools)} tools for '{template_id}'")
+    return {"template_id": template_id, "tool_count": len(tools), "tools": [t["name"] for t in tools]}

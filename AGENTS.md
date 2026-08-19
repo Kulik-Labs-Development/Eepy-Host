@@ -15,24 +15,37 @@ plumbing, credential management (encrypted at rest), and unified proxy routing
 tools without operational overhead.
 
 **Core architecture principle:** this is NOT a container orchestration
-platform. No per-user containers, no container sprawl — a single unified
-FastAPI backend proxies every integration.
+platform for the *control plane*. One unified FastAPI backend owns auth,
+credentials (encrypted at rest), and all proxy routing. For **modular
+integrations** (`runtime=mcp-server`) the backend may spawn short-lived
+per-user MCP *sidecars* (subprocesses or containers) running upstream
+third-party MCP servers — but those are ephemeral, idle-reaped, and never
+part of the user-facing control plane. No persistent per-user containers.
 
-## Current State (Phase 4+ complete)
+## Current State (Phase 5 complete: modular MCP sidecar runtime)
 
 - Unified auth portal + dashboard hub (account, debug console, organization
   admin tools for superusers, servers).
 - HappyFox Help Desk is Template #1: seeded at startup in `main.py`
-  (`seed_mcp_templates()`, idempotent) with `approved_by_admin=True`.
-- Unified proxy endpoint handles all templates via `TEMPLATE_REGISTRY` in
-  `backend/api/mcp_endpoints.py`.
+  (`seed_mcp_templates()`, idempotent) with `approved_by_admin=True`, and now
+  runs on the **modular sidecar runtime** (`runtime=mcp-server`) using the
+  upstream `ghcr.io/glitch3dpenguin/happyfox-mcp` image — the reference
+  implementation for every future integration.
+- The unified proxy (`/api/mcp/proxy/{template_id}/{tool_name}`) routes by
+  template `runtime`: `mcp-server` → generic bridge (`api/mcp_bridge.py`),
+  `native` → hardcoded `TEMPLATE_REGISTRY` (HappyFox reference path, kept for
+  rollback).
 - Open WebUI integration: per-user **Tool API Keys** (`eekey_...`, one key
   unlocks every integration) + a single unified OpenAPI spec for import.
+  The spec is generated from the DB (admin-discovered `tools/list` output for
+  mcp-server templates; `TEMPLATE_REGISTRY` for native).
 
 ## Key Architecture Decisions
 
-1. **Single backend endpoint per integration** — proxy routes, no user
-   containers.
+1. **Single backend endpoint per integration** — proxy routes; the
+   integration code itself lives in an upstream MCP server repo (sidecar),
+   never vendored into this backend. We own ONE generic bridge.
+   (`runtime=native` + `TEMPLATE_REGISTRY` is the legacy/reference path only.)
 2. **Credentials encrypted at rest** in PostgreSQL (`credentials_json`
    column) via Fernet. Decrypted ONLY temporarily inside request handlers —
    NEVER written to disk or logs.
@@ -69,9 +82,13 @@ FastAPI backend proxies every integration.
 │   ├── database.py           # engine/session (DATABASE_URL from env)
 │   ├── run_migrations.py     # idempotent schema bootstrap
 │   ├── api/
-│   │   └── mcp_endpoints.py  # ALL MCP routes: tool keys, template list,
-│   │                         #   config register/list/delete/test/mcp-url,
-│   │                         #   unified proxy, unified OpenAPI spec
+│   │   ├── mcp_endpoints.py  # ALL MCP routes: tool keys, template list,
+│   │   │                     #   config register/list/delete/test/mcp-url,
+│   │   │                     #   unified proxy (routes by runtime), unified
+│   │   │                     #   OpenAPI spec (from DB + registry)
+│   │   └── mcp_bridge.py     # modular sidecar bridge: spawn/reuse per-user
+│   │                         #   MCP sidecars (subprocess or docker), speak
+│   │                         #   MCP (tools/list, tools/call), idle reaper
 │   ├── models/
 │   │   └── mcp_models.py     # MCPTemplate, UserMCPConfig, MCPUserToolKey,
 │   │                         #   MCPTemplateRequest
@@ -108,6 +125,8 @@ All under `/api/mcp` (router prefix in `api/mcp_endpoints.py`):
 | `GET /api/mcp/config/{template_id}/mcp-url` | Per-template MCP URL | USER |
 | `POST /api/mcp/config/{template_id}/test` | Test stored credentials live | USER / Tool Key |
 | `GET/POST/PUT /api/mcp/proxy/{template_id}/{tool_name}` | The core proxy: decrypt in memory → call upstream → stream back | USER / Tool Key |
+| `POST /superuser/mcp/templates/{template_id}/discover` | Run `tools/list` against the template's sidecar (superuser's own creds) and store the tool schemas | SUPERUSER |
+| `PATCH /superuser/mcp/templates/{template_id}/runtime` | Register/update a template's sidecar spec (`runtime`, `runtime_config`, approval flags) | SUPERUSER |
 | `GET /api/mcp/openapi.json` | Unified OpenAPI spec of ALL connected tools (Open WebUI import) | public |
 
 **Tool API Keys** are stored hashed (`mcp_user_tool_keys`) and accepted ONLY
@@ -116,22 +135,107 @@ rejected — session JWTs and tool keys have strictly different scopes.
 
 ## Adding a New Integration (runbook)
 
-1. **Register the template** — either seed it in `main.py` (like HappyFox) or
-   add an `MCPTemplate` row, with `config_schema` (JSON: field name, type
-   `string`/`password`, label, help, required) describing which credentials to
-   collect.
-2. **Add to `TEMPLATE_REGISTRY`** in `backend/api/mcp_endpoints.py` — the tool
-   map (tool name → upstream HTTP method + path) plus upstream base-URL/
-   auth logic. The unified proxy picks it up automatically.
-3. **Approve it** — `approved_by_admin=True`, `enabled_global=True`.
-4. **Done.** It appears in the library, the connect wizard renders from
-   `config_schema`, and its tools show up in every user's unified Open WebUI
-   connection automatically (single-connection model).
+Two runtimes exist. **Prefer `mcp-server`** — it is the scalable path and is
+what lets a third party's repo (e.g. another person's HappyFox MCP server)
+ship its own tools without us maintaining that integration's code.
 
-HappyFox credential fields: `HAPPYFOX_DOMAIN` (string),
-`HAPPYFOX_API_KEY` + `HAPPYFOX_AUTH_CODE` (password). Upstream API:
-`https://{domain}/api/1.1/json/`. Write tools require user confirmation per
-the upstream spec — keep that.
+### A. Modular: `runtime=mcp-server` (recommended, no per-integration code)
+
+The integration's MCP server is published as a container image (or a local
+`command`). We only register its **spec** and its **credential fields** — we
+do not read, vendor, or maintain its tool code. Tool schemas are captured at
+admin-discovery time from the upstream server's own `tools/list`.
+
+1. **Register the template** — add an `MCPTemplate` row (seed in `main.py`
+   like HappyFox, or via the superuser runtime endpoint) with:
+   - `runtime = "mcp-server"`
+   - `config_schema` (JSON): the credential fields to collect from the user.
+   - `runtime_config` (JSON), e.g.:
+     ```json
+     {
+       "image": "ghcr.io/whoever/some-mcp:latest",
+       "command": ["python", "server.py"],
+       "env": {"MCP_TRANSPORT": "streamable-http", "PORT": "8000"},
+       "endpoint": "/mcp",
+       "port": "8000",
+       "env_mapping": {"USER_FIELD_A": "UPSTREAM_ENV_A", "USER_FIELD_B": "UPSTREAM_ENV_B"},
+       "test_tool": {"name": "some_read_only_tool", "arguments": {}},
+       "tool_names": ["tool_a", "tool_b"]
+     }
+     ```
+     - `env_mapping` maps each **user credential field** (from
+       `config_schema`) to the **upstream env var** the sidecar reads.
+       Unmapped fields are never passed to the sidecar.
+     - `image` → docker backend (pulls + runs a sidecar container, needs the
+       Docker socket). `command` → subprocess backend (spawns a local process;
+       the server code must be reachable from the backend). Set
+       `EEPY_MCP_INSTANCE_BACKEND` to pick; compose defaults to `docker`.
+     - `test_tool` is a read-only tool used by `/config/{id}/test`.
+     - `tool_names` is a best-effort list so the OpenAPI spec has entries
+       before discovery (discovery overwrites `discovered_tools` with the real
+       schemas and takes precedence).
+   - `approved_by_admin=True`, `enabled_global=True`.
+2. **Discover the tools (once, as superuser)** — the superuser must first
+   connect the template with their own credentials (dashboard → Connect), then
+   call `POST /superuser/mcp/templates/{template_id}/discover`. This spawns an
+   ephemeral sidecar, runs `tools/list`, stores the result on the row, and
+   tears the sidecar down. The unified OpenAPI spec and dashboard now show the
+   upstream author's real tool schemas. **Re-run discovery after the upstream
+   image changes** so the spec stays current.
+3. **Done.** It appears in the library; the connect wizard renders from
+   `config_schema`; proxy + test route through the generic bridge; its tools
+   appear in every user's single Open WebUI connection automatically.
+
+**Maintenance when the upstream repo changes:** bump the `image` tag in
+`runtime_config` (or let it track `:latest`) and re-run discovery. No Eepy
+backend code changes — that is the whole point of the modular path.
+
+### B. Legacy/reference: `runtime=native` (hardcoded, only for HappyFox today)
+
+1. Register the template with `runtime="native"` + `config_schema`.
+2. Add an entry to `TEMPLATE_REGISTRY` in `backend/api/mcp_endpoints.py`
+   (tool name → upstream HTTP method + path) plus upstream base-URL/auth logic
+   in the native proxy handler.
+3. Approve it (`approved_by_admin=True`, `enabled_global=True`).
+
+> This path requires writing and maintaining per-integration Python. Use it
+> only for the original HappyFox reference; everything new should be
+> `mcp-server`.
+
+## How the MCP sidecar bridge works (`backend/api/mcp_bridge.py`)
+
+- **Per-user, per-credential identity:** a sidecar is keyed by
+  `(user_id, template_id, hash-of-exact-credentials)`. A user who changes
+  their credentials gets a fresh sidecar; the old one is torn down.
+- **Credential injection:** the user's Fernet-decrypted credentials are mapped
+  (via `env_mapping`) into the sidecar's process environment at spawn time.
+  They live **only** in the sidecar's env and the live MCP stdio/HTTP stream —
+  never on disk, never in logs, never returned to the client. The sidecar env
+  is minimal (a fixed allowlist of non-sensitive vars + template static env +
+  mapped credentials) so the backend's own `SECRET_KEY`/`DATABASE_URL`/
+  `MCP_ENCRYPTION_KEY` never leak into third-party processes (covered by a
+  test).
+- **Lifecycle:** sidecars are spawned lazily on first use, reused while
+  active, and reaped by a background task after
+  `EEPY_MCP_INSTANCE_IDLE_TIMEOUT` (default 300s). MCP sessions are
+  short-lived (one `initialize` + call per proxy request) so a stuck session
+  cannot wedge a long-lived sidecar.
+- **Node-local by design:** a sidecar is a local process/container on whichever
+  backend node receives the request. All durable state (templates, encrypted
+  credentials, tool keys, discovered tools) lives in the shared PostgreSQL, so
+  any node can serve any user — it just (re)spawns a sidecar on demand. This is
+  what keeps the stack horizontally scalable/load-balancable.
+- **Instance backends:** `subprocess` (default; spawns `command`, needs the
+  MCP server's deps in the backend env) or `docker` (runs `image`, pulls on
+  demand, binds the container to 127.0.0.1 on an ephemeral host port — needs
+  the Docker socket, which `deploy/docker-compose.yml` mounts on the backend
+  service only). The bridge speaks MCP over stdio (subprocess) or
+  streamable-HTTP (docker/url).
+
+**Security note (sidecars run third-party code):** the `approved_by_admin` /
+`enabled_global` gate is the moderation layer. Pin image tags to digests for
+production, and consider resource/egress limits on sidecars before opening the
+library to unvetted community repos.
 
 ## Setup Commands
 
@@ -146,6 +250,9 @@ cd backend
 pip install -r requirements.txt
 # DATABASE_URL, SECRET_KEY (and optionally MCP_ENCRYPTION_KEY) from env:
 source ../deploy/stack.env   # after filling it in
+# Optional sidecar-bridge tuning (defaults shown):
+#   EEPY_MCP_INSTANCE_BACKEND=subprocess   # or docker (needs Docker socket)
+#   EEPY_MCP_INSTANCE_IDLE_TIMEOUT=300
 python run_migrations.py
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 curl http://localhost:8000/health
@@ -192,6 +299,10 @@ cd frontend && pnpm vitest run --reporter=verbose && pnpm lint
 3. **Credential security — SECURITY CRITICAL.** All MCP credentials are
    Fernet-encrypted at rest. Decryption happens only in memory during handler
    execution. No logs, no disk, no error messages that echo decrypted values.
+   Sidecars (mcp-server runtime) receive decrypted credentials ONLY via their
+   process environment at spawn time; the sidecar env is a minimal allowlist
+   (see `api/mcp_bridge.py:_MINIMAL_PROC_ENV`) so backend secrets never leak
+   into third-party processes.
 4. **Role enforcement is server-side.** Client-side role checks are UX only;
    every privileged endpoint validates the JWT role in a FastAPI dependency.
 
@@ -213,7 +324,9 @@ cd frontend && pnpm vitest run --reporter=verbose && pnpm lint
 ## Operational Notes
 
 - **Secrets** come from `deploy/stack.env` (git-ignored): `POSTGRES_PASSWORD`,
-  `DATABASE_URL`, `SECRET_KEY`, `MCP_ENCRYPTION_KEY`.
+  `DATABASE_URL`, `SECRET_KEY`, `MCP_ENCRYPTION_KEY`, plus the optional
+  `EEPY_MCP_INSTANCE_BACKEND` (sidecar runtime: `docker` default in compose,
+  or `subprocess`).
   `SECRET_KEY` signs JWTs (also the Fernet fallback key) — see Key
   Architecture Decision #3 before ever rotating it.
 - **Initial superuser** is bootstrapped from the `SUPERUSER_USERNAME` env var

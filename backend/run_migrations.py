@@ -40,7 +40,13 @@ def run_migration() -> None:
                 -- JSONB for dynamic form field specifications during connection wizard 💜📝⏺️❗✅
                 config_schema JSONB NOT NULL,
 
-                image_tag VARCHAR(255),  # Optional Docker reference for proxy routing logic 🔒💜
+                image_tag VARCHAR(255),  # Optional Docker reference for proxy routing logic
+
+                -- Modular MCP sidecar runtime (templates served by upstream MCP servers)
+                runtime VARCHAR NOT NULL DEFAULT 'native',            -- 'native' | 'mcp-server'
+                runtime_config JSON,                                  -- sidecar spec (image/command/env_mapping/...); never secrets
+                discovered_tools JSON,                                -- tools/list output captured by admin discovery
+                tools_discovered_at TIMESTAMP WITH TIME ZONE,
 
                 approved_by_admin BOOLEAN DEFAULT FALSE NOT NULL,    -- Admin approval gate ✅✅✨
                 enabled_global BOOLEAN DEFAULT TRUE NOT NULL,         -- Feature flag toggle 💰⏺️🔧

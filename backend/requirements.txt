@@ -19,3 +19,9 @@ limits==3.12.0
 
 # MCP proxy (HTTP client for external API calls, e.g. HappyFox)
 httpx==0.28.1
+
+# MCP sidecar bridge (modular integrations from upstream MCP server repos):
+# the SDK speaks MCP to per-user sidecars (stdio + streamable-http), the docker
+# SDK manages sidecar containers when EEPY_MCP_INSTANCE_BACKEND=docker.
+mcp==1.29.0
+docker==7.2.0

@@ -22,6 +22,23 @@ class MCPTemplate(Base):
 
     image_tag = Column(String, nullable=True)  # Docker reference if needed (e.g., ghcr.io/glitch3dpenguin/happyfox-mcp)
 
+    # "native": tool map is hardcoded in the backend (reference path, e.g. the
+    # original HappyFox proxy). "mcp-server": served by an external MCP server
+    # sidecar described in runtime_config (the scalable path).
+    runtime = Column(String, nullable=False, default="native")
+
+    # Sidecar spec for runtime=mcp-server. JSON, e.g.:
+    # {"image": "ghcr.io/.../server", "command": ["python", "server.py"],
+    #  "env_mapping": {"FIELD": "UPSTREAM_ENV_VAR"}, "env": {"MCP_TRANSPORT": "..."},
+    #  "endpoint": "/mcp", "port": "8000", "test_tool": {"name": "list_x", "arguments": {}}}
+    # NEVER contains secrets -- only template-level static config.
+    runtime_config = Column(JSON, nullable=True)
+
+    # tools/list output captured during admin discovery. Drives the unified
+    # OpenAPI spec (and any future tool browser UI) without a live sidecar.
+    discovered_tools = Column(JSON, nullable=True)
+    tools_discovered_at = Column(DateTime, nullable=True)
+
     approved_by_admin = Column(Boolean, default=False, nullable=False)  # Admin approval gate
     enabled_global = Column(Boolean, default=True, nullable=False)       # Feature flag for global enable/disable
 

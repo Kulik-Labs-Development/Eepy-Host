@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from api import mcp_bridge  # absolute import: Uvicorn runs main.py top-level
 from auth import decode_access_token
 from database import User, get_db
 from models.mcp_models import MCPTemplate, MCPUserToolKey, UserMCPConfig
@@ -440,12 +441,37 @@ async def test_mcp_connection(
 ):
     """Validate stored credentials against the external API (read-only call).
 
-    For HappyFox, we hit the read-only /tickets/ list endpoint with size=1.
+    mcp-server runtime: run the template's `test_tool` (a read-only tool from
+    the upstream server) through a short-lived sidecar. The server's text
+    output is inspected for error markers.
+    native runtime: the original hardcoded HappyFox path.
     """
+    creds = _load_active_creds(db, current_user, template_id)
+
+    template = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
+    if template and template.runtime == "mcp-server":
+        rctx = template.runtime_config or {}
+        test_spec = rctx.get("test_tool") or {}
+        test_name = test_spec.get("name")
+        if not test_name:
+            raise HTTPException(status_code=500,
+                                detail="Template has no test_tool configured in runtime_config.")
+        try:
+            data, is_error = await mcp_bridge.bridge_call(
+                current_user, template, creds, test_name, test_spec.get("arguments") or {})
+        except mcp_bridge.BridgeError as exc:
+            raise HTTPException(status_code=502, detail=f"Connection test failed: {exc}") from exc
+        text = (data or "") if isinstance(data, str) else str(data)
+        if is_error or re.search(r"^\s*Error\b", text) or "401" in text[:200] or "403" in text[:200]:
+            return {"status": "failed",
+                    "detail": "Authentication or upstream failure. "
+                              + (text[:200] if text else "(no response body)")}
+        return {"status": "ok", "detail": f"Sidecar responded via '{test_name}'."}
+
+    # --- native HappyFox path (reference implementation) ---
     if template_id != "happyfox":
         raise HTTPException(status_code=400, detail=f"Connection test not implemented for '{template_id}'.")
 
-    creds = _load_active_creds(db, current_user, template_id)
     domain = creds.get("HAPPYFOX_DOMAIN", "")
     api_key = creds.get("HAPPYFOX_API_KEY", "")
     auth_code = creds.get("HAPPYFOX_AUTH_CODE", "")
@@ -578,14 +604,66 @@ async def mcp_proxy(
 
     `params` may arrive as query params (GET) or a JSON body (POST/PUT).
     Credentials are decrypted in memory only and stripped from the response path.
-    """
-    if template_id != "happyfox":
-        raise HTTPException(status_code=400, detail=f"Proxy not implemented for '{template_id}'.")
-    if tool_name not in TOOL_MAP:
-        raise HTTPException(status_code=404, detail=f"Unknown tool '{tool_name}'.",
-                            headers={"X-Allowed-Tools": ", ".join(TOOL_MAP)})
 
-    method, path_tpl = TOOL_MAP[tool_name]
+    Two runtimes:
+      mcp-server - generic sidecar bridge: spawn/reuse the upstream MCP server
+                   (per user+credentials) and forward a standard tools/call.
+      native     - hardcoded in-backend tool map (reference implementation).
+    """
+    template = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
+    if not template or not template.approved_by_admin or not template.enabled_global:
+        raise HTTPException(status_code=404, detail=f"Unknown template '{template_id}'.")
+
+    creds = _load_active_creds(db, current_user, template_id)
+
+    if template.runtime == "mcp-server":
+        return await _proxy_mcp_server(db, template, current_user, creds, tool_name, params)
+    return _proxy_native(db, template, current_user, creds, tool_name, params)
+
+
+def _mark_used(db: Session, user: User, template_id: str) -> None:
+    cfg = (
+        db.query(UserMCPConfig)
+        .filter(UserMCPConfig.owner_id == user.id, UserMCPConfig.template_name == template_id)
+        .first()
+    )
+    if cfg:
+        cfg.last_used_at = datetime.now(UTC)
+        db.commit()
+
+
+async def _proxy_mcp_server(db: Session, template: MCPTemplate, user: User,
+                            creds: dict[str, str], tool_name: str,
+                            params: dict[str, Any]) -> dict[str, Any]:
+    """Generic proxy: forward the call to the upstream MCP server sidecar."""
+    known = {t.get("name") for t in (template.discovered_tools or []) if isinstance(t, dict)}
+    if known and tool_name not in known:
+        raise HTTPException(status_code=404, detail=f"Unknown tool '{tool_name}'.",
+                            headers={"X-Allowed-Tools": ", ".join(sorted(n for n in known if n))})
+    try:
+        data, is_error = await mcp_bridge.bridge_call(user, template, creds, tool_name, params or {})
+    except mcp_bridge.BridgeError as exc:
+        raise HTTPException(status_code=502, detail=f"Sidecar call failed: {exc}") from exc
+
+    _mark_used(db, user, template.id)
+    return {"status_code": 200 if not is_error else 502,
+            "tool": tool_name,
+            "data": data,
+            "is_error": is_error}
+
+
+async def _proxy_native(db: Session, template: MCPTemplate, user: User, creds: dict[str, str],
+                        tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Native (hardcoded) proxy path - reference implementation (HappyFox)."""
+    entry = TEMPLATE_REGISTRY.get(template.id)
+    if not entry:
+        raise HTTPException(status_code=400, detail=f"Native proxy not implemented for '{template.id}'.")
+    tool_map = entry["tool_map"]
+    if tool_name not in tool_map:
+        raise HTTPException(status_code=404, detail=f"Unknown tool '{tool_name}'.",
+                            headers={"X-Allowed-Tools": ", ".join(tool_map)})
+
+    method, path_tpl = tool_map[tool_name]
 
     p = dict(params or {})
     # Pull path params out of the params dict.
@@ -596,7 +674,6 @@ async def mcp_proxy(
         else:
             raise HTTPException(status_code=400, detail=f"Missing required param '{m}' for {tool_name}.")
 
-    creds = _load_active_creds(db, current_user, template_id)
     base = _happyfox_base(creds.get("HAPPYFOX_DOMAIN", ""))
     api_key = creds.get("HAPPYFOX_API_KEY", "")
     auth_code = creds.get("HAPPYFOX_AUTH_CODE", "")
@@ -620,15 +697,7 @@ async def mcp_proxy(
         logger.warning(f"HappyFox proxy {tool_name} network error: {exc.__class__.__name__}")
         raise HTTPException(status_code=502, detail="Upstream HappyFox request failed.") from exc
 
-    # Track last-used for monetization metrics.
-    cfg = (
-        db.query(UserMCPConfig)
-        .filter(UserMCPConfig.owner_id == current_user.id, UserMCPConfig.template_name == template_id)
-        .first()
-    )
-    if cfg:
-        cfg.last_used_at = datetime.now(UTC)
-        db.commit()
+    _mark_used(db, user, template.id)
 
     try:
         payload = r.json()
@@ -655,7 +724,7 @@ async def mcp_proxy(
 
 
 def _build_tool_operation(tool_name: str, method: str, path_tpl: str, tag: str, display_name: str) -> dict[str, Any]:
-    """Build a single OpenAPI operation object for one tool."""
+    """Build a single OpenAPI operation object for one native (hardcoded) tool."""
     params_meta = TOOL_PARAMS.get(tool_name, {})
     path_params = {m for m in re.findall(r"\{(\w+)\}", path_tpl)}
     required = [p for p in path_params] + [
@@ -712,25 +781,116 @@ def _build_tool_operation(tool_name: str, method: str, path_tpl: str, tag: str, 
     return {verb: op}
 
 
+def _build_discovered_operation(tool: dict[str, Any], tag: str, display_name: str) -> dict[str, Any]:
+    """Build an OpenAPI operation from a discovered (tools/list) tool schema.
+
+    mcp-server templates are all invoked via POST /api/mcp/proxy/{template}/{tool}
+    with a JSON arguments body - the upstream server owns the parameter schema,
+    so we pass it through verbatim.
+    """
+    tool_name = tool["name"]
+    schema = tool.get("inputSchema") or {}
+    props = schema.get("properties") or {}
+    required = schema.get("required") or []
+    body_props: dict[str, Any] = {}
+    for pname, spec in props.items():
+        if isinstance(spec, dict):
+            body_props[pname] = spec
+        else:
+            body_props[pname] = {"type": "string"}
+    return {
+        "post": {
+            "operationId": tool_name,
+            "summary": (tool.get("description") or tool_name).split("\n", 1)[0][:200],
+            "description": f"{display_name} tool '{tool_name}' served by the upstream MCP server and proxied by Eepy.",
+            "tags": [tag],
+            "requestBody": {
+                "required": bool(required or props),
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": body_props,
+                            "required": [r for r in required if r in props] or (list(props.keys()) if props else []),
+                        }
+                    }
+                },
+            },
+            "responses": {"200": {"description": "Success (tool text result)"}},
+        }
+    }
+
+
+def _build_minimal_operation(tag: str, tool_name: str, display_name: str) -> dict[str, Any]:
+    """Fallback operation for an mcp-server tool that has no discovered schema yet.
+
+    The bridge forwards the whole JSON body as the tool's arguments, so an
+    untyped object schema still works at call time. Admin discovery
+    (POST /superuser/mcp/templates/{id}/discover) replaces this with the real
+    schema from the upstream server.
+    """
+    return {
+        "post": {
+            "operationId": tool_name,
+            "summary": f"{display_name} tool '{tool_name}' (run admin discovery for the full schema)",
+            "description": f"{display_name} tool proxied by Eepy. Argument schema pending admin discovery.",
+            "tags": [tag],
+            "requestBody": {
+                "required": False,
+                "content": {"application/json": {"schema": {"type": "object", "additionalProperties": True}}},
+            },
+            "responses": {"200": {"description": "Success (tool text result)"}},
+        }
+    }
+
+
 @router.get("/openapi.json")
-async def unified_openapi_spec(request: Request):
+async def unified_openapi_spec(request: Request, db: Session = Depends(get_db)):
     """The single OpenAPI 3.0 document for the ENTIRE Eepy tool surface.
 
     Users import THIS one URL into Open WebUI as their only Tool Server
-    connection. It lists every integration in the registry; per-user
-    availability is enforced at call time.
+    connection. It lists every approved+enabled template: native integrations
+    from the hardcoded registry, mcp-server integrations from their stored
+    tools/list discovery. Per-user availability is enforced at call time.
     """
     base_url = str(request.base_url).rstrip("/")
     proxy_base = f"{base_url}/api/mcp/proxy"
 
     paths: dict[str, Any] = {}
     tags: list = []
-    for template_id, entry in TEMPLATE_REGISTRY.items():
-        display_name = entry["display_name"]
-        tags.append({"name": template_id, "description": display_name})
-        for tool_name, (method, path_tpl) in entry["tool_map"].items():
-            op_path = f"/{template_id}/{tool_name}"
-            paths[op_path] = _build_tool_operation(tool_name, method, path_tpl, template_id, display_name)
+
+    rows = (
+        db.query(MCPTemplate)
+        .filter(MCPTemplate.approved_by_admin == True, MCPTemplate.enabled_global == True)  # noqa: E712
+        .order_by(MCPTemplate.name)
+        .all()
+    )
+    for t in rows:
+        tags.append({"name": t.id, "description": t.name})
+        if t.runtime == "mcp-server":
+            tools = [x for x in (t.discovered_tools or []) if isinstance(x, dict) and x.get("name")]
+            if tools:
+                for tool in tools:
+                    paths[f"/{t.id}/{tool['name']}"] = _build_discovered_operation(tool, t.id, t.name)
+            else:
+                # Not discovered yet: list the known tool names (from
+                # runtime_config.tool_names, or the native registry as a last
+                # resort) so the integration still appears in Open WebUI before
+                # an admin runs discovery.
+                rctx = t.runtime_config or {}
+                known_names = [str(n) for n in (rctx.get("tool_names") or [])]
+                if not known_names:
+                    entry = TEMPLATE_REGISTRY.get(t.id)
+                    known_names = list(entry["tool_map"].keys()) if entry else ["(run discovery)"]
+                for name in known_names:
+                    paths[f"/{t.id}/{name}"] = _build_minimal_operation(t.id, name, t.name)
+        else:
+            entry = TEMPLATE_REGISTRY.get(t.id)
+            if not entry:
+                continue
+            for tool_name, (method, path_tpl) in entry["tool_map"].items():
+                paths[f"/{t.id}/{tool_name}"] = _build_tool_operation(
+                    tool_name, method, path_tpl, t.id, t.name)
 
     spec = {
         "openapi": "3.0.3",
