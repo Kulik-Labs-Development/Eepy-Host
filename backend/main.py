@@ -2,37 +2,25 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional
 import logging
 import os
 import base64
-from collections import deque
-import datetime
 
 from database import engine, Base, get_db, User, UserRole, SessionLocal
-from auth import get_password_hash, verify_password, create_access_token, decode_access_token
-from schemas import UserCreate, UserLogin
+from auth import get_password_hash, verify_password, create_access_token, decode_access_token, DUMMY_HASH
+from schemas import UserCreate, UserLogin, PasswordResetIn
 from models import mcp_models  # noqa: F401  - register MCP tables on the shared Base so create_all builds them
 
-# --- LOGGING SYSTEM ---
-class MemoryLogHandler(logging.Handler):
-    def __init__(self, capacity=200):
-        super().__init__()
-        self.buffer = deque(maxlen=capacity)
+from utils.logging_setup import logger, MemoryLogHandler
 
-    def emit(self, record):
-        log_entry = self.format(record)
-        timestamp = datetime.datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S')
-        self.buffer.append({
-            "timestamp": timestamp,
-            "level": record.levelname,
-            "message": log_entry
-        })
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("eepy-backend")
+# Build a dedicated handler instance for the superuser log endpoint so the
+# buffer is decoupled from any module-level shared handler.
 memory_handler = MemoryLogHandler()
 memory_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
 logger.addHandler(memory_handler)
@@ -158,13 +146,21 @@ from api.mcp_endpoints import router as mcp_router
 
 app = FastAPI(title="Eepy Host API")
 
+# --- RATE LIMITING ---
+# Brute-force protection for credential endpoints. In-memory limiter (single
+# backend process); keyed by client IP.
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Mount the MCP integration router (Phase 5: HappyFox template #1).
 app.include_router(mcp_router)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.warning(f"Validation error on {request.url.path}: {exc.errors()}")
-    first_error = exc.errors[0] if exc.errors else {"msg": "Invalid request data"}
+    logger.warning(f"Validation error on {request.url.path}: {exc.errors() if callable(getattr(exc, 'errors', None)) else exc.errors}")
+    errors = exc.errors() if callable(getattr(exc, "errors", None)) else exc.errors
+    first_error = errors[0] if errors else {"msg": "Invalid request data"}
     return JSONResponse(
         status_code=422,
         content={"detail": first_error.get("msg", "Validation failed")},
@@ -172,7 +168,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://dev.eepy.host", "http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "https://dev.eepy.host",
+        "https://www.eepy.host",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -214,21 +215,27 @@ async def health():
         return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
 
 @app.post("/auth/signup")
-def signup(user_in: UserCreate, db: Session = Depends(get_db)):
+@limiter.limit("5/hour")
+def signup(
+    request: Request,
+    user_in: UserCreate,
+    db: Session = Depends(get_db),
+):
     try:
         logger.info(f"Signup request received for user: {user_in.username}")
         existing_user = db.query(User).filter((User.username == user_in.username) | (User.email == user_in.email)).first()
         if existing_user:
             raise HTTPException(status_code=400, detail="Username or email already registered")
 
-        try:
-            role = UserRole(user_in.role)
-        except ValueError:
-            logger.warning(f"Invalid role provided: {user_in.role}. Defaulting to USER.")
-            role = UserRole.USER
-
-        safe_password = user_in.password[:72]
-        new_user = User(username=user_in.username, email=user_in.email, hashed_password=get_password_hash(safe_password), role=role)
+        # SECURITY: role is NOT accepted from the client. Every account starts
+        # as USER; superuser status comes only from the SUPERUSER_USERNAME
+        # bootstrap or an admin role change (see /superuser/* endpoints).
+        new_user = User(
+            username=user_in.username,
+            email=user_in.email,
+            hashed_password=get_password_hash(user_in.password[:72]),
+            role=UserRole.USER,
+        )
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
@@ -237,14 +244,24 @@ def signup(user_in: UserCreate, db: Session = Depends(get_db)):
     except HTTPException as he: raise he
     except Exception as e:
         logger.exception("Unexpected error during signup")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/auth/login")
-def login(credentials: UserLogin, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def login(
+    request: Request,
+    credentials: UserLogin,
+    db: Session = Depends(get_db),
+):
     try:
         logger.info(f"Login request received for user: {credentials.username}")
         user = db.query(User).filter(User.username == credentials.username).first()
-        if not user or not verify_password(credentials.password[:72], user.hashed_password):
+        # Always run bcrypt on a dummy hash when the user does not exist so
+        # response timing does not reveal which usernames are registered.
+        if not user:
+            verify_password(credentials.password[:72], DUMMY_HASH)
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        if not verify_password(credentials.password[:72], user.hashed_password):
             raise HTTPException(status_code=401, detail="Invalid credentials")
         token = create_access_token({"sub": user.username, "role": user.role})
         return {
@@ -255,7 +272,7 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
     except HTTPException as he: raise he
     except Exception as e:
         logger.exception("Unexpected error during login")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/user/profile")
 def get_profile(current_user: User = Depends(get_current_user)):
@@ -307,28 +324,27 @@ def get_system_logs(superuser: User = Depends(get_superuser)):
 @app.patch("/superuser/users/{user_id}/role")
 def update_user_role(user_id: int, role: str, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
     try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
         new_role = UserRole(role)
-        user.role = new_role
-        db.commit()
-        logger.info(f"Superuser {superuser.username} updated user {user.username} role to {role}")
-        return {"message": f"User {user.username} role updated to {role}"}
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid role specified")
-    except Exception as e:
-        logger.error(f"Error updating user role: {e}")
-        raise HTTPException(status_code=500, detail="Failed to update user role")
-
-@app.post("/superuser/users/{user_id}/password")
-def reset_user_password(user_id: int, password: str, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    user.hashed_password = get_password_hash(password[:72])
+    user.role = new_role
     db.commit()
+    logger.info(f"Superuser {superuser.username} updated user {user.username} role to {role}")
+    return {"message": f"User {user.username} role updated to {role}"}
+
+@app.post("/superuser/users/{user_id}/password")
+def reset_user_password(user_id: int, body: PasswordResetIn, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
+    # SECURITY: password arrives in the JSON body, never the URL query string
+    # (query strings end up in access logs, proxy logs, and browser history).
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.hashed_password = get_password_hash(body.password[:72])
+    db.commit()
+    logger.info(f"Superuser {superuser.username} reset password for user {user.username}")
     return {"message": f"Password for {user.username} has been reset successfully"}
 
 @app.delete("/superuser/users/{user_id}")
@@ -349,14 +365,22 @@ async def update_user_details(user_id: int, request: Request, superuser: User = 
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        if "full_name" in data: user.full_name = data["full_name"]
-        if "email" in data: user.email = data["email"]
+        if "full_name" in data:
+            if not isinstance(data["full_name"], str):
+                raise HTTPException(status_code=400, detail="full_name must be a string")
+            user.full_name = data["full_name"][:255]
+        if "email" in data:
+            if not isinstance(data["email"], str) or "@" not in data["email"]:
+                raise HTTPException(status_code=400, detail="Invalid email")
+            user.email = data["email"]
         if "role" in data:
             try: user.role = UserRole(data["role"])
             except ValueError: raise HTTPException(status_code=400, detail="Invalid role specified")
         db.commit()
         db.refresh(user)
         return {"message": "User updated successfully", "user": user.username}
+    except HTTPException as he:
+        raise he
     except Exception as e:
         logger.error(f"Admin update error: {e}")
         raise HTTPException(status_code=500, detail="Failed to update user")

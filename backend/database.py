@@ -1,8 +1,7 @@
 from sqlalchemy import create_engine, Column, Integer, String, Enum, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 
 # Database URL from environment variable (no hardcoded fallback - fail fast if unset)
@@ -29,7 +28,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)
     total_requests = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 def get_db():
     db = SessionLocal()

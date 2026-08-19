@@ -1,17 +1,21 @@
 # Core API and Server
-fastapi==0.115.0
+fastapi==0.141.1
 uvicorn[standard]==0.30.6
-python-multipart==0.0.12
+python-multipart==0.0.32
 
 # Database
-sqlalchemy==2.0.32
+sqlalchemy==2.0.52
 psycopg2-binary==2.9.9
 
 # Security & Auth
 bcrypt==4.0.1
-python-jose[cryptography]==3.3.0
-pydantic[email]==2.8.2
-cryptography==42.0.8
+PyJWT==2.13.0          # JWT signing/verification (replaced python-jose: unmaintained, CVE-2024-29370)
+pydantic[email]==2.12.5
+cryptography==50.0.0   # Fernet credential encryption backend; fixed multiple advisories
+
+# Brute-force protection for /auth/login + /auth/signup
+slowapi==0.1.10
+limits==3.12.0
 
 # MCP proxy (HTTP client for external API calls, e.g. HappyFox)
-httpx==0.27.0
+httpx==0.28.1
