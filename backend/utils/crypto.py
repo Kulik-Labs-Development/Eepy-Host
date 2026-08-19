@@ -19,7 +19,7 @@ import json
 import logging
 import os
 from functools import lru_cache
-from typing import Any, Dict
+from typing import Any
 
 from cryptography.fernet import Fernet
 
@@ -56,14 +56,14 @@ def _get_fernet() -> Fernet:
     )
 
 
-def encrypt_credentials(credentials: Dict[str, Any]) -> str:
+def encrypt_credentials(credentials: dict[str, Any]) -> str:
     """Encrypt a credentials dict into a Fernet token (Base64 string) for storage."""
     fernet = _get_fernet()
     plaintext = json.dumps(credentials).encode("utf-8")
     return fernet.encrypt(plaintext).decode("utf-8")
 
 
-def decrypt_credentials(encrypted_token: str) -> Dict[str, Any]:
+def decrypt_credentials(encrypted_token: str) -> dict[str, Any]:
     """Decrypt a stored Fernet token back into a dict (in memory only)."""
     fernet = _get_fernet()
     plaintext = fernet.decrypt(encrypted_token.encode("utf-8"))

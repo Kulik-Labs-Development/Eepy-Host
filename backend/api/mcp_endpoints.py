@@ -21,19 +21,19 @@ Security model:
 import hashlib
 import re
 import secrets
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from auth import decode_access_token
-from database import get_db, User
-from models.mcp_models import MCPTemplate, UserMCPConfig, MCPUserToolKey
-from utils.crypto import encrypt_credentials, decrypt_credentials
+from database import User, get_db
+from models.mcp_models import MCPTemplate, MCPUserToolKey, UserMCPConfig
+from utils.crypto import decrypt_credentials, encrypt_credentials
 from utils.logging_setup import logger
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp-integrations"])
@@ -62,16 +62,16 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
 # ---------------------------------------------------------------------------
 class ConfigRegisterIn(BaseModel):
     template_id: str = Field("happyfox")
-    display_name: Optional[str] = None
-    credentials_json: Dict[str, str] = Field(..., description="Plaintext template credentials. Encrypted server-side.")
+    display_name: str | None = None
+    credentials_json: dict[str, str] = Field(..., description="Plaintext template credentials. Encrypted server-side.")
 
 
 class TemplateOut(BaseModel):
     id: str
     name: str
     description: str
-    config_schema: Dict[str, Any]
-    image_tag: Optional[str] = None
+    config_schema: dict[str, Any]
+    image_tag: str | None = None
     approved_by_admin: bool
     enabled_global: bool
 
@@ -79,10 +79,10 @@ class TemplateOut(BaseModel):
 class ConfigOut(BaseModel):
     id: int
     template_name: str
-    name_display: Optional[str]
+    name_display: str | None
     is_active: bool
-    created_at: Optional[datetime]
-    last_used_at: Optional[datetime]
+    created_at: datetime | None
+    last_used_at: datetime | None
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ def _config_to_out(cfg: UserMCPConfig) -> ConfigOut:
     )
 
 
-def _load_active_creds(db: Session, user: User, template_id: str) -> Dict[str, str]:
+def _load_active_creds(db: Session, user: User, template_id: str) -> dict[str, str]:
     """Return decrypted credentials for the user's active config of a template, or 404."""
     cfg = (
         db.query(UserMCPConfig)
@@ -166,7 +166,7 @@ def _resolve_scoped_user(request: Request, db: Session) -> User:
         user = db.query(User).filter(User.id == key_row.owner_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="Key owner no longer exists.")
-        key_row.last_used_at = datetime.now(timezone.utc)
+        key_row.last_used_at = datetime.now(UTC)
         db.commit()
         return user
 
@@ -191,7 +191,7 @@ def _generate_tool_key() -> str:
     return "eekey_" + secrets.token_urlsafe(32)
 
 
-def _tool_key_out(row: MCPUserToolKey, show_plaintext: Optional[str] = None) -> Dict[str, Any]:
+def _tool_key_out(row: MCPUserToolKey, show_plaintext: str | None = None) -> dict[str, Any]:
     out = {
         "id": row.id,
         "name": row.name,
@@ -211,7 +211,7 @@ def _tool_key_out(row: MCPUserToolKey, show_plaintext: Optional[str] = None) -> 
 # User Tool API Keys (single connection for Open WebUI / any external tool server)
 # ---------------------------------------------------------------------------
 class ToolKeyCreateIn(BaseModel):
-    name: Optional[str] = Field("Open WebUI", description="Label shown in the Eepy UI.")
+    name: str | None = Field("Open WebUI", description="Label shown in the Eepy UI.")
 
 
 @router.post("/api-keys")
@@ -282,7 +282,7 @@ async def revoke_tool_api_key(
     if not row:
         raise HTTPException(status_code=404, detail="Not found")
     row.is_active = False
-    row.revoked_at = datetime.now(timezone.utc)
+    row.revoked_at = datetime.now(UTC)
     db.commit()
     logger.info(f"User {current_user.username} revoked tool API key id={row.id}")
     return {"status": "revoked", "id": row.id}
@@ -334,8 +334,8 @@ async def register_mcp_config(
     creds = dict(body.credentials_json)
     try:
         encrypted_blob = encrypt_credentials(creds)
-    except ValueError:
-        raise HTTPException(status_code=500, detail="Credential encryption is not configured on the server.")
+    except ValueError as err:
+        raise HTTPException(status_code=500, detail="Credential encryption is not configured on the server.") from err
 
     existing = (
         db.query(UserMCPConfig)
@@ -462,7 +462,7 @@ async def test_mcp_connection(
             )
     except httpx.HTTPError as exc:
         logger.warning(f"HappyFox connection test failed to reach {domain}: {exc.__class__.__name__}")
-        raise HTTPException(status_code=502, detail="Could not reach the HappyFox instance.")
+        raise HTTPException(status_code=502, detail="Could not reach the HappyFox instance.") from exc
 
     if r.status_code == 200:
         data = r.json()
@@ -478,7 +478,7 @@ async def test_mcp_connection(
 # ---------------------------------------------------------------------------
 # Per-tool parameter metadata (name, json type, description).
 # GET tools take params as query strings; POST/PUT tools send a JSON body.
-TOOL_PARAMS: Dict[str, Dict[str, Dict[str, Any]]] = {
+TOOL_PARAMS: dict[str, dict[str, dict[str, Any]]] = {
     "list_tickets": {
         "status": {"type": "string", "description": "Ticket status filter (e.g. 'open', 'pending', 'resolved')."},
         "size": {"type": "integer", "description": "Page size (default 20)."},
@@ -531,7 +531,7 @@ TOOL_SUMMARIES = {
 # Adding a new integration adds a new entry here and a proxy handler branch;
 # the unified OpenAPI spec and the single Open WebUI connection then include
 # its tools automatically - users never add a second tool server connection.
-TEMPLATE_REGISTRY: Dict[str, Dict[str, Any]] = {
+TEMPLATE_REGISTRY: dict[str, dict[str, Any]] = {
     "happyfox": {
         "display_name": "HappyFox Help Desk",
         "tool_map": {
@@ -565,7 +565,7 @@ async def mcp_proxy(
     current_user: User = Depends(get_current_user_or_key),
 ):
     # Collect params from either the JSON body or the query string.
-    params: Dict[str, Any] = {}
+    params: dict[str, Any] = {}
     try:
         body = await request.json()
         if isinstance(body, dict):
@@ -618,7 +618,7 @@ async def mcp_proxy(
                 )
     except httpx.HTTPError as exc:
         logger.warning(f"HappyFox proxy {tool_name} network error: {exc.__class__.__name__}")
-        raise HTTPException(status_code=502, detail="Upstream HappyFox request failed.")
+        raise HTTPException(status_code=502, detail="Upstream HappyFox request failed.") from exc
 
     # Track last-used for monetization metrics.
     cfg = (
@@ -627,7 +627,7 @@ async def mcp_proxy(
         .first()
     )
     if cfg:
-        cfg.last_used_at = datetime.now(timezone.utc)
+        cfg.last_used_at = datetime.now(UTC)
         db.commit()
 
     try:
@@ -654,7 +654,7 @@ async def mcp_proxy(
 # and the base URL.
 
 
-def _build_tool_operation(tool_name: str, method: str, path_tpl: str, tag: str, display_name: str) -> Dict[str, Any]:
+def _build_tool_operation(tool_name: str, method: str, path_tpl: str, tag: str, display_name: str) -> dict[str, Any]:
     """Build a single OpenAPI operation object for one tool."""
     params_meta = TOOL_PARAMS.get(tool_name, {})
     path_params = {m for m in re.findall(r"\{(\w+)\}", path_tpl)}
@@ -682,7 +682,7 @@ def _build_tool_operation(tool_name: str, method: str, path_tpl: str, tag: str, 
             "responses": {"200": {"description": "Success"}},
         }
     else:  # POST / PUT -> JSON body
-        body_props: Dict[str, Any] = {}
+        body_props: dict[str, Any] = {}
         for pname, spec in params_meta.items():
             body_props[pname] = {"type": spec["type"]}
             if spec.get("description"):
@@ -723,7 +723,7 @@ async def unified_openapi_spec(request: Request):
     base_url = str(request.base_url).rstrip("/")
     proxy_base = f"{base_url}/api/mcp/proxy"
 
-    paths: Dict[str, Any] = {}
+    paths: dict[str, Any] = {}
     tags: list = []
     for template_id, entry in TEMPLATE_REGISTRY.items():
         display_name = entry["display_name"]

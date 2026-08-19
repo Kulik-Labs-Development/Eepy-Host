@@ -4,8 +4,8 @@ Extracted from main.py so that every module (auth, mcp_endpoints, etc.) can
 import a pre-configured logger without duplicating handler code.
 """
 
-import logging
 import datetime
+import logging
 from collections import deque
 
 

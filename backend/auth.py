@@ -1,10 +1,9 @@
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-import bcrypt
-import secrets
-import jwt  # PyJWT (migrated from python-jose: PYSEC-2024-232/-233, CVE-2024-29370; jose is unmaintained)
-
 import os
+import secrets
+from datetime import UTC, datetime, timedelta
+
+import bcrypt
+import jwt  # PyJWT (migrated from python-jose: PYSEC-2024-232/-233, CVE-2024-29370; jose is unmaintained)
 
 # JWT signing key — MUST be provided via the SECRET_KEY environment variable.
 # No default is hardcoded so the service fails fast if misconfigured.
@@ -52,15 +51,15 @@ except ValueError:
     DUMMY_HASH = get_password_hash(secrets.token_hex(16))
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(UTC) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     # PyJWT signs with HMAC-SHA256; 'iat' is set automatically.
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def decode_access_token(token: str) -> Optional[dict]:
+def decode_access_token(token: str) -> dict | None:
     """Decode and validate a JWT. Returns the payload, or None on ANY failure.
 
     The allowed algorithm list is pinned to HS256 — this is what prevents
