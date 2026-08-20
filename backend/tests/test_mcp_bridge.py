@@ -230,3 +230,79 @@ def test_idle_reaper_kills_and_proxy_respawns(client, auth_user, fake_template_i
                     headers=_h(auth_user["token"]), json={"limit": 1})
     assert r.status_code == 200, r.text
     assert "api=fake-key-123" in r.json()["data"]
+
+
+def test_sidecar_tracking_and_orphan_sweep(client, fake_template_id):
+    """Durable sidecar tracking (mcp_sidecars): spawn-time track -> row present;
+    teardown untrack -> row gone; boot sweep -> leftover container force-removed
+    and table cleared. The key must never contain credential material."""
+    import unittest.mock
+
+    from api import mcp_bridge
+    from database import SessionLocal
+    from models.mcp_models import MCPSidecar
+
+    user_id = 1  # arbitrary: SQLite does not enforce FKs without a pragma
+    key = mcp_bridge.key_for(user_id, fake_template_id, FAKE_CREDS)
+    # The key must NOT contain any credential material.
+    assert "fake-key-123" not in key and "fake-token-456" not in key
+
+    def _rows() -> list:
+        db = SessionLocal()
+        try:
+            return db.query(MCPSidecar).all()
+        finally:
+            db.close()
+
+    inst = mcp_bridge.Instance(key=key, kind="docker", template_id=fake_template_id,
+                               image="ghcr.io/test/sidecar:latest",
+                               container_id="cid-123", container_name="eepy-mcp-abc")
+
+    # --- track: a long-lived docker instance is recorded ---
+    mcp_bridge._track_sidecar(user_id, fake_template_id, inst)
+    rows = _rows()
+    assert len(rows) == 1
+    assert rows[0].owner_id == user_id
+    assert rows[0].template_id == fake_template_id
+    assert rows[0].container_id == "cid-123"
+
+    # Ephemeral instances (discovery probes) are never tracked.
+    ep = mcp_bridge.Instance(key=key + "|ep", kind="docker", template_id=fake_template_id,
+                             container_id="cid-ep", ephemeral=True)
+    mcp_bridge._track_sidecar(user_id, fake_template_id, ep)
+    assert len(_rows()) == 1
+
+    # --- untrack: teardown removes the row ---
+    mcp_bridge._untrack_sidecar(key)
+    assert len(_rows()) == 0
+
+    # --- boot sweep: rows left by a "crashed" backend are reconciled against
+    # the (fake) daemon: container force-removed, row deleted. ---
+    mcp_bridge._track_sidecar(user_id, fake_template_id, inst)
+    removed: list = []
+
+    class _SweepClient:
+        class _Containers:
+            @staticmethod
+            def get(cid):
+                if cid != "cid-123":
+                    raise Exception("no such container")
+
+                class _C:
+                    def remove(self, force=False):
+                        removed.append(force)
+                return _C()
+
+        def __init__(self):
+            self.containers = self._Containers()
+
+    with unittest.mock.patch.object(mcp_bridge, "_docker_client", return_value=_SweepClient()):
+        mcp_bridge.sweep_orphan_sidecars()
+
+    assert removed == [True], "sweep must force-remove the leftover container"
+    assert len(_rows()) == 0, "sweep must clear the tracking table"
+
+    # An empty table is a no-op and must not raise.
+    with unittest.mock.patch.object(mcp_bridge, "_docker_client", return_value=_SweepClient()):
+        mcp_bridge.sweep_orphan_sidecars()
+    assert len(removed) == 1  # nothing extra removed

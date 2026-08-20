@@ -101,6 +101,30 @@ class MCPUserToolKey(Base):
     revoked_at = Column(DateTime, nullable=True)
 
 
+class MCPSidecar(Base):
+    """Durable record of long-lived (non-ephemeral) sidecar containers.
+
+    The in-memory bridge registry (_REGISTRY in api/mcp_bridge.py) is lost on
+    every backend restart, so this table is what lets a restarted backend tell
+    "still-running sidecars I own" (update the row) from "crashed leftover"
+    (force-remove the container + delete the row) during the boot orphan
+    sweep. Container names are derived from the (secret-free) key hash, so the
+    table never holds credentials.
+    """
+
+    __tablename__ = 'mcp_sidecars'
+
+    key = Column(String, primary_key=True)  # bridge key: user|template|sha256(creds)
+    owner_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    template_id = Column(String, nullable=False)
+    kind = Column(String, nullable=False)  # "docker" (only tracked kind today)
+    container_id = Column(String, nullable=True)
+    image = Column(String, nullable=True)
+    name = Column(String, nullable=True)  # container name (eepy-mcp-<key prefix>)
+    created_at = Column(DateTime, default=_utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+
+
 class MCPTemplateRequest(Base):
     """User-requested integration pipeline: start of monetization flow when approved."""
 

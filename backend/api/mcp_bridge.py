@@ -41,7 +41,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from database import User
-from models.mcp_models import MCPTemplate
+from models.mcp_models import MCPSidecar, MCPTemplate
 from utils.logging_setup import logger
 
 # ---------------------------------------------------------------------------
@@ -134,6 +134,7 @@ def _sidecar_env(runtime_cfg: dict[str, Any], mapped: dict[str, str]) -> dict[st
 class Instance:
     key: str
     kind: str  # "subprocess" | "docker" | "url"
+    template_id: str | None = None
     command: list[str] | None = None
     image: str | None = None
     url: str | None = None
@@ -141,6 +142,7 @@ class Instance:
     cwd: str | None = None
     proc: subprocess.Popen | None = None
     container_id: str | None = None
+    container_name: str | None = None
     ephemeral: bool = False
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
@@ -148,6 +150,109 @@ class Instance:
 
 _REGISTRY: dict[str, Instance] = {}
 _REGISTRY_LOCK = asyncio.Lock()
+
+
+# ---------------------------------------------------------------------------
+# Durable sidecar tracking (mcp_sidecars table)
+#
+# The _REGISTRY above is in-memory and dies with the process. The table is
+# what survives restarts so the boot sweep (sweep_orphan_sidecars) can tell
+# "still-running container I own" from "orphan from a crashed backend". It
+# stores the (secret-free) bridge key and container identifiers only — never
+# credentials or the sidecar env.
+# ---------------------------------------------------------------------------
+def _track_sidecar(user_id: int, template_id: str, inst: Instance) -> None:
+    """Persist (or update) the mcp_sidecars row for a long-lived sidecar.
+
+    Fail-soft: tracking is an ops convenience, a DB hiccup must not break a
+    working tool call.
+    """
+    if inst.ephemeral or inst.kind != "docker" or not inst.container_id:
+        return
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        row = db.get(MCPSidecar, inst.key)
+        if row is None:
+            row = MCPSidecar(key=inst.key)
+            db.add(row)
+        row.owner_id = int(user_id)
+        row.template_id = template_id
+        row.kind = inst.kind
+        row.container_id = inst.container_id
+        row.image = inst.image
+        row.name = inst.container_name
+        row.last_used_at = _utcnow()
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("mcp-bridge: failed to track sidecar in DB")
+    finally:
+        db.close()
+
+
+def _untrack_sidecar(key: str) -> None:
+    """Remove the mcp_sidecars row when its sidecar is torn down (fail-soft)."""
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        row = db.get(MCPSidecar, key)
+        if row is not None:
+            db.delete(row)
+            db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("mcp-bridge: failed to untrack sidecar in DB")
+    finally:
+        db.close()
+
+
+def _utcnow():
+    from datetime import UTC, datetime
+    return datetime.now(UTC)  # same UTC convention as the rest of the models
+
+
+def sweep_orphan_sidecars() -> None:
+    """Boot-time reconciliation of the mcp_sidecars table against the daemon.
+
+    Called once at startup (see main.py lifespan). The restarted backend has
+    NO in-memory handle to any previously-spawned sidecar, so every recorded
+    container is a leftover holding a user's decrypted credentials in its
+    env: force-remove it (next request re-spawns a fresh sidecar) and delete
+    the row. Covers OOM-killed backends, docker kill -9, host reboots, daemon
+    restarts, and Portainer "Remove" actions that skip the graceful hook.
+    Fail-soft per row; the reaper + _spawn_docker's stale-name cleanup are
+    the safety net for anything the sweep misses.
+    """
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        rows = db.query(MCPSidecar).all()
+    except Exception:
+        db.close()
+        logger.exception("mcp-bridge: orphan sweep could not read mcp_sidecars")
+        return
+    client = None
+    try:
+        client = _docker_client()
+    except BridgeError:
+        # Subprocess backend / no daemon: nothing to reconcile on the daemon,
+        # just clear stale rows (subprocess rows are never written).
+        logger.info("mcp-bridge: orphan sweep - docker backend unavailable")
+    for row in rows:
+        try:
+            if client is not None and row.container_id:
+                with contextlib.suppress(Exception):
+                    client.containers.get(row.container_id).remove(force=True)
+                    logger.info(f"mcp-bridge: swept leftover sidecar {row.name or str(row.container_id)[:12]} key={row.key[:16]}...")
+            db.delete(row)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception(f"mcp-bridge: orphan sweep failed for key={row.key[:16]}")
+    db.close()
+
+
 _reaper_task: asyncio.Task | None = None
 
 
@@ -181,7 +286,8 @@ def _proc_alive(inst: Instance) -> bool:
 
 async def spawn_instance(template: MCPTemplate, key: str,
                           env: dict[str, str],
-                          ephemeral: bool = False) -> Instance:
+                          ephemeral: bool = False,
+                          user_id: int | None = None) -> Instance:
     cfg = _runtime_config(template)
 
     if cfg.get("url"):
@@ -197,7 +303,7 @@ async def spawn_instance(template: MCPTemplate, key: str,
         return inst
 
     if INSTANCE_BACKEND == "docker" or (cfg.get("image") and not cfg.get("command")):
-        return await _spawn_docker(template, key, env, ephemeral)
+        return await _spawn_docker(template, key, env, ephemeral, user_id)
 
     if not (isinstance(cfg.get("command"), list) and cfg["command"]):
         raise BridgeError("Template runtime_config is missing 'command'.")
@@ -251,7 +357,7 @@ async def _spawn_subprocess(template: MCPTemplate, key: str, env: dict[str, str]
 
 
 async def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
-                        ephemeral: bool) -> Instance:
+                        ephemeral: bool, user_id: int | None = None) -> Instance:
     cfg = _runtime_config(template)
     image = str(cfg["image"])
     port_key = str(cfg.get("port") or "8000").split("/")[0]
@@ -276,12 +382,20 @@ async def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
         # credentials) can't be reached from the LAN. The backend reaches it
         # via DOCKER_HOST_URL: directly on the host, or via the host-gateway
         # route when the backend is itself containerized (compose).
+        # Labels make sidecars identifiable in Portainer's container list
+        # (they are SDK-spawned, so invisible to stack views) and give ops
+        # a precise filter for manual cleanup.
         container = client.containers.run(
             image,
             name=name,
             detach=True,
             environment=env,
             ports={f"{port_key}/tcp": ("127.0.0.1", None)},
+            labels={
+                "eepy-host.sidecar": "true",
+                "eepy-host.template": str(template.id),
+                "eepy-host.key": key[:12],
+            },
             auto_remove=False,
             restart_policy={"Name": "no"},
         )
@@ -323,9 +437,12 @@ async def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
             "image actually exposes, or run the image with --network host."
         )
 
-    inst = Instance(key=key, kind="docker", image=image, container_id=container.id,
+    inst = Instance(key=key, kind="docker", template_id=template.id, image=image,
+                    container_id=container.id, container_name=name,
                     url=f"http://{DOCKER_HOST_URL}:{host_port}{endpoint}", env=env, ephemeral=ephemeral)
     _REGISTRY[key] = inst
+    if not ephemeral and user_id is not None:
+        _track_sidecar(user_id, template.id, inst)  # fail-soft: DB record for the boot sweep
     logger.info(f"mcp-bridge: started sidecar container for {template.id} key={key[:12]} port={host_port}")
     return inst
 
@@ -357,6 +474,8 @@ def kill_instance(key: str) -> bool:
             _docker_client().containers.get(inst.container_id).remove(force=True)
         except Exception:
             pass
+    with contextlib.suppress(Exception):
+        _untrack_sidecar(key)  # drop the durable record (no-op if absent)
     logger.info(f"mcp-bridge: reaped {inst.kind} sidecar key={key[:12]}")
     return True
 
@@ -413,7 +532,7 @@ async def acquire_instance(user: User, template: MCPTemplate,
                 return existing
             with contextlib.suppress(Exception):
                 kill_instance(key)
-        inst = await spawn_instance(template, key, env)
+        inst = await spawn_instance(template, key, env, user_id=user.id)
         inst.last_used = time.time()
         return inst
 

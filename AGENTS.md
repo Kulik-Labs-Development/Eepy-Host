@@ -99,6 +99,7 @@ docker container in production), short-lived and idle-reaped.
 │   │                         #   MCP (tools/list, tools/call), idle reaper
 │   ├── models/
 │   │   └── mcp_models.py     # MCPTemplate, UserMCPConfig, MCPUserToolKey,
+│   │                         #   MCPSidecar (durable sidecar tracking),
 │   │                         #   MCPTemplateRequest
 │   ├── utils/
 │   │   ├── crypto.py         # Fernet encrypt/decrypt (+ SECRET_KEY fallback)
@@ -257,6 +258,18 @@ image from that exact commit. Re-run discovery. No Eepy backend code changes
   on-host dev; compose sets it to `host.docker.internal` + `extra_hosts:
   host-gateway` because the backend is itself containerized). The bridge
   speaks MCP over stdio (subprocess) or streamable-HTTP (docker/url).
+- **Durable tracking + boot orphan sweep (Portainer-safety):** the in-memory
+  registry dies with the process, so long-lived docker sidecars are ALSO
+  recorded in the `mcp_sidecars` table (key = secret-free credential hash;
+  never credentials). Every sidecar container is labelled
+  `eepy-host.sidecar=true` (plus template + key prefix) so it is identifiable
+  in Portainer's container list and by filter. On boot the lifespan runs
+  `sweep_orphan_sidecars()`: each recorded container is force-removed (it may
+  still hold a user's decrypted creds in its env and the restarted process
+  has no session handle to it — the next request re-spawns) and its row is
+  deleted. This self-heals after OOM kills, `docker kill -9`, host reboots,
+  daemon restarts, and Portainer removes that skip the graceful shutdown
+  hook. Tracking is fail-soft: a DB hiccup must never break a tool call.
 
 **Security note (sidecars run third-party code):** the `approved_by_admin` /
 `enabled_global` gate is the moderation layer. Pin image tags to digests for
@@ -398,8 +411,10 @@ there is no vitest in the frontend.)
   Architecture Decision #3 before ever rotating it.
 - **Initial superuser** is bootstrapped from the `SUPERUSER_USERNAME` env var
   at startup (idempotent promotion).
-- **Schema inspection:** `DESCRIBE mcp_templates; DESCRIBE user_mcp_configs;`
-  in psql.
+- **Schema inspection:** `DESCRIBE mcp_templates; DESCRIBE user_mcp_configs;
+  DESCRIBE mcp_sidecars;` in psql. (`mcp_sidecars` is normally empty while a
+  node is healthy - rows exist only between a sidecar spawn and its teardown,
+  plus any the boot sweep has not reconciled yet.)
 - **Monetization telemetry (planned, post-launch):** `last_used_at` + per
   config request counters for usage-based decisions.
 

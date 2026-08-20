@@ -107,7 +107,29 @@ def run_migration() -> None:
         """
 
         conn.execute(text(create_requests_table))
-        print("✅ Created 'mcp_template_requests' table - approval workflow for monetization 💰⏺️✅\n")
+        print("Created 'mcp_template_requests' table - approval workflow for monetization\n")
+
+        # Table 4: MCPSidecars - durable record of long-lived MCP sidecar
+        # containers (survives backend restarts; enables the boot-time orphan
+        # sweep in api/mcp_bridge.py:sweep_orphan_sidecars).
+        create_sidecars_table = """
+            CREATE TABLE IF NOT EXISTS mcp_sidecars (
+                key VARCHAR(255) PRIMARY KEY,          -- bridge key: user|template|sha256(creds), secret-free
+                owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                template_id VARCHAR NOT NULL,
+                kind VARCHAR NOT NULL DEFAULT 'docker',
+                container_id VARCHAR,
+                image VARCHAR(255),
+                name VARCHAR(255),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TIMESTAMP WITH TIME ZONE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_mcp_sidecars_owner_id ON mcp_sidecars(owner_id);
+        """
+
+        conn.execute(text(create_sidecars_table))
+        print("Created 'mcp_sidecars' table - durable sidecar tracking for the boot orphan sweep\n")
 
     # Commit transaction explicitly ✅✅✨
     with engine.connect() as conn:

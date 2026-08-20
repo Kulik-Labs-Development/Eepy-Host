@@ -222,8 +222,14 @@ app = FastAPI(title="Eepy Host API")
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    """Application lifecycle: start the MCP sidecar idle-reaper on boot,
-    tear down any live sidecars on shutdown."""
+    """Application lifecycle: sweep orphaned sidecars from the last boot,
+    start the MCP sidecar idle-reaper, tear down live sidecars on shutdown."""
+    import asyncio
+
+    # Boot reconciliation: every mcp_sidecars row is a leftover sidecar still
+    # holding a user's decrypted credentials in its env (OOM kill, kill -9,
+    # host reboot, Portainer remove). Remove it; the next request re-spawns.
+    await asyncio.to_thread(mcp_bridge.sweep_orphan_sidecars)
     mcp_bridge.ensure_reaper_started()
     try:
         yield
