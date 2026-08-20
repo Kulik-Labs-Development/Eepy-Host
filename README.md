@@ -117,6 +117,14 @@ docker compose --env-file stack.env up -d
 > `stack.env` into the **Environment** section of the stack editor. The file is
 > intentionally named `stack.env` — not `.env` — to keep it obvious which
 > secrets belong to the stack.
+>
+> **Note on MCP sidecar containers:** when users' integrations run as
+> containerized MCP servers, the backend spawns short-lived, loopback-only
+> sidecar containers on demand (named `eepy-mcp-*`, labelled
+> `eepy-host.sidecar=true`). They are idle-reaped (default 5 min) and are
+> **auto-cleaned on every backend restart** — if you ever see an `eepy-mcp-*`
+> container in Portainer's container list, it is an on-demand sidecar, not
+> part of the stack; a fresh backend boot sweeps any stale ones away.
 
 | Service | URL |
 |---------|-----|
@@ -241,7 +249,8 @@ All endpoints live under a single FastAPI app. Interactive docs at `/docs` when 
 │   │   └── mcp_bridge.py     # modular sidecar bridge: spawn/reuse per-user
 │   │                         #   MCP sidecars (subprocess or docker), idle reaper
 │   ├── models/
-│   │   └── mcp_models.py     # Templates, user configs, tool keys
+│   │   └── mcp_models.py     # Templates, user configs, tool keys,
+│   │                         #   mcp_sidecars (durable sidecar tracking)
 │   ├── utils/
 │   │   ├── crypto.py         # Fernet credential encryption
 │   │   └── logging_setup.py  # shared logger config
