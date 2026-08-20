@@ -352,6 +352,42 @@ there is no vitest in the frontend.)
 
 ## Operational Notes
 
+- **Working repo is `~/Eepy-Host` (capital E).** Do not create or clone a
+  second copy (a stray lowercase `~/eepy-host` clone was found and deleted
+  2026-08-20; one of its never-pushed commits was saved as a patch in
+  `~/attachments/` before deletion). If a fresh clone is ever needed, use
+  `git clone --recurse-submodules` so `integrations/happyfox-mcp` is present
+  (a plain clone leaves the submodule dir empty until
+  `git submodule update --init`).
+- **Two CI workflows, both on push to main:** `CI` (ruff+pytest, eslint+tsc —
+  no image builds) and `Build and Push to GHCR`, which builds **three**
+  images: `eepy-host-backend`, `eepy-host-frontend`, and
+  `eepy-host-happyfox` (the sidecar, built from the submodule via
+  `integrations/Dockerfile.happyfox` with the repo root as build context). So
+  every push to main refreshes all deployed images.
+- **Seed roll-forward:** `seed_mcp_templates()` in `main.py` updates the
+  existing HappyFox row's `runtime`, `runtime_config`, `config_schema`,
+  `image_tag`, and approval flags on **every boot** (idempotent). That is how
+  spec changes reach the live DB — pushing a backend change is enough; no
+  manual DB edit needed.
+- **Portainer rollout (primary deploy path):** after a main push, pull the
+  updated `eepy-host-backend:latest` / `eepy-host-frontend:latest` /
+  `eepy-host-happyfox:latest` images and recreate the containers (the
+  sidecar image is pulled lazily by the bridge, so just make sure the
+  backend has fresh access). `stack.env` values rarely change — only when a
+  new secret is introduced.
+- **Verify the docker sidecar path (production):** it cannot be exercised in
+  the dev sandbox (no Docker daemon), so after a deploy: hit the dashboard's
+  connection test, then a real proxy tool call, and confirm in the backend
+  logs that `mcp-bridge: started sidecar container ... port=...` appears and
+  the call returns upstream data. The `EEPY_MCP_DOCKER_HOST` routing
+  (host-gateway → loopback-bound sidecar port) is the piece to watch.
+- **Dev-sandbox test tooling (ephemeral, rebuild if missing):** venv at
+  `/tmp/eevenv` (`python3 -m venv /tmp/eevenv && /tmp/eevenv/bin/pip install
+  -r requirements.txt pytest ruff`), and integration script
+  `/tmp/eepy_test.sh` + `/tmp/eepy_test.py` (22 end-to-end checks: role
+  escalation, JWT, superuser authz, Fernet-at-rest, rate limits, eekey
+  scoping). Tests use a throwaway SQLite DB via `conftest.py`.
 - **Secrets** come from `deploy/stack.env` (git-ignored): `POSTGRES_PASSWORD`,
   `DATABASE_URL`, `SECRET_KEY`, `MCP_ENCRYPTION_KEY`, plus the optional
   `EEPY_MCP_INSTANCE_BACKEND` (sidecar runtime: `docker` default in compose,
