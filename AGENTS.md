@@ -252,8 +252,11 @@ image from that exact commit. Re-run discovery. No Eepy backend code changes
   (production: runs `image` — built from the integration's git submodule by
   CI — pulls on demand, binds the container to 127.0.0.1 on an ephemeral
   host port, needs the Docker socket, which `deploy/docker-compose.yml`
-  mounts on the backend service only). The bridge speaks MCP over stdio
-  (subprocess) or streamable-HTTP (docker/url).
+  mounts on the backend service only). The sidecar port stays loopback-only;
+  the backend dials it via `EEPY_MCP_DOCKER_HOST` (default `127.0.0.1` for
+  on-host dev; compose sets it to `host.docker.internal` + `extra_hosts:
+  host-gateway` because the backend is itself containerized). The bridge
+  speaks MCP over stdio (subprocess) or streamable-HTTP (docker/url).
 
 **Security note (sidecars run third-party code):** the `approved_by_admin` /
 `enabled_global` gate is the moderation layer. Pin image tags to digests for
@@ -352,7 +355,9 @@ there is no vitest in the frontend.)
 - **Secrets** come from `deploy/stack.env` (git-ignored): `POSTGRES_PASSWORD`,
   `DATABASE_URL`, `SECRET_KEY`, `MCP_ENCRYPTION_KEY`, plus the optional
   `EEPY_MCP_INSTANCE_BACKEND` (sidecar runtime: `docker` default in compose,
-  or `subprocess`).
+  or `subprocess`). `EEPY_MCP_DOCKER_HOST` is set by the compose file itself
+  (not in stack.env) to `host.docker.internal` so a containerized backend can
+  reach loopback-bound sidecar ports.
   `SECRET_KEY` signs JWTs (also the Fernet fallback key) — see Key
   Architecture Decision #3 before ever rotating it.
 - **Initial superuser** is bootstrapped from the `SUPERUSER_USERNAME` env var

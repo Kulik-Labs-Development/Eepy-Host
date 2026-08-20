@@ -58,19 +58,27 @@ Eepy Host is a **managed integration layer between LLM agents and real-world Saa
 - **Open WebUI as a single tool server** — one user-scoped, revocable API key + one OpenAPI spec URL covers *every* integration the user has connected, now and in the future. No per-server imports, ever.
 - **Dashboard** — Overview hub with the Open WebUI tool-server connection and a live status flag; account & profile management; per-server observability (last used, live tests); organization tools for superusers.
 
-## Current Integrations
+## Built-in Integrations
 
-### HappyFox Help Desk (live)
+Each integration is an upstream MCP server we import as a git submodule under
+`integrations/`, build into its own sidecar image in CI, and run as a short-
+lived per-user sidecar. The tool list and behavior are maintained by the
+original author — follow the link for the full, current list of tools.
 
-HappyFox runs on the modular sidecar runtime: its MCP server code lives in the **`integrations/happyfox-mcp` git submodule** (its own repo, `Glitch3dPenguin/happyfox-mcp`), which CI builds into a sidecar image on every push. The gateway spawns a per-user sidecar of that image, so HappyFox updates flow straight into Eepy — no HappyFox code is ever maintained inside the backend. Its tools are exposed through the proxy:
+| Integration | What it does | Upstream project |
+|-------------|--------------|------------------|
+| **HappyFox Help Desk** | Read and act on support tickets (triage, reply, update status) via your HappyFox account. | [Glitch3dPenguin/happyfox-mcp](https://github.com/Glitch3dPenguin/happyfox-mcp) |
 
-The upstream server exposes 16 tools (read: `list_tickets`, `list_statuses`, `list_categories`, `list_staff`, `list_priorities`, `get_ticket_details`, `get_ticket_messages`, `get_ticket_attachments`, `download_attachment`; write: `create_ticket`, `add_ticket_update`, `assign_ticket`, `suggest_ticket_rename`, `change_ticket_status`, `change_ticket_priority`, `change_ticket_category`). Write tools require user confirmation per the upstream spec. The dashboard shows the authoritative tool list after admin discovery (see AGENTS.md).
-
-Connecting requires three values from your HappyFox account: **domain**, **API key**, and **auth code** (found in *Settings → API* on your HappyFox site).
+**Connecting to HappyFox** requires three values from your HappyFox account:
+**domain**, **API key**, and **auth code** (found in *Settings → API* on your
+HappyFox site). Write actions require your confirmation per the upstream spec.
 
 ### More on the way
 
-New integrations are added as admin-approved templates. Because the Open WebUI export is a single unified spec, new integrations appear in existing agent connections automatically — no re-import, no second connection.
+New integrations are added as admin-approved templates imported from their own
+upstream repos. Because the Open WebUI export is a single unified spec, new
+integrations appear in existing agent connections automatically — no re-import,
+no second connection.
 
 ## Open WebUI Integration
 
@@ -96,7 +104,7 @@ Security properties of the key:
 ### Option 1 — Docker Compose
 
 ```bash
-git clone https://github.com/Kulik-Labs-Development/Eepy-Host.git
+git clone --recurse-submodules https://github.com/Kulik-Labs-Development/Eepy-Host.git
 cd Eepy-Host/deploy
 cp stack.env.example stack.env
 # edit stack.env: set a strong SECRET_KEY and generate a Fernet key:
@@ -112,10 +120,10 @@ docker compose --env-file stack.env up -d
 
 | Service | URL |
 |---------|-----|
-| Frontend (Next.js) | http://localhost:3000 |
-| Backend API (FastAPI) | http://localhost:8000 |
-| Swagger docs | http://localhost:8000/docs |
-| Unified OpenAPI spec (Open WebUI) | http://localhost:8000/api/mcp/openapi.json |
+| Frontend (Next.js) | http://localhost:8067 |
+| Backend API (FastAPI) | http://localhost:8068 |
+| Swagger docs | http://localhost:8068/docs |
+| Unified OpenAPI spec (Open WebUI) | http://localhost:8068/api/mcp/openapi.json |
 
 ### Option 2 — Local development
 
@@ -147,6 +155,7 @@ The backend creates missing tables on startup and seeds the approved template re
 | `SECRET_KEY` | Long random string; signs JWTs |
 | `MCP_ENCRYPTION_KEY` | Fernet key for credential encryption at rest. Generate with `Fernet.generate_key()`. |
 | `EEPY_MCP_INSTANCE_BACKEND` | How `mcp-server` runtime templates run: `docker` (compose default, pulls the integration image per user) or `subprocess` (local process). |
+| `EEPY_MCP_DOCKER_HOST` | Address used to reach sidecar containers' loopback ports. Compose sets this to `host.docker.internal` automatically. |
 | `EEPY_MCP_INSTANCE_IDLE_TIMEOUT` | Seconds before an idle MCP sidecar is reaped (default `300`). |
 | `NEXT_PUBLIC_API_URL` | Backend base URL used by the frontend |
 

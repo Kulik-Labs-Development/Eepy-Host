@@ -48,6 +48,12 @@ from utils.logging_setup import logger
 # Tunables (env-overridable)
 # ---------------------------------------------------------------------------
 INSTANCE_BACKEND = os.getenv("EEPY_MCP_INSTANCE_BACKEND", "subprocess").lower()
+# Address the backend uses to REACH docker sidecars' loopback-bound host
+# ports. Default 127.0.0.1 is correct when the backend runs on the host
+# (local dev with the socket). When the backend is itself containerized
+# (compose/Portainer), dialing the host's loopback requires the host-gateway
+# route, so compose sets EEPY_MCP_DOCKER_HOST=host.docker.internal.
+DOCKER_HOST_URL = os.getenv("EEPY_MCP_DOCKER_HOST", "127.0.0.1")
 IDLE_TIMEOUT_S = float(os.getenv("EEPY_MCP_INSTANCE_IDLE_TIMEOUT", "300"))
 STARTUP_TIMEOUT_S = float(os.getenv("EEPY_MCP_INSTANCE_STARTUP_TIMEOUT", "60"))
 CALL_TIMEOUT_S = float(os.getenv("EEPY_MCP_INSTANCE_CALL_TIMEOUT", "60"))
@@ -265,6 +271,11 @@ async def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
             logger.info(f"mcp-bridge: pulling sidecar image {image}")
             client.images.pull(image)
 
+        # Bind to 127.0.0.1 on the host: the sidecar's port stays
+        # loopback-only so a buggy sidecar (holding a user's decrypted
+        # credentials) can't be reached from the LAN. The backend reaches it
+        # via DOCKER_HOST_URL: directly on the host, or via the host-gateway
+        # route when the backend is itself containerized (compose).
         container = client.containers.run(
             image,
             name=name,
@@ -313,7 +324,7 @@ async def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
         )
 
     inst = Instance(key=key, kind="docker", image=image, container_id=container.id,
-                    url=f"http://127.0.0.1:{host_port}{endpoint}", env=env, ephemeral=ephemeral)
+                    url=f"http://{DOCKER_HOST_URL}:{host_port}{endpoint}", env=env, ephemeral=ephemeral)
     _REGISTRY[key] = inst
     logger.info(f"mcp-bridge: started sidecar container for {template.id} key={key[:12]} port={host_port}")
     return inst

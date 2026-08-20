@@ -40,6 +40,15 @@ services:
       # as local processes (local dev with the submodule checked out).
       # Default here is "docker".
       - EEPY_MCP_INSTANCE_BACKEND=${EEPY_MCP_INSTANCE_BACKEND:-docker}
+      # How the backend reaches sidecar containers' host-bound (loopback-only)
+      # ports. host.docker.internal resolves to the Docker host via the
+      # host-gateway route (extra_hosts below) - required because the backend
+      # is itself in a container here.
+      - EEPY_MCP_DOCKER_HOST=host.docker.internal
+    # host.docker.internal -> Docker host, so the backend can dial the
+    # loopback-bound sidecar ports (EEPY_MCP_DOCKER_HOST above).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # The Docker socket lets the backend spawn/kill per-user MCP sidecar
     # containers (e.g. ghcr.io/kulik-labs-development/eepy-host-happyfox,
     # built from integrations/happyfox-mcp by CI). This grants host-level
