@@ -570,3 +570,150 @@ def test_sidecar_run_kwargs_user_and_env_overrides(monkeypatch):
     assert kwargs["mem_limit"] == "1g"
     assert kwargs["cpu_quota"] == 250000
     assert kwargs["user"] == "1000:1000"
+
+
+# ---------------------------------------------------------------------------
+# Seeded eBay template (template #2): the seed in main.py must carry a valid
+# mcp-server sidecar spec for BOTH instance backends.
+# ---------------------------------------------------------------------------
+def test_seeded_ebay_template_shape(client):
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    db = SessionLocal()
+    try:
+        t = db.query(MCPTemplate).filter(MCPTemplate.id == "ebay").first()
+    finally:
+        db.close()
+    assert t is not None, "ebay template was not seeded"
+    assert t.approved_by_admin and t.enabled_global
+    assert t.runtime == "mcp-server"
+    assert t.image_tag == "ghcr.io/kulik-labs-development/eepy-host-ebay"
+
+    cfg = t.runtime_config
+    # Subprocess backend (local dev): stdio entrypoint of the pinned submodule.
+    assert cfg["command"] == ["node", "build/index.js"]
+    assert cfg["cwd"] == "integrations/ebay-mcp"
+    assert cfg["subprocess_env"] == {}, "stdio entrypoint needs none of the HTTP transport vars"
+    # Docker backend (production): streamable-HTTP sidecar image.
+    assert cfg["image"] == "ghcr.io/kulik-labs-development/eepy-host-ebay:latest"
+    assert cfg["port"] == "3000"
+    assert cfg["endpoint"] == "/"
+    env = cfg["env"]
+    assert env["OAUTH_ENABLED"] == "false", "upstream bearer middleware must be off (proxy is the auth layer)"
+    assert env["MCP_HOST"] == "0.0.0.0", "upstream binds localhost without an explicit MCP_HOST"
+    assert env["MCP_PORT"] == "3000"
+    # Every config_schema credential field maps 1:1 to the upstream env var.
+    mapping = cfg["env_mapping"]
+    for field in ("EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_ENVIRONMENT",
+                  "EBAY_REDIRECT_URI", "EBAY_MARKETPLACE_ID", "EBAY_USER_REFRESH_TOKEN"):
+        assert mapping.get(field) == field, f"env_mapping must pass '{field}' through unchanged"
+    # Read-only probe for the connection test + non-empty spec seed.
+    assert cfg["test_tool"] == {"name": "ebay_get_rate_limits", "arguments": {}}
+    assert cfg["tool_names"] and all(n.startswith("ebay_") for n in cfg["tool_names"])
+    # The upstream server exits at startup without client id/secret: those two
+    # (plus environment) are the required wizard fields.
+    assert t.config_schema["required"] == ["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_ENVIRONMENT"]
+
+
+# ---------------------------------------------------------------------------
+# Real upstream server: pinned ebay-mcp submodule through the subprocess
+# bridge path, with the SAME runtime_config shape as the production seed.
+# Proves spawn + stdio handshake + tools/call + admin discovery against the
+# actual upstream code so the documented local-dev path cannot silently rot.
+# Needs a one-time `pnpm install && pnpm run build` in the submodule.
+# ---------------------------------------------------------------------------
+EBAY_SUBMODULE = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "integrations", "ebay-mcp"))
+
+
+@pytest.mark.skipif(
+    not os.path.isfile(os.path.join(EBAY_SUBMODULE, "build", "index.js")),
+    reason="integrations/ebay-mcp submodule is not built (run: pnpm install --ignore-scripts && pnpm run build)")
+def test_real_ebay_submodule_subprocess_path(client, auth_user):
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    template_id = "ebay-submodule-test"
+    fake_upstream_creds = {
+        "EBAY_CLIENT_ID": "fake-client-id",
+        "EBAY_CLIENT_SECRET": "fake-client-secret",
+        "EBAY_ENVIRONMENT": "sandbox",
+    }
+    db = SessionLocal()
+    try:
+        existing = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
+        if existing:
+            db.delete(existing)
+            db.commit()
+        t = MCPTemplate(
+            id=template_id,
+            name="eBay (submodule e2e test)",
+            description="Runs the pinned integrations/ebay-mcp submodule through the bridge.",
+            config_schema={
+                "category": "Test",
+                "type": "object",
+                "properties": {
+                    "EBAY_CLIENT_ID": {"type": "string", "label": "Client ID", "required": True},
+                    "EBAY_CLIENT_SECRET": {"type": "password", "label": "Client Secret", "required": True},
+                    "EBAY_ENVIRONMENT": {"type": "string", "label": "Environment", "required": True},
+                },
+                "required": ["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_ENVIRONMENT"],
+            },
+            runtime="mcp-server",
+            runtime_config={
+                "image": "ghcr.io/kulik-labs-development/eepy-host-ebay:latest",
+                "command": ["node", "build/index.js"],
+                "cwd": "integrations/ebay-mcp",
+                "env": {"OAUTH_ENABLED": "false", "MCP_HOST": "0.0.0.0", "MCP_PORT": "3000"},
+                "subprocess_env": {},
+                "endpoint": "/",
+                "port": "3000",
+                "env_mapping": {
+                    "EBAY_CLIENT_ID": "EBAY_CLIENT_ID",
+                    "EBAY_CLIENT_SECRET": "EBAY_CLIENT_SECRET",
+                    "EBAY_ENVIRONMENT": "EBAY_ENVIRONMENT",
+                },
+                "test_tool": {"name": "ebay_get_rate_limits", "arguments": {}},
+            },
+            approved_by_admin=True,
+            enabled_global=True,
+        )
+        db.add(t)
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        r = client.post("/api/mcp/config/register", headers=_h(auth_user["token"]),
+                        json={"template_id": template_id, "credentials_json": fake_upstream_creds})
+        assert r.status_code == 200, r.text
+
+        # Proxy call against the REAL upstream server with fake credentials:
+        # the sidecar must spawn in stdio mode, complete the MCP handshake,
+        # and relay the upstream auth failure as tool text (NOT a handshake
+        # error). No refresh token is set, so startup performs no network I/O.
+        r = client.post(f"/api/mcp/proxy/{template_id}/ebay_get_rate_limits",
+                        headers=_h(auth_user["token"]), json={})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["tool"] == "ebay_get_rate_limits"
+        assert isinstance(body["data"], str) and body["data"].strip(), "expected tool text, got empty data"
+        assert body["is_error"] is True, "fake credentials must produce an upstream tool error"
+
+        # Connection test endpoint (test_tool path) must report a clean
+        # credential failure, not a bridge/handshake failure.
+        r = client.post(f"/api/mcp/config/{template_id}/test", headers=_h(auth_user["token"]))
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "failed", r.json()
+
+        # Admin discovery against the real server: the pinned submodule commit
+        # (a241405) advertises the full Sell API catalogue.
+        r = client.post(f"/superuser/mcp/templates/{template_id}/discover",
+                        headers=_h(auth_user["token"]))
+        assert r.status_code == 200, r.text
+        assert r.json()["tool_count"] == 299, r.json()
+        assert "ebay_get_inventory_items" in r.json()["tools"]
+    finally:
+        from api import mcp_bridge
+        mcp_bridge.shutdown_all_instances()

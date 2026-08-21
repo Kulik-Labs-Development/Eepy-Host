@@ -99,10 +99,18 @@ original author — follow the link for the full, current list of tools.
 | Integration | What it does | Upstream project |
 |-------------|--------------|------------------|
 | **HappyFox Help Desk** | Read and act on support tickets (triage, reply, update status) via your HappyFox account. | [Glitch3dPenguin/happyfox-mcp](https://github.com/Glitch3dPenguin/happyfox-mcp) |
+| **eBay Sell** | 299 tools over eBay's Sell APIs: inventory, orders & fulfillment, promoted listings, seller analytics, messaging — sandbox or production. | [YosefHayim/ebay-mcp](https://github.com/YosefHayim/ebay-mcp) |
 
 **Connecting to HappyFox** requires three values from your HappyFox account:
 **domain**, **API key**, and **auth code** (found in *Settings → API* on your
 HappyFox site). Write actions require your confirmation per the upstream spec.
+
+**Connecting to eBay** requires your **Client ID** and **Client Secret** (App
+ID / Cert ID from the [eBay Developer
+Portal](https://developer.ebay.com/my/keys)) plus an **environment** choice
+(`sandbox` or `production`). Optionally, the RuName redirect URI and a user
+refresh token unlock the higher rate limits (10k–50k req/day). Unofficial
+third-party project — you remain responsible for eBay's API terms.
 
 ### More on the way
 
@@ -290,7 +298,9 @@ All endpoints live under a single FastAPI app. Interactive docs at `/docs` when 
 │   └── requirements.txt
 ├── integrations/             # upstream MCP server repos, as git submodules
 │   ├── Dockerfile.happyfox   #   CI builds the submodule into the sidecar image
-│   └── happyfox-mcp/         #   → Glitch3dPenguin/happyfox-mcp (submodule)
+│   ├── Dockerfile.ebay       #   CI builds the submodule into the sidecar image
+│   ├── happyfox-mcp/         #   → Glitch3dPenguin/happyfox-mcp (submodule)
+│   └── ebay-mcp/             #   → YosefHayim/ebay-mcp (submodule)
 └── deploy/
     ├── docker-compose.yml    # db + backend + frontend (no secrets in the file)
     └── stack.env.example     # secret reference — copy to stack.env and fill in

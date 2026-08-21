@@ -59,6 +59,17 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-happyfox:latest
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Build and push eBay MCP sidecar image
+        # Built from the integrations/ebay-mcp submodule so the deployed
+        # sidecar always matches the exact upstream commit this repo pins.
+        uses: docker/build-push-action@v5
+        with:
+          context: ./
+          file: ./integrations/Dockerfile.ebay
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-ebay:latest
+          labels: ${{ steps.meta.outputs.labels }}
+
       - name: Build and push Frontend image
         uses: docker/build-push-action@v5
         with:

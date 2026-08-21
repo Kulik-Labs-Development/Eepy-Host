@@ -19,7 +19,8 @@ platform for the *control plane*. One unified FastAPI backend owns auth,
 credentials (encrypted at rest), and all proxy routing. Integration MCP
 server code lives in **separate upstream repos**, pulled into this project as
 git submodules under `integrations/` (HappyFox:
-`integrations/happyfox-mcp` → github.com/Glitch3dPenguin/happyfox-mcp).
+`integrations/happyfox-mcp` → github.com/Glitch3dPenguin/happyfox-mcp;
+eBay: `integrations/ebay-mcp` → github.com/YosefHayim/ebay-mcp).
 CI builds each submodule's code into its own GHCR sidecar image on every
 push, so the deployed gateway always runs exactly the code this repo pins —
 updating an integration is "bump the submodule ref", never editing its code
@@ -36,6 +37,13 @@ docker container in production), short-lived and idle-reaped.
   `integrations/happyfox-mcp` git submodule (its own upstream repo) — CI
   builds that submodule into the `eepy-host-happyfox` GHCR sidecar image —
   the reference implementation for every future integration.
+- eBay Sell is Template #2, same modular pattern: seeded at startup and run
+  from the `integrations/ebay-mcp` git submodule (github.com/YosefHayim/
+  ebay-mcp, a TypeScript/Node server — 299 tools over the eBay Sell APIs)
+  built by CI into the `eepy-host-ebay` GHCR sidecar image. Its HTTP
+  sidecar runs with `OAUTH_ENABLED=false` (the loopback-only sidecar port
+  plus the unified proxy IS the auth layer) and its stdio dev path needs a
+  one-time `pnpm install --ignore-scripts && pnpm run build` in the submodule.
 - The unified proxy (`/api/mcp/proxy/{template_id}/{tool_name}`) routes by
   template `runtime`: `mcp-server` → generic bridge (`api/mcp_bridge.py`),
   `native` → hardcoded `TEMPLATE_REGISTRY` (HappyFox reference path, kept for
@@ -121,8 +129,9 @@ docker container in production), short-lived and idle-reaped.
 │                             #   is normally deployed via Portainer)
 ├── integrations/
 │   ├── Dockerfile.happyfox   # builds the submodule into the sidecar image
-│   │                         #   (build context = repo root; see .github/workflows/main.yml)
-│   └── happyfox-mcp/         # GIT SUBMODULE → Glitch3dPenguin/happyfox-mcp
+│   ├── Dockerfile.ebay       #   (build context = repo root; see .github/workflows/main.yml)
+│   ├── happyfox-mcp/         # GIT SUBMODULE → Glitch3dPenguin/happyfox-mcp
+│   └── ebay-mcp/             # GIT SUBMODULE → YosefHayim/ebay-mcp
 └── assets/
 ```
 
@@ -189,8 +198,11 @@ admin-discovery time from the upstream server's own `tools/list`.
        socket). `command` (+ optional relative `cwd`, resolved against the
        repo root) → subprocess backend (local dev; the sidecar's deps are
        picked up from the backend's own interpreter, which the bridge puts
-       first on PATH). Set `EEPY_MCP_INSTANCE_BACKEND` to pick; compose
-       defaults to `docker`.
+       first on PATH — Python submodules only; a Node/TypeScript submodule
+       like ebay-mcp needs a one-time `pnpm install --ignore-scripts &&
+       pnpm run build` in its dir first, and `node` on the host PATH).
+       Set `EEPY_MCP_INSTANCE_BACKEND` to pick; compose defaults to
+       `docker`.
      - `test_tool` is a read-only tool used by `/config/{id}/test`.
      - `tool_names` is a best-effort list so the OpenAPI spec has entries
        before discovery (discovery overwrites `discovered_tools` with the real
@@ -443,22 +455,23 @@ there is no vitest in the frontend.)
   (a plain clone leaves the submodule dir empty until
   `git submodule update --init`).
 - **Two CI workflows, both on push to main:** `CI` (ruff+pytest, eslint+tsc —
-  no image builds) and `Build and Push to GHCR`, which builds **three**
-  images: `eepy-host-backend`, `eepy-host-frontend`, and
-  `eepy-host-happyfox` (the sidecar, built from the submodule via
-  `integrations/Dockerfile.happyfox` with the repo root as build context). So
-  every push to main refreshes all deployed images.
+  no image builds) and `Build and Push to GHCR`, which builds **four**
+  images: `eepy-host-backend`, `eepy-host-frontend`, `eepy-host-happyfox`
+  (sidecar, built from the submodule via `integrations/Dockerfile.happyfox`)
+  and `eepy-host-ebay` (sidecar, via `integrations/Dockerfile.ebay`) — both
+  sidecars built with the repo root as build context. So every push to main
+  refreshes all deployed images.
 - **Seed roll-forward:** `seed_mcp_templates()` in `main.py` updates the
-  existing HappyFox row's `runtime`, `runtime_config`, `config_schema`,
-  `image_tag`, and approval flags on **every boot** (idempotent). That is how
-  spec changes reach the live DB — pushing a backend change is enough; no
-  manual DB edit needed.
+  existing seeded rows' (HappyFox, eBay) `runtime`, `runtime_config`,
+  `config_schema`, `image_tag`, and approval flags on **every boot**
+  (idempotent). That is how spec changes reach the live DB — pushing a
+  backend change is enough; no manual DB edit needed.
 - **Portainer rollout (primary deploy path):** after a main push, pull the
   updated `eepy-host-backend:latest` / `eepy-host-frontend:latest` /
-  `eepy-host-happyfox:latest` images and recreate the containers (the
-  sidecar image is pulled lazily by the bridge, so just make sure the
-  backend has fresh access). `stack.env` values rarely change — only when a
-  new secret is introduced.
+  `eepy-host-happyfox:latest` / `eepy-host-ebay:latest` images and recreate
+  the containers (sidecar images are pulled lazily by the bridge, so just
+  make sure the backend has fresh access). `stack.env` values rarely change
+  — only when a new secret is introduced.
 - **Verify the docker sidecar path (production):** it cannot be exercised in
   the dev sandbox (no Docker daemon), so after a deploy: hit the dashboard's
   connection test, then a real proxy tool call, and confirm in the backend

@@ -1,3 +1,6 @@
 [submodule "integrations/happyfox-mcp"]
 	path = integrations/happyfox-mcp
 	url = https://github.com/Glitch3dPenguin/happyfox-mcp
+[submodule "integrations/ebay-mcp"]
+	path = integrations/ebay-mcp
+	url = https://github.com/YosefHayim/ebay-mcp.git

@@ -103,19 +103,21 @@ def sync_database_schema():
         logger.error(f"Superuser promotion failed: {e}")
 
 def seed_mcp_templates():
-    """Seed the admin-approved HappyFox template (template #1) into the library.
+    """Seed the admin-approved templates (HappyFox #1, eBay #2) into the library.
 
-    The HappyFox MCP server code lives OUTSIDE this backend, in the
-    integrations/happyfox-mcp git submodule (github.com/Glitch3dPenguin/
-    happyfox-mcp). This row only registers *how to run* it:
+    Each integration's MCP server code lives OUTSIDE this backend, in its own
+    git submodule under integrations/ (happyfox-mcp →
+    github.com/Glitch3dPenguin/happyfox-mcp, ebay-mcp →
+    github.com/YosefHayim/ebay-mcp). These rows only register *how to run*
+    them:
 
-    - docker backend (production/Portainer): CI builds the submodule into
-      ghcr.io/kulik-labs-development/eepy-host-happyfox:latest on every
-      push (the submodule pin in git = exactly that code).
+    - docker backend (production/Portainer): CI builds each submodule into its
+      eepy-host-<name> GHCR sidecar image on every push (the submodule pin in
+      git = exactly that code).
     - subprocess backend (local dev): runs the submodule in-repo directly.
 
-    Updating HappyFox = update the submodule ref + re-run admin discovery;
-    never edit its code inside the backend.
+    Updating an integration = update its submodule ref + re-run admin
+    discovery; never edit its code inside the backend.
     """
     from models.mcp_models import MCPTemplate
 
@@ -204,25 +206,136 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
+    ebay = MCPTemplate(
+        id="ebay",
+        name="eBay Sell",
+        description=(
+            "Manage your eBay seller account across 299 tools over eBay's Sell APIs: "
+            "inventory and offers, orders and fulfillment, promoted-listings marketing, "
+            "seller analytics, and buyer messaging. Runs against sandbox or production "
+            "with your own eBay Developer keys; credentials stay encrypted at rest and "
+            "are proxied through the Eepy unified proxy."
+        ),
+        config_schema={
+            "category": "E-commerce / Marketplace",
+            "type": "object",
+            "properties": {
+                "EBAY_CLIENT_ID": {
+                    "type": "string",
+                    "label": "Client ID (App ID)",
+                    "help": "eBay Developer Portal (developer.ebay.com > My apps > Keys): the App ID.",
+                    "required": True,
+                },
+                "EBAY_CLIENT_SECRET": {
+                    "type": "password",
+                    "label": "Client Secret (Cert ID)",
+                    "help": "The Cert ID from the same Keys panel.",
+                    "required": True,
+                },
+                "EBAY_ENVIRONMENT": {
+                    "type": "string",
+                    "label": "Environment",
+                    "placeholder": "sandbox",
+                    "help": "sandbox (test data) or production (live seller data).",
+                    "required": True,
+                },
+                "EBAY_REDIRECT_URI": {
+                    "type": "string",
+                    "label": "Redirect URI (RuName)",
+                    "help": "Optional. The RuName from Developer Portal > User Tokens; enables the higher-limit user-token OAuth flow.",
+                    "required": False,
+                },
+                "EBAY_MARKETPLACE_ID": {
+                    "type": "string",
+                    "label": "Marketplace ID",
+                    "placeholder": "EBAY_US",
+                    "help": "Optional. Defaults to EBAY_US (e.g. EBAY_GB, EBAY_DE, EBAY_AU).",
+                    "required": False,
+                },
+                "EBAY_USER_REFRESH_TOKEN": {
+                    "type": "password",
+                    "label": "User Refresh Token",
+                    "help": "Optional. An existing eBay OAuth refresh token raises rate limits from 1k to 10k-50k requests/day.",
+                    "required": False,
+                },
+            },
+            "required": ["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_ENVIRONMENT"],
+        },
+        image_tag="ghcr.io/kulik-labs-development/eepy-host-ebay",
+        runtime="mcp-server",
+        # Modular sidecar spec (same contract as the HappyFox reference).
+        # Production (docker backend): CI builds the integrations/ebay-mcp
+        # submodule into the image below on every push. The upstream HTTP
+        # entrypoint serves streamable-HTTP on :3000; OAUTH_ENABLED=false
+        # disables the upstream bearer middleware because the sidecar port is
+        # loopback-only and the Eepy unified proxy is the auth layer.
+        # MCP_HOST must be explicit: upstream binds localhost when PORT is
+        # unset, which the docker port mapping cannot reach.
+        # Local (subprocess backend): stdio entrypoint; needs a one-time
+        # `pnpm install && pnpm run build` inside integrations/ebay-mcp.
+        runtime_config={
+            "image": "ghcr.io/kulik-labs-development/eepy-host-ebay:latest",
+            "command": ["node", "build/index.js"],
+            "cwd": "integrations/ebay-mcp",
+            "env": {
+                "OAUTH_ENABLED": "false",
+                "MCP_HOST": "0.0.0.0",
+                "MCP_PORT": "3000",
+            },
+            # The stdio entrypoint needs none of the HTTP transport vars.
+            "subprocess_env": {},
+            "endpoint": "/",
+            "port": "3000",
+            "env_mapping": {
+                "EBAY_CLIENT_ID": "EBAY_CLIENT_ID",
+                "EBAY_CLIENT_SECRET": "EBAY_CLIENT_SECRET",
+                "EBAY_ENVIRONMENT": "EBAY_ENVIRONMENT",
+                "EBAY_REDIRECT_URI": "EBAY_REDIRECT_URI",
+                "EBAY_MARKETPLACE_ID": "EBAY_MARKETPLACE_ID",
+                "EBAY_USER_REFRESH_TOKEN": "EBAY_USER_REFRESH_TOKEN",
+            },
+            # Read-only probe for POST /config/{id}/test: a rate-limits lookup
+            # confirms credentials + API reachability without touching data.
+            # (The upstream server exits at startup if client id/secret are
+            # missing, so a misconfigured sidecar fails the test loudly.)
+            "test_tool": {"name": "ebay_get_rate_limits", "arguments": {}},
+            # Representative subset of the 299 upstream tools so the OpenAPI
+            # spec has entries before admin discovery stores the full
+            # authoritative tools/list (discovery takes precedence).
+            "tool_names": [
+                "ebay_get_rate_limits", "ebay_get_inventory_items",
+                "ebay_get_inventory_item", "ebay_get_offers", "ebay_get_orders",
+                "ebay_get_order", "ebay_get_campaigns",
+                "ebay_get_seller_standards_profile", "ebay_get_traffic_report",
+                "ebay_get_default_category_tree_id",
+                "ebay_get_shipping_fulfillments", "ebay_get_oauth_url",
+                "ebay_create_or_replace_inventory_item",
+            ],
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
     db = SessionLocal()
     try:
-        existing = db.query(MCPTemplate).filter(MCPTemplate.id == "happyfox").first()
-        if existing:
-            existing.approved_by_admin = True
-            existing.enabled_global = True
-            existing.description = happyfox.description
-            existing.config_schema = happyfox.config_schema
-            existing.image_tag = happyfox.image_tag
-            # Roll forward to the modular sidecar runtime on every boot so the
-            # seeded reference template always matches this code's expectations.
-            existing.runtime = happyfox.runtime
-            existing.runtime_config = happyfox.runtime_config
-            db.commit()
-            logger.info("HappyFox MCP template exists; ensured enabled (mcp-server runtime).")
-        else:
-            db.add(happyfox)
-            db.commit()
-            logger.info("Seeded HappyFox MCP template (approved, mcp-server runtime).")
+        for spec in (happyfox, ebay):
+            existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
+            if existing:
+                existing.approved_by_admin = True
+                existing.enabled_global = True
+                existing.description = spec.description
+                existing.config_schema = spec.config_schema
+                existing.image_tag = spec.image_tag
+                # Roll forward to the modular sidecar runtime on every boot so
+                # the seeded templates always match this code's expectations.
+                existing.runtime = spec.runtime
+                existing.runtime_config = spec.runtime_config
+                db.commit()
+                logger.info(f"{spec.name} MCP template exists; ensured enabled (mcp-server runtime).")
+            else:
+                db.add(spec)
+                db.commit()
+                logger.info(f"Seeded {spec.name} MCP template (approved, mcp-server runtime).")
     finally:
         db.close()
 

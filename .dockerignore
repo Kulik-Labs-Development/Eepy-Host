@@ -1,13 +1,14 @@
-# Docker build context is the repo root (backend + happyfox sidecar images).
+# Docker build context is the repo root (backend + integration sidecar images).
 # Keep only what the images need.
 .git
 .github
 assets
 frontend
-# The happyfox sidecar image copies only integrations/happyfox-mcp/*, and the
-# backend image copies only backend/* — so nothing else from integrations/ is
-# needed either, but the submodule's .git metadata should never be sent.
+# The sidecar images copy only their own submodule (integrations/<name>/*) and
+# the backend image copies only backend/* — so nothing else from integrations/
+# is needed, but the submodules' .git metadata should never be sent.
 integrations/happyfox-mcp/.git
+integrations/ebay-mcp/.git
 __pycache__
 *.pyc
 .venv

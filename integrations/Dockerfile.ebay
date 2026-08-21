@@ -1,0 +1,71 @@
+# eBay MCP server sidecar image.
+#
+# SOURCE OF TRUTH: integrations/ebay-mcp (git submodule →
+# github.com/YosefHayim/ebay-mcp). This Dockerfile only builds that code into
+# an image; it is NOT where the server code lives.
+#
+# Build context must be the REPO ROOT (CI sets context: ./), so the
+# integrations/ebay-mcp/ paths below resolve to exactly the submodule commit
+# this repo pins.
+#
+# Transport: streamable-HTTP on :3000 via the upstream HTTP entrypoint
+# (build/serverHttp.js). The Eepy backend spawns this image per user via the
+# mcp-server sidecar runtime (api/mcp_bridge.py) and speaks MCP to
+# http://<container>:3000/ .
+#
+# OAUTH_ENABLED=false disables the upstream HTTP bearer-token middleware: the
+# sidecar port is loopback-only and the Eepy unified proxy is the auth layer,
+# so the bridge dials the endpoint unauthenticated.
+#
+# Mirrors the upstream repo's own Dockerfile (multi-stage node:22-alpine +
+# pnpm). Differences: COPY paths from the repo-root build context and the
+# Eepy-specific env defaults below.
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Install pnpm
+RUN npm install -g pnpm
+
+# Copy package manifests first for better layer caching
+COPY integrations/ebay-mcp/package.json integrations/ebay-mcp/pnpm-lock.yaml ./
+
+# Install all dependencies (ignore lifecycle scripts — no prepare/husky needed in the image)
+RUN pnpm install --frozen-lockfile --ignore-scripts
+
+# Copy source and build
+COPY integrations/ebay-mcp/ ./
+RUN pnpm run build
+
+# Production stage
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Install pnpm
+RUN npm install -g pnpm
+
+# Copy package manifests
+COPY integrations/ebay-mcp/package.json integrations/ebay-mcp/pnpm-lock.yaml ./
+
+# Install only production dependencies (ignore lifecycle scripts)
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts
+
+# Copy built application and runtime assets from builder
+COPY --from=builder /app/build ./build
+# Scopes / docs referenced at runtime
+COPY --from=builder /app/docs ./docs
+# Icon assets served by the HTTP transport at /icons
+COPY --from=builder /app/public ./public
+
+# Eepy sidecar transport config (see header). MCP_HOST must be set explicitly:
+# upstream binds localhost when PORT is unset, which the docker port mapping
+# could not reach.
+ENV OAUTH_ENABLED=false
+ENV MCP_HOST=0.0.0.0
+ENV MCP_PORT=3000
+
+EXPOSE 3000
+
+# HTTP transport entrypoint for container deploys
+CMD ["node", "build/serverHttp.js"]
