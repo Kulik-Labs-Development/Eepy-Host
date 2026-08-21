@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -102,7 +103,13 @@ def _config_to_out(cfg: UserMCPConfig) -> ConfigOut:
 
 
 def _load_active_creds(db: Session, user: User, template_id: str) -> dict[str, str]:
-    """Return decrypted credentials for the user's active config of a template, or 404."""
+    """Return decrypted credentials for the user's active config of a template, or 404.
+
+    A stored blob that no longer decrypts (the server's MCP_ENCRYPTION_KEY /
+    SECRET_KEY changed since the user saved it) is reported as an explicit,
+    actionable 409 instead of an opaque 500, and logged so it is visible in
+    the backend debug console.
+    """
     cfg = (
         db.query(UserMCPConfig)
         .filter(UserMCPConfig.owner_id == user.id, UserMCPConfig.template_name == template_id)
@@ -110,7 +117,38 @@ def _load_active_creds(db: Session, user: User, template_id: str) -> dict[str, s
     )
     if not cfg or not cfg.is_active:
         raise HTTPException(status_code=404, detail=f"No active {template_id} connection for this user.")
-    return decrypt_credentials(cfg.credentials_json)
+    try:
+        return decrypt_credentials(cfg.credentials_json)
+    except InvalidToken as exc:
+        # The stored blob is intact but the server's key no longer matches:
+        # MCP_ENCRYPTION_KEY / SECRET_KEY changed since the user saved it.
+        # (InvalidToken subclasses ValueError, so it must be caught first.)
+        logger.warning(
+            f"mcp: stored {template_id} credentials for user {user.username} (config id={cfg.id}) "
+            f"could not be decrypted (InvalidToken) - the server encryption key "
+            f"(MCP_ENCRYPTION_KEY/SECRET_KEY) likely changed since they were saved."
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Your saved {template_id} credentials can no longer be decrypted: the server's "
+                f"encryption key changed since you saved them. Re-enter your credentials "
+                f"(dashboard → MCP Servers → Connect) to fix this."
+            ),
+        ) from exc
+    except ValueError as exc:
+        # No usable key configured at all, or a corrupt stored blob (JSONDecodeError).
+        logger.warning(
+            f"mcp: stored {template_id} credentials for user {user.username} (config id={cfg.id}) "
+            f"unreadable ({exc.__class__.__name__})."
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Your saved {template_id} credentials are unreadable. Re-enter your credentials "
+                f"(dashboard → MCP Servers → Connect) to fix this."
+            ),
+        ) from exc
 
 
 def _happyfox_base(domain: str) -> str:
@@ -419,6 +457,13 @@ def delete_mcp_config(
         raise HTTPException(status_code=404, detail="Not found")
     db.delete(cfg)
     db.commit()
+    # The user's live sidecar (if any) still holds their DECRYPTED credentials
+    # in its process env — tear it down NOW instead of letting the idle
+    # reaper keep it up to EEPY_MCP_INSTANCE_IDLE_TIMEOUT more. Sync def on
+    # purpose: this runs in the threadpool, where the blocking Docker/proc
+    # calls are allowed.
+    killed = mcp_bridge.kill_instances_for_user(current_user.id, template_id)
+    logger.info(f"User {current_user.username} deleted {template_id} config (sidecars killed: {killed})")
     return {"status": "deleted", "template_id": template_id}
 
 

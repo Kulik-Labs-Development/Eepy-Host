@@ -1,6 +1,7 @@
 import base64
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
@@ -81,26 +82,36 @@ def sync_database_schema():
     except Exception as e:
         logger.error(f"Schema column synchronization failed: {e}")
 
+
+def bootstrap_superuser() -> None:
+    """Optional first-boot bootstrap: promote the account named in the
+    SUPERUSER_USERNAME env var to superuser (the initial admin).
+
+    Runs at EVERY boot (idempotent) AND opportunistically at login (see
+    ``login``): the account may only be created after the first boot, and a
+    boot that ran before Postgres was ready (or before the account existed)
+    would otherwise leave the configured admin a plain USER — with the
+    result that e.g. the Debug Log console 403s and the operator assumes
+    the log stream is empty.
+    """
+    bootstrap_username = os.getenv("SUPERUSER_USERNAME", "").strip()
+    if not bootstrap_username:
+        return
+    db = SessionLocal()
     try:
-        # Optional first-boot bootstrap: promote the account named in the
-        # SUPERUSER_USERNAME env var to superuser (useful for the initial admin).
-        bootstrap_username = os.getenv("SUPERUSER_USERNAME", "")
-        if bootstrap_username:
-            db = SessionLocal()
-            user = db.query(User).filter(User.username == bootstrap_username).first()
-            if user:
-                if user.role != UserRole.SUPERUSER:
-                    logger.info(f"Promoting {bootstrap_username} to superuser...")
-                    user.role = UserRole.SUPERUSER
-                    db.commit()
-                    logger.info(f"User {bootstrap_username} promoted to superuser successfully.")
-                else:
-                    logger.info(f"{bootstrap_username} is already a superuser.")
-            else:
-                logger.warning(f"Promotion skipped: User '{bootstrap_username}' not found in database.")
-            db.close()
+        user = db.query(User).filter(User.username == bootstrap_username).first()
+        if user:
+            if user.role != UserRole.SUPERUSER:
+                logger.info(f"Promoting {bootstrap_username} to superuser...")
+                user.role = UserRole.SUPERUSER
+                db.commit()
+                logger.info(f"User {bootstrap_username} promoted to superuser successfully.")
+        # No warning when the account does not exist yet: it may be the very
+        # first signup. The login-time hook below picks it up.
     except Exception as e:
         logger.error(f"Superuser promotion failed: {e}")
+    finally:
+        db.close()
 
 def seed_mcp_templates():
     """Seed the admin-approved templates (HappyFox #1, eBay #2) into the library.
@@ -267,8 +278,9 @@ def seed_mcp_templates():
         # Production (docker backend): CI builds the integrations/ebay-mcp
         # submodule into the image below on every push. The upstream HTTP
         # entrypoint serves streamable-HTTP on :3000; OAUTH_ENABLED=false
-        # disables the upstream bearer middleware because the sidecar port is
-        # loopback-only and the Eepy unified proxy is the auth layer.
+        # disables the upstream bearer middleware because the sidecar is only
+        # reachable on the internal eepy-sidecars docker network and the Eepy
+        # unified proxy is the auth layer.
         # MCP_HOST must be explicit: upstream binds localhost when PORT is
         # unset, which the docker port mapping cannot reach.
         # Local (subprocess backend): stdio entrypoint; needs a one-time
@@ -339,11 +351,64 @@ def seed_mcp_templates():
     finally:
         db.close()
 
+def _log_boot_data_summary() -> None:
+    """One boot-time line into the debug console telling the operator whether
+    persistent data survived a redeploy: users=0 / mcp_configs=0 right after
+    a Portainer redeploy means the postgres volume was NOT carried over (the
+    stack was re-imported under a different project name, or `down -v` was
+    run) — no amount of code change can recover data the DB does not have."""
+    try:
+        db = SessionLocal()
+        try:
+            from models.mcp_models import MCPUserToolKey, UserMCPConfig
+            users = db.query(User).count()
+            configs = db.query(UserMCPConfig).count()
+            keys = db.query(MCPUserToolKey).count()
+            templates = db.query(MCPTemplate).count()
+        finally:
+            db.close()
+        logger.info(
+            f"Boot data summary: users={users} mcp_configs={configs} tool_keys={keys} "
+            f"templates={templates} (all zero after a redeploy = postgres volume was not carried over)"
+        )
+    except Exception as e:
+        logger.warning(f"Boot data summary unavailable: {e.__class__.__name__}: {e}")
+
+
+def _init_database_with_retry(max_attempts: int = 10, delay_s: float = 3.0) -> None:
+    """Create tables, sync columns, seed templates, bootstrap the initial
+    superuser — RETRYING while the database comes up.
+
+    On a fresh deploy the db container is started (depends_on) but Postgres
+    may not accept connections for a few seconds yet. The old single attempt
+    at import time swallowed the failure: the app then served with NO tables
+    (signup and every credential write 500) and no superuser promotion —
+    until a manual container restart. Retrying makes the stack self-heal on
+    boot; every attempt is logged to the debug console.
+    """
+    last_err: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            Base.metadata.create_all(bind=engine)
+            sync_database_schema()
+            seed_mcp_templates()
+            bootstrap_superuser()
+            logger.info("Database initialized and synchronized.")
+            _log_boot_data_summary()
+            return
+        except Exception as e:
+            last_err = e
+            logger.warning(
+                f"Database not ready (attempt {attempt}/{max_attempts}): "
+                f"{e.__class__.__name__}: {str(e).splitlines()[0] if str(e) else e}"
+            )
+            if attempt < max_attempts:
+                time.sleep(delay_s)
+    logger.error(f"Critical error initializing database after {max_attempts} attempts: {last_err}")
+
+
 try:
-    Base.metadata.create_all(bind=engine)
-    sync_database_schema()
-    seed_mcp_templates()
-    logger.info("Database initialized and synchronized.")
+    _init_database_with_retry()
 except Exception as e:
     logger.error(f"Critical error initializing database: {e}")
 
@@ -502,6 +567,16 @@ def login(
             raise HTTPException(status_code=401, detail="Invalid credentials")
         if not verify_password(credentials.password[:72], user.hashed_password):
             raise HTTPException(status_code=401, detail="Invalid credentials")
+        # Opportunity to promote the configured initial superuser if their
+        # account only existed after the last boot (see bootstrap_superuser).
+        # Cheap: one string comparison, write only on the rare promotion.
+        if (
+            os.getenv("SUPERUSER_USERNAME", "").strip() == user.username
+            and user.role != UserRole.SUPERUSER
+        ):
+            user.role = UserRole.SUPERUSER
+            db.commit()
+            logger.info(f"Promoted {user.username} to superuser at login (SUPERUSER_USERNAME).")
         token = create_access_token({"sub": user.username, "role": user.role})
         return {
             "access_token": token,
@@ -722,7 +797,21 @@ async def discover_mcp_tools(
                    f"(dashboard > Connect) before discovering its tools.",
         )
 
-    credentials = decrypt_credentials(cfg_row.credentials_json)  # memory-only
+    try:
+        credentials = decrypt_credentials(cfg_row.credentials_json)  # memory-only
+    except Exception as exc:
+        logger.warning(
+            f"mcp: superuser {superuser.username} discovery aborted - stored {template_id} "
+            f"credentials could not be decrypted (encryption key changed?). Re-connect first."
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Your saved {template_id} credentials can no longer be decrypted (the server's "
+                f"encryption key changed). Re-enter them via dashboard → MCP Servers → Connect, "
+                f"then run discovery again."
+            ),
+        ) from exc
 
     tools = await discover_tools_for_template(db, superuser, template, credentials)
     template.discovered_tools = tools

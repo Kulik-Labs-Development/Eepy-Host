@@ -12,7 +12,7 @@ from collections import deque
 class MemoryLogHandler(logging.Handler):
     """In-memory ring buffer of recent log lines (served at /superuser/logs)."""
 
-    def __init__(self, capacity: int = 200):
+    def __init__(self, capacity: int = 500):
         super().__init__()
         self.buffer: deque = deque(maxlen=capacity)
 

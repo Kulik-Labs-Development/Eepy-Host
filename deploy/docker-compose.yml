@@ -18,6 +18,16 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-eepy_host}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # Ready only when Postgres actually accepts connections - the backend
+    # waits for this (depends_on: service_healthy) so its one-shot boot
+    # initialization (tables, seed, superuser bootstrap) does not race the
+    # database coming up. (The backend ALSO retries on its own; this is the
+    # first line of defense.)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-eepy_admin} -d ${POSTGRES_DB:-eepy_host}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
     networks:
       - eepy-network
 
@@ -40,10 +50,17 @@ services:
       # as local processes (local dev with the submodule checked out).
       # Default here is "docker".
       - EEPY_MCP_INSTANCE_BACKEND=${EEPY_MCP_INSTANCE_BACKEND:-docker}
-      # How the backend reaches sidecar containers' host-bound (loopback-only)
-      # ports. host.docker.internal resolves to the Docker host via the
-      # host-gateway route (extra_hosts below) - required because the backend
-      # is itself in a container here.
+      # Sidecar dialing: sidecars attach to the eepy-sidecars network (below,
+      # which the backend also joins) and are dialed DIRECTLY by container IP.
+      # No host port is published, so a sidecar - which holds the user's
+      # decrypted credentials in its env - is unreachable from the host/LAN.
+      # (The older loopback-publish + host.docker.internal dial refused
+      # connections on Linux; EEPY_MCP_DOCKER_HOST remains only as the
+      # fallback for setups without this network.)
+      - EEPY_MCP_SIDECAR_NETWORK=eepy-sidecars
+      # Fallback dial address for the legacy loopback-publish mode (only used
+      # when EEPY_MCP_SIDECAR_NETWORK is removed). host.docker.internal
+      # resolves to the Docker host via the host-gateway route (extra_hosts).
       - EEPY_MCP_DOCKER_HOST=host.docker.internal
       # Sidecar containment (third-party code holds the user's decrypted creds
       # in its env): CPU/memory caps on every sidecar container. Override to
@@ -51,9 +68,14 @@ services:
       - EEPY_MCP_SIDECAR_MEM_LIMIT=${EEPY_MCP_SIDECAR_MEM_LIMIT:-512m}
       - EEPY_MCP_SIDECAR_CPU_LIMIT=${EEPY_MCP_SIDECAR_CPU_LIMIT:-1.0}
       # Optional: unique per-backend-process id for the sidecar orphan sweep.
-      # Leave unset (default) and each process self-identifies with a uuid.
-      # Only set it if your orchestrator already guarantees uniqueness.
+      # Leave unset (default) and each backend self-identifies by its own
+      # container name (stable across redeploys of this stack). Only set it
+      # if your orchestrator already guarantees uniqueness.
       - EEPY_NODE_ID=${EEPY_NODE_ID:-}
+      # Optional: initial admin. The account with this username is promoted to
+      # superuser at boot and on its login (idempotent). Needed for the Debug
+      # Log console and the superuser admin tools.
+      - SUPERUSER_USERNAME=${SUPERUSER_USERNAME:-}
     # host.docker.internal -> Docker host, so the backend can dial the
     # loopback-bound sidecar ports (EEPY_MCP_DOCKER_HOST above).
     extra_hosts:
@@ -68,9 +90,11 @@ services:
     ports:
       - "8068:8000"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     networks:
       - eepy-network
+      - eepy-sidecars
 
   frontend:
     image: ghcr.io/kulik-labs-development/eepy-host-frontend:latest
@@ -90,6 +114,12 @@ services:
 
 networks:
   eepy-network:
+    driver: bridge
+  # MCP sidecars attach here (and here ONLY), and the backend joins it too so
+  # it can dial them by container IP. A sidecar therefore can reach the
+  # backend but NOT the db/frontend containers - tighter containment than the
+  # old shared-network + published-port design.
+  eepy-sidecars:
     driver: bridge
 
 volumes:
