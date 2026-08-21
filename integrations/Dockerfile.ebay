@@ -20,12 +20,19 @@
 # Mirrors the upstream repo's own Dockerfile (multi-stage node:22-alpine +
 # pnpm). Differences: COPY paths from the repo-root build context and the
 # Eepy-specific env defaults below.
+#
+# pnpm is pinned to the exact version the submodule declares in its
+# package.json "packageManager" field (pnpm@10.14.0). The lockfile is a
+# pnpm-10 artifact: newer pnpm majors (11+) fail `--frozen-lockfile` on
+# linux-x64 ("Cannot verify the identity of the @pnpm/exe.linux-x64 native
+# binary") and silently ignore the package.json "pnpm" field. Bump this pin
+# together with the submodule ref when upstream bumps its pnpm.
 FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Install pnpm
-RUN npm install -g pnpm
+# Install the pinned pnpm (see header: must match the submodule's packageManager)
+RUN npm install -g pnpm@10.14.0
 
 # Copy package manifests first for better layer caching
 COPY integrations/ebay-mcp/package.json integrations/ebay-mcp/pnpm-lock.yaml ./
@@ -42,8 +49,8 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-# Install pnpm
-RUN npm install -g pnpm
+# Install the pinned pnpm (see header: must match the submodule's packageManager)
+RUN npm install -g pnpm@10.14.0
 
 # Copy package manifests
 COPY integrations/ebay-mcp/package.json integrations/ebay-mcp/pnpm-lock.yaml ./
