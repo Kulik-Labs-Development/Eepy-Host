@@ -24,9 +24,14 @@ Instance backends (``EEPY_MCP_INSTANCE_BACKEND``):
                  docker-oriented ``env`` selects an HTTP transport (e.g.
                  MCP_TRANSPORT=stdio vs streamable-http). No ports are bound,
                  so there is nothing to reach except the pipes.
-  docker      - run ``image`` as a Docker sidecar bound to 127.0.0.1 on an
-                 ephemeral host port (requires the Docker socket + python
-                 ``docker`` package).
+   docker      - run ``image`` as a Docker sidecar (requires the Docker socket
+                  + python ``docker`` package). By default (EEPY_MCP_SIDECAR_
+                  NETWORK set, as in compose) the sidecar is attached to the
+                  backend's own docker network and dialed directly by
+                  container IP — no host port published. Without that variable
+                  it falls back to publishing on 127.0.0.1 and dialing via
+                  EEPY_MCP_DOCKER_HOST (only reliable when the backend runs
+                  on the host itself).
 
 Sidecar containment: docker sidecars run with CPU/memory limits (env-tunable,
 see ``_sidecar_run_kwargs``) and may drop to a non-root user via the
@@ -60,23 +65,29 @@ from utils.logging_setup import logger
 # Tunables (env-overridable)
 # ---------------------------------------------------------------------------
 INSTANCE_BACKEND = os.getenv("EEPY_MCP_INSTANCE_BACKEND", "subprocess").lower()
-# Address the backend uses to REACH docker sidecars' loopback-bound host
-# ports. Default 127.0.0.1 is correct when the backend runs on the host
-# (local dev with the socket). When the backend is itself containerized
-# (compose/Portainer), dialing the host's loopback requires the host-gateway
-# route, so compose sets EEPY_MCP_DOCKER_HOST=host.docker.internal.
+# Preferred dialing mode for docker sidecars: the docker network the backend
+# is also attached to (compose sets `eepy-sidecars`). When set, a sidecar is
+# attached to this network and dialed DIRECTLY by container IP — no host port
+# is published at all, so a sidecar (which holds the user's decrypted
+# credentials) is unreachable from the host/LAN, and the dial has no
+# loopback/host-gateway NAT hop. That hop is what broke production: a port
+# published on 127.0.0.1 is NOT reachable via host.docker.internal from a
+# sibling container (Linux DNAT scoping), so every handshake failed.
+SIDECAR_NETWORK = os.getenv("EEPY_MCP_SIDECAR_NETWORK", "").strip()
+# Legacy dial address, only used when SIDECAR_NETWORK is unset. Default
+# 127.0.0.1 is correct when the backend runs ON the host (local dev with the
+# socket); a containerized backend needs the host-gateway route, so compose
+# sets EEPY_MCP_DOCKER_HOST=host.docker.internal.
 DOCKER_HOST_URL = os.getenv("EEPY_MCP_DOCKER_HOST", "127.0.0.1")
 IDLE_TIMEOUT_S = float(os.getenv("EEPY_MCP_INSTANCE_IDLE_TIMEOUT", "300"))
 STARTUP_TIMEOUT_S = float(os.getenv("EEPY_MCP_INSTANCE_STARTUP_TIMEOUT", "60"))
 CALL_TIMEOUT_S = float(os.getenv("EEPY_MCP_INSTANCE_CALL_TIMEOUT", "60"))
 REAPER_INTERVAL_S = float(os.getenv("EEPY_MCP_INSTANCE_REAPER_INTERVAL", "30"))
-
-# Identity of THIS backend process, recorded on mcp_sidecars rows so the boot
-# orphan sweep only force-removes sidecars IT left behind (not sidecars a
-# sibling backend replica on the same host is still serving). Set
-# EEPY_NODE_ID only if your orchestrator already guarantees a unique id per
-# backend process; otherwise each process gets a unique uuid.
-NODE_ID: str = os.getenv("EEPY_NODE_ID") or uuid.uuid4().hex
+# How long to wait (after the container reports "running") for the sidecar's
+# port to actually accept TCP connections — the app inside can still be
+# importing/binding. Without this probe the first MCP dial raced the bind and
+# failed with a bare connection error.
+SIDECAR_READY_TIMEOUT_S = float(os.getenv("EEPY_MCP_SIDECAR_READY_TIMEOUT", "30"))
 
 # Sidecar resource containment. A sidecar runs third-party code holding a
 # user's decrypted credentials in its env, so bound its CPU/memory by default.
@@ -177,6 +188,7 @@ class Instance:
     key: str
     kind: str  # "subprocess" | "docker" | "url"
     template_id: str | None = None
+    user_id: int | None = None  # owner of the credentials injected into this sidecar
     command: list[str] | None = None
     image: str | None = None
     url: str | None = None
@@ -186,6 +198,7 @@ class Instance:
     container_id: str | None = None
     container_name: str | None = None
     stderr_tail: deque | None = None  # subprocess: bounded stderr for diagnostics
+    secrets: tuple[str, ...] = ()  # credential values to redact from any surfaced sidecar output
     ephemeral: bool = False
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
@@ -367,6 +380,47 @@ def _docker_client():
         raise BridgeError("Cannot reach the Docker daemon.") from exc
 
 
+def _resolve_node_id() -> str:
+    """Stable identity of THIS backend deployment, recorded on mcp_sidecars
+    rows so the boot orphan sweep can tell "leftover from the previous
+    incarnation of this same deployment" (force-remove: it still holds a
+    user's decrypted credentials in its env) from "a sibling replica that
+    may still be serving live users" (never touch).
+
+    1. ``EEPY_NODE_ID`` env, when set (the orchestrator guarantees uniqueness
+       per backend process).
+    2. This process's own docker container name, discovered through the
+       mounted socket: stable across restarts and Portainer redeploys of the
+       same service, and distinct per replica in a multi-replica stack.
+       Without this, every Portainer redeploy minted a fresh uuid and the
+       sweep treated the previous boot's running sidecars as foreign,
+       leaving them (and their decrypted credentials) alive forever.
+    3. Random uuid (bare-host dev without a usable daemon): every boot looks
+       new, so the sweep only reconciles dead foreign sidecars — the safe
+       default.
+    """
+    override = os.getenv("EEPY_NODE_ID", "").strip()
+    if override:
+        return override
+    try:
+        import socket
+        client = _docker_client()
+        own = client.containers.get(socket.gethostname())
+        own.reload()
+        attrs = own.attrs or {}
+        # "Name" is top-level in the inspect JSON ("/eepy-backend"); older
+        # API versions nest it under Config.
+        name = attrs.get("Name") or (attrs.get("Config") or {}).get("Name") or ""
+        if name:
+            return "docker:" + name.lstrip("/")
+    except Exception:
+        pass
+    return uuid.uuid4().hex
+
+
+NODE_ID: str = _resolve_node_id()
+
+
 def _proc_alive(inst: Instance) -> bool:
     if inst.kind == "subprocess":
         if inst.proc is None:
@@ -411,11 +465,11 @@ async def spawn_instance(template: MCPTemplate, key: str,
 
     if not (isinstance(cfg.get("command"), list) and cfg["command"]):
         raise BridgeError("Template runtime_config is missing 'command'.")
-    return await asyncio.to_thread(_spawn_subprocess, template, key, env, ephemeral)
+    return await asyncio.to_thread(_spawn_subprocess, template, key, env, ephemeral, user_id)
 
 
 def _spawn_subprocess(template: MCPTemplate, key: str, env: dict[str, str],
-                      ephemeral: bool) -> Instance:
+                      ephemeral: bool, user_id: int | None = None) -> Instance:
     cfg = _runtime_config(template)
     command = [str(c) for c in cfg["command"]]
     # Optional working directory: relative paths resolve against the repo root
@@ -460,8 +514,9 @@ def _spawn_subprocess(template: MCPTemplate, key: str, env: dict[str, str],
     # nothing is persisted.
     stderr_tail: deque = deque(maxlen=50)
     threading.Thread(target=_drain_stderr, args=(proc, stderr_tail), daemon=True).start()
-    inst = Instance(key=key, kind="subprocess", command=command, env=env, cwd=cwd,
-                    proc=proc, stderr_tail=stderr_tail, ephemeral=ephemeral)
+    inst = Instance(key=key, kind="subprocess", template_id=template.id, user_id=user_id,
+                    command=command, env=env, cwd=cwd, proc=proc, stderr_tail=stderr_tail,
+                    secrets=tuple(v for v in env.values() if len(v) >= 8), ephemeral=ephemeral)
     _REGISTRY[key] = inst
     logger.info(f"mcp-bridge: spawned subprocess sidecar for {template.id} key={key[:12]} pid={proc.pid}")
     return inst
@@ -486,7 +541,7 @@ def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
         endpoint = "/" + endpoint
 
     client = _docker_client()
-    import docker.errors  # noqa: F401  (ensures import error was caught above)
+    network = _resolve_sidecar_network(client)
 
     name = f"eepy-mcp-{key[:12]}"
     try:
@@ -497,33 +552,49 @@ def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
             logger.info(f"mcp-bridge: pulling sidecar image {image}")
             client.images.pull(image)
 
-        # Bind to 127.0.0.1 on the host: the sidecar's port stays
-        # loopback-only so a buggy sidecar (holding a user's decrypted
-        # credentials) can't be reached from the LAN. The backend reaches it
-        # via DOCKER_HOST_URL: directly on the host, or via the host-gateway
-        # route when the backend is itself containerized (compose).
-        # Labels make sidecars identifiable in Portainer's container list
-        # (they are SDK-spawned, so invisible to stack views) and give ops
-        # a precise filter for manual cleanup.
-        container = client.containers.run(
-            image,
-            name=name,
-            detach=True,
-            environment=env,
-            ports={f"{port_key}/tcp": ("127.0.0.1", None)},
-            labels={
+        run_kwargs: dict[str, Any] = {
+            "image": image,
+            "name": name,
+            "detach": True,
+            "environment": env,
+            # Labels make sidecars identifiable in Portainer's container list
+            # (they are SDK-spawned, so invisible to stack views) and give ops
+            # a precise filter for manual cleanup.
+            "labels": {
                 "eepy-host.sidecar": "true",
                 "eepy-host.template": str(template.id),
                 "eepy-host.key": key[:12],
             },
-            auto_remove=False,
-            restart_policy={"Name": "no"},
+            "auto_remove": False,
+            "restart_policy": {"Name": "no"},
             **_sidecar_run_kwargs(cfg),
-        )
+        }
+        if network:
+            # Attach to the backend's docker network and dial the container
+            # directly (IP resolved below). No host port is published: the
+            # sidecar — which holds the user's decrypted credentials in its
+            # env — is unreachable from the host/LAN, and the dial avoids the
+            # 127.0.0.1-publish + host-gateway NAT hop that refused
+            # connections when the backend is itself containerized.
+            run_kwargs["network"] = network
+        else:
+            # Legacy fallback: publish on 127.0.0.1 (loopback-only) and dial
+            # via DOCKER_HOST_URL. Only reliable when the backend runs on the
+            # host itself.
+            run_kwargs["ports"] = {f"{port_key}/tcp": ("127.0.0.1", None)}
+
+        logger.info(f"mcp-bridge: starting sidecar container for {template.id} key={key[:12]} image={image}")
+        container = client.containers.run(**run_kwargs)
     except Exception as exc:
         msg = str(exc).lower()
         if "not found" in msg and "pull access" in msg:
             raise BridgeError(f"Cannot pull sidecar image '{image}' (private registry?).") from exc
+        if network and "network" in msg and ("is not found" in msg or "invalid reference" in msg):
+            raise BridgeError(
+                f"Docker network '{network}' not found. The backend and its "
+                f"sidecars must share a docker network (compose defines 'eepy-sidecars')."
+            ) from exc
+        logger.error(f"mcp-bridge: failed to start sidecar container for {template.id} key={key[:12]}: {exc}")
         raise BridgeError(f"Failed to start sidecar container ({exc.__class__.__name__}).") from exc
 
     # Wait until running (blocking sleep is fine: this runs in a worker thread).
@@ -533,39 +604,176 @@ def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
         if container.status == "running":
             break
         if container.status in ("exited", "dead", "removed"):
-            raise BridgeError("MCP sidecar container exited during startup.")
+            tail = _sidecar_log_tail(container, env)
+            logger.error(f"mcp-bridge: sidecar container for {template.id} key={key[:12]} {container.status} during startup. {tail}")
+            with contextlib.suppress(Exception):
+                container.remove(force=True)
+            raise BridgeError(
+                f"MCP sidecar container {container.status} during startup."
+                + (f" Sidecar logs: {tail}" if tail else " Check the sidecar image's entrypoint/dependencies.")
+            )
         time.sleep(0.5)
     else:
         with contextlib.suppress(Exception):
             container.remove(force=True)
         raise BridgeError("MCP sidecar container did not become ready in time.")
 
-    # Resolve the ephemeral localhost port.
-    host_port: str | None = None
-    try:
-        container.reload()
-        ports = (container.attrs or {}).get("NetworkSettings", {}).get("Ports") or {}
-        info = ports.get(f"{port_key}/tcp") or []
-        if info:
-            host_port = info[0].get("HostPort")
-    except Exception:
-        pass
-    if not host_port:
+    # Resolve the dial address.
+    dial_host: str
+    dial_port: str
+    mode: str
+    if network:
+        container_ip = _network_ip(container, network)
+        if not container_ip:
+            tail = _sidecar_log_tail(container, env)
+            with contextlib.suppress(Exception):
+                container.remove(force=True)
+            raise BridgeError(
+                f"Sidecar has no IP on docker network '{network}'. "
+                f"Check the network exists and the backend container is attached to it."
+            )
+        dial_host, dial_port, mode = container_ip, port_key, f"network={network}"
+    else:
+        try:
+            container.reload()
+            ports = (container.attrs or {}).get("NetworkSettings", {}).get("Ports") or {}
+            info = ports.get(f"{port_key}/tcp") or []
+            host_port = info[0].get("HostPort") if info else None
+        except Exception:
+            host_port = None
+        if not host_port:
+            with contextlib.suppress(Exception):
+                container.remove(force=True)
+            raise BridgeError(
+                "Sidecar exposes no mapped port. Add a 'port' to runtime_config that the "
+                "image actually exposes, or set EEPY_MCP_SIDECAR_NETWORK (recommended)."
+            )
+        dial_host, dial_port, mode = DOCKER_HOST_URL, host_port, f"port={host_port}"
+
+    dial_url = f"http://{dial_host}:{dial_port}{endpoint}"
+
+    # "running" only means the entrypoint started; the app inside may still be
+    # importing/binding. Probe the port until it accepts connections so the
+    # first MCP handshake does not race the bind (the old failure mode: one
+    # bare connection error, sidecar killed, 502 — retry "fixed" it).
+    ready, why = _wait_port_ready(dial_host, int(dial_port), container)
+    if not ready:
+        tail = _sidecar_log_tail(container, env)
+        logger.error(f"mcp-bridge: sidecar for {template.id} key={key[:12]} never became reachable: {why}. {tail}")
         with contextlib.suppress(Exception):
             container.remove(force=True)
         raise BridgeError(
-            "Sidecar exposes no mapped port. Add a 'port' to runtime_config that the "
-            "image actually exposes, or run the image with --network host."
+            f"MCP sidecar did not become reachable ({why})."
+            + (f" Sidecar logs: {tail}" if tail else "")
         )
 
-    inst = Instance(key=key, kind="docker", template_id=template.id, image=image,
-                    container_id=container.id, container_name=name,
-                    url=f"http://{DOCKER_HOST_URL}:{host_port}{endpoint}", env=env, ephemeral=ephemeral)
+    inst = Instance(key=key, kind="docker", template_id=template.id, user_id=user_id, image=image,
+                    container_id=container.id, container_name=name, url=dial_url, env=env,
+                    secrets=tuple(v for v in env.values() if len(v) >= 8), ephemeral=ephemeral)
     _REGISTRY[key] = inst
     if not ephemeral and user_id is not None:
         _track_sidecar(user_id, template.id, inst)  # fail-soft: DB record for the boot sweep
-    logger.info(f"mcp-bridge: started sidecar container for {template.id} key={key[:12]} port={host_port}")
+    logger.info(f"mcp-bridge: started sidecar container for {template.id} key={key[:12]} {mode} dial={dial_url}")
     return inst
+
+
+def _resolve_sidecar_network(client: Any) -> str | None:
+    """Resolve the configured EEPY_MCP_SIDECAR_NETWORK to the daemon's actual
+    network name (or None when unset).
+
+    Compose/Portainer prefix network names with the project/stack name (e.g.
+    `deploy_eepy-sidecars` or `<stackname>_eepy-sidecars`), while the env var
+    carries the short name from docker-compose.yml. The backend container is
+    itself attached to the sidecars network, so resolve by matching its own
+    attached networks: exact name first, then a `<prefix>_<name>` suffix.
+    Falls back to the configured value unchanged (a bare setup whose network
+    really is named eepy-sidecars, or a misconfig — which then fails at
+    container run with the daemon's clear "network not found" error).
+    """
+    if not SIDECAR_NETWORK:
+        return None
+    try:
+        import socket
+        own = client.containers.get(socket.gethostname())
+        own.reload()
+        nets = list(((own.attrs or {}).get("NetworkSettings") or {}).get("Networks") or {})
+        for n in nets:
+            if n == SIDECAR_NETWORK:
+                return n
+        for n in nets:
+            if n.endswith("_" + SIDECAR_NETWORK):
+                return n
+    except Exception:
+        pass
+    return SIDECAR_NETWORK
+
+
+def _network_ip(container: Any, network: str) -> str | None:
+    """The container's IPv4 on ``network`` (None if detached/missing)."""
+    try:
+        container.reload()
+        nets = ((container.attrs or {}).get("NetworkSettings") or {}).get("Networks") or {}
+        return (nets.get(network) or {}).get("IPAddress") or None
+    except Exception:
+        return None
+
+
+def _wait_port_ready(host: str, port: int, container: Any) -> tuple[bool, str]:
+    """Poll a TCP connect to the sidecar's port until it accepts (or the
+    container dies / the deadline passes). Runs in a worker thread."""
+    import socket as _socket
+
+    deadline = time.time() + SIDECAR_READY_TIMEOUT_S
+    last_err = "unknown"
+    while time.time() < deadline:
+        try:
+            with _socket.create_connection((host, port), timeout=3):
+                return True, ""
+        except Exception as exc:
+            last_err = exc.__class__.__name__
+        try:
+            container.reload()
+            if container.status in ("exited", "dead", "removed"):
+                return False, f"container {container.status} during startup"
+        except Exception:
+            return False, "container gone during startup"
+        time.sleep(0.5)
+    return False, f"port {port} never accepted a connection in {int(SIDECAR_READY_TIMEOUT_S)}s (last: {last_err})"
+
+
+def _redact_secrets(text: str, env: dict[str, str]) -> str:
+    """Strip the user's credential values (and other long env values) out of
+    sidecar output before it reaches logs/errors. Sidecars may echo their env
+    on startup; the debug console is superuser-visible, so be strict."""
+    for v in env.values():
+        if v and len(v) >= 8:
+            text = text.replace(v, "[redacted]")
+    return text
+
+
+def _sidecar_log_tail(container: Any, env: dict[str, str], lines: int = 25, cap: int = 800) -> str:
+    """Bounded, redacted tail of a docker sidecar's output (for failure
+    diagnostics). Returns '' if nothing is readable."""
+    try:
+        raw = container.logs(tail=lines, timestamps=False)
+        text = raw.decode("utf-8", "replace").strip()
+        if not text:
+            return ""
+        return _redact_secrets(text, env)[-cap:]
+    except Exception:
+        return ""
+
+
+def _docker_log_tail(inst: Instance) -> str:
+    """Redacted log tail for a live (about-to-be-killed) docker sidecar, or
+    '' when the container is already gone."""
+    if not inst.container_id:
+        return ""
+    try:
+        container = _docker_client().containers.get(inst.container_id)
+        return _sidecar_log_tail(container, inst.env)
+    except Exception:
+        return ""
 
 
 def _image_present(client: Any, image: str) -> bool:
@@ -617,6 +825,27 @@ def kill_instance(key: str) -> bool:
         _untrack_sidecar(key)  # drop the durable record (no-op if absent)
     logger.info(f"mcp-bridge: reaped {inst.kind} sidecar key={key[:12]}")
     return True
+
+
+def kill_instances_for_user(user_id: int, template_id: str) -> int:
+    """Tear down every live sidecar holding THIS user's credentials for a
+    template. Called when the user deletes their config: a running sidecar
+    still carries the user's DECRYPTED credentials in its process env, so it
+    must not outlive the config (otherwise the idle reaper keeps it — and
+    those credentials — up to IDLE_TIMEOUT_S longer).
+
+    Sync on purpose (blocking Docker/proc calls): call it from a sync (thread
+    pool) route or via asyncio.to_thread. Returns how many were killed.
+    """
+    killed = 0
+    for key, inst in list(_REGISTRY.items()):
+        if inst.user_id == user_id and inst.template_id == template_id:
+            with contextlib.suppress(Exception):
+                kill_instance(key)
+            killed += 1
+    if killed:
+        logger.info(f"mcp-bridge: killed {killed} sidecar(s) for {template_id} (user config deleted)")
+    return killed
 
 
 def reap_idle_instances() -> int:
@@ -695,16 +924,29 @@ async def bridge_call(user: User, template: MCPTemplate, credentials: dict[str, 
     try:
         sess = await open_session(inst)
     except Exception as exc:
-        # Sidecar died or cannot handshake: drop it so the next call respawns.
-        if not inst.ephemeral:
-            with contextlib.suppress(Exception):
-                await asyncio.to_thread(kill_instance, inst.key)
-        msg = f"MCP handshake with sidecar failed ({exc.__class__.__name__})."
-        if inst.kind == "subprocess" and inst.stderr_tail:
+        # Sidecar died or cannot handshake: capture its own output (docker:
+        # container logs BEFORE the kill removes the container; subprocess:
+        # stderr tail) so the failure is diagnosable from the 502 detail AND
+        # the backend debug log, then drop the sidecar so the next call
+        # respawns.
+        msg = str(exc) if isinstance(exc, BridgeError) else (
+            f"MCP handshake with sidecar failed ({exc.__class__.__name__}).")
+        if inst.kind == "docker":
+            docker_tail = await asyncio.to_thread(_docker_log_tail, inst)
+            if docker_tail:
+                msg += f" Sidecar logs: {docker_tail}"
+        elif inst.kind == "subprocess" and inst.stderr_tail:
             tail = " | ".join(list(inst.stderr_tail)[-10:])
             if tail:
                 msg += f" Sidecar stderr: {tail[:800]}"
-        raise BridgeError(msg) from exc
+        logger.error(
+            f"mcp-bridge: {msg} [template={inst.template_id} key={inst.key[:12]} "
+            f"url={inst.url} kind={inst.kind}]"
+        )
+        if not inst.ephemeral:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(kill_instance, inst.key)
+        raise BridgeError(msg[:2000]) from exc
     try:
         try:
             data, is_error = await call_tool(sess.session, tool_name, arguments)
@@ -774,10 +1016,49 @@ async def open_session(inst: Instance) -> McpSession:
         await asyncio.wait_for(session.initialize(), timeout=STARTUP_TIMEOUT_S)
         sess.session = session
         return sess
-    except Exception:
-        with contextlib.suppress(Exception):
+    except BaseException as exc:
+        # The SDK's streamable-http client runs a background anyio task group.
+        # When the sidecar is dead/unreachable, the background task's error
+        # (e.g. ConnectError) aborts the group: the FOREGROUND receives a
+        # CancelledError("Cancelled via cancel scope") while the real cause
+        # only surfaces from the context teardown (a BaseExceptionGroup /
+        # cross-task cancel-scope RuntimeError). Neither is an Exception, so
+        # a plain `except Exception` let them escape to the client as a 500.
+        # Capture the teardown error for its detail, then convert everything
+        # (except a GENUINE task cancellation) into a clean BridgeError so
+        # routes 502 with a diagnostic and the failure lands in the log.
+        cleanup_exc: BaseException | None = None
+        try:
             await stack.aclose()
-        raise
+        except BaseException as cleanup_error:
+            cleanup_exc = cleanup_error
+        if isinstance(exc, asyncio.CancelledError):
+            if "cancel scope" in str(exc):
+                cause = _exc_summary(cleanup_exc) if cleanup_exc else "SDK task group aborted"
+                raise BridgeError(f"MCP handshake with sidecar failed ({cause}).") from exc
+            raise  # genuine cancellation (client disconnect): propagate
+        if isinstance(exc, BridgeError):
+            raise
+        if isinstance(exc, TimeoutError):
+            raise BridgeError(
+                f"MCP handshake with sidecar timed out after {int(STARTUP_TIMEOUT_S)}s."
+            ) from exc
+        detail = _exc_summary(exc)
+        if cleanup_exc is not None:
+            detail = f"{detail}; teardown: {_exc_summary(cleanup_exc)}"
+        raise BridgeError(f"MCP handshake with sidecar failed ({detail}).") from exc
+
+
+def _exc_summary(exc: BaseException) -> str:
+    """One-line, user-safe summary of an exception (flattens anyio
+    BaseExceptionGroups, which nest the real cause, e.g. RemoteProtocolError)."""
+    if isinstance(exc, BaseExceptionGroup):
+        subs = list(dict.fromkeys(_exc_summary(e) for e in exc.exceptions))
+        return "; ".join(subs)[:200]
+    detail = str(exc)
+    if not detail:
+        return exc.__class__.__name__
+    return f"{exc.__class__.__name__}: {detail}"[:200]
 
 async def list_tools(session: Any) -> list[dict[str, Any]]:
     out = await session.list_tools()
@@ -821,13 +1102,18 @@ async def discover_tools_for_template(db: Session, user: User, template: MCPTemp
     try:
         inst = await spawn_instance(template, probe_key, env, ephemeral=True)
     except BridgeError as exc:
+        logger.error(f"mcp-bridge: discovery spawn failed for {template.id}: {exc}")
         raise HTTPException(status_code=502, detail=f"Sidecar spawn failed: {exc}") from exc
     try:
         sess = await open_session(inst)
     except Exception as exc:
+        tail = await asyncio.to_thread(_docker_log_tail, inst) if inst.kind == "docker" else ""
         await asyncio.to_thread(kill_instance, probe_key)
+        logger.error(f"mcp-bridge: discovery handshake failed for {template.id}: {exc} {tail}")
+        detail = str(exc) if isinstance(exc, BridgeError) else (
+            f"MCP handshake with sidecar failed ({exc.__class__.__name__}).")
         raise HTTPException(status_code=502,
-                            detail=f"MCP handshake with sidecar failed ({exc.__class__.__name__}).") from exc
+                            detail=(detail + (f" Sidecar logs: {tail}" if tail else ""))[:2000]) from exc
     try:
         tools = await list_tools(sess.session)
     except Exception as exc:
