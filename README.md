@@ -58,6 +58,37 @@ Eepy Host is a **managed integration layer between LLM agents and real-world Saa
 - **Open WebUI as a single tool server** — one user-scoped, revocable API key + one OpenAPI spec URL covers *every* integration the user has connected, now and in the future. No per-server imports, ever.
 - **Dashboard** — Overview hub with the Open WebUI tool-server connection and a live status flag; account & profile management; per-server observability (last used, live tests); organization tools for superusers.
 
+## Design Language
+
+The frontend follows a **"Retro Cozy"** design system — a 16-bit pixel-art
+aesthetic: warm, muted, and nostalgic. A deep aubergine-brown night sky, soft
+blush and bright-pink accents, earthy sage and amber, cream text. No neon, no
+glassmorphism: chunky 2px borders, hard (unblurred) pixel shadows, squared
+corners, `steps()` animations, and dithered/scanline textures.
+
+- **Palette** — `night` surfaces (`base`/`deep`/`surface`/`raise`/`border`/`line`)
+  with accents `eepy-blush` (primary), `eepy-pink` (highlight), `eepy-sage`
+  (success/on), `eepy-amber` (warn/secondary), `eepy-lilac` (tertiary),
+  `eepy-ember` (danger), and a warm cream `ink` text scale. Defined in
+  [`frontend/tailwind.config.js`](frontend/tailwind.config.js).
+- **Type** — three fonts via `next/font`: **Pixelify Sans** (`font-pixel`,
+  headings/buttons/nav), **VT323** (`font-console`, logs, code, URLs — keep
+  ≥13px), **Nunito** (`font-body`, prose).
+- **Components** — reuse the classes in
+  [`frontend/app/globals.css`](frontend/app/globals.css) instead of
+  re-deriving: `.panel` / `.well` / `.card` surfaces, `.btn`
+  (`.btn-blush|sage|amber|ghost|danger`), `.btn-icon`, `.input-pixel`,
+  `.label-pixel`, `.chip` (tinted variants), `.led` squared status lights,
+  `.pixel-caps` corner rivets, `.tex-dither` / `.tex-bands` textures,
+  `.text-px` hard text shadows, `.lift` stepped hover.
+- **Brand marks** — the sleepy pixel moon (`src/components/PixelMoon`) is the
+  mascot and favicon; the shared `CozyBackdrop` renders the banded night sky
+  with twinkling pixel stars behind every page.
+
+Keep it consistent: when adding UI, pick from the existing tokens and
+component classes. The full ruleset for agents lives in
+[AGENTS.md](AGENTS.md) ("Retro Cozy" design system).
+
 ## Built-in Integrations
 
 Each integration is an upstream MCP server we import as a git submodule under
@@ -224,7 +255,7 @@ All endpoints live under a single FastAPI app. Interactive docs at `/docs` when 
 ## Project Structure
 
 ```
-├── frontend/                 # Next.js (App Router) + Tailwind
+├── frontend/                 # Next.js (App Router) + Tailwind ("Retro Cozy" pixel UI)
 │   ├── app/
 │   │   ├── auth/             # Unified sign-in / sign-up portal
 │   │   └── dashboard/
@@ -236,7 +267,8 @@ All endpoints live under a single FastAPI app. Interactive docs at `/docs` when 
 │   │       └── settings/
 │   ├── context/AuthContext.tsx
 │   ├── lib/api.ts
-│   └── src/components/       # MCPConnectionWizard, OpenWebUIExportPanel
+│   └── src/components/       # MCPConnectionWizard, OpenWebUIExportPanel,
+│                             #   PixelMoon, CozyBackdrop
 ├── backend/
 │   ├── main.py               # FastAPI app, router mounting, template seeding,
 │   │                         #   superuser routes, superuser bootstrap
@@ -286,6 +318,7 @@ A few hard-learned conventions for this codebase:
 - **Never log credential values.** Handlers may log *which* template was connected or which tool ran — never the credential fields themselves.
 - **Backend is the source of truth.** Frontend role checks are UX sugar; every protected endpoint enforces JWT + role server-side.
 - **JSX edits.** When generating `.tsx` programmatically, verify the file compiles after the write — escaping artifacts break the Next.js build immediately.
+- **Follow the design language.** The frontend is a 16-bit "Retro Cozy" pixel UI (warm night palette, chunky 2px borders, hard pixel shadows, stepped animations). Build from the existing tokens and component classes in `frontend/tailwind.config.js` + `frontend/app/globals.css` — see [Design Language](#design-language).
 
 ## Roadmap
 
