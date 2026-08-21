@@ -368,6 +368,15 @@ def sweep_orphan_sidecars() -> None:
 _reaper_task: asyncio.Task | None = None
 
 
+def _docker_socket_path() -> str:
+    """The unix socket path docker.from_env() would use (DOCKER_HOST or the
+    default), for diagnostics."""
+    host = os.getenv("DOCKER_HOST", "").strip()
+    if host.startswith("unix://"):
+        return host[len("unix://"):]
+    return host or "/var/run/docker.sock"
+
+
 def _docker_client():
     try:
         import docker
@@ -377,7 +386,42 @@ def _docker_client():
     try:
         return docker.from_env()
     except docker.errors.DockerException as exc:
-        raise BridgeError("Cannot reach the Docker daemon.") from exc
+        first_line = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+        detail = f"Cannot reach the Docker daemon ({first_line})."
+        sock = _docker_socket_path()
+        if not sock.startswith(("//", "tcp://", "http://", "https://", "unix://")) and not os.path.exists(sock):
+            # The classic Portainer case: the stack's backend service was
+            # created from an older compose without the socket bind mount, so
+            # no sidecar can EVER spawn from this container.
+            detail += (
+                f" The socket file {sock} does not exist inside the eepy-backend container: "
+                "the stack must mount the host Docker socket on the BACKEND service "
+                "(deploy/docker-compose.yml: volumes: - /var/run/docker.sock:/var/run/docker.sock). "
+                "In Portainer: edit the stack, paste the CURRENT deploy/docker-compose.yml, "
+                "update & recreate the eepy-backend container, then re-run the connection test."
+            )
+        raise BridgeError(detail) from exc
+
+
+def check_docker_daemon() -> tuple[bool, str]:
+    """Boot-time probe (see main.py lifespan): when the instance backend is
+    docker, verify the daemon is reachable BEFORE any user hits a tool.
+
+    Without this, a missing socket mount only surfaced on the user's first
+    'Run live test' click as an opaque 502. Returns (ok, detail); detail
+    carries remediation steps when ok is False.
+    """
+    if INSTANCE_BACKEND != "docker":
+        return True, f"instance backend is '{INSTANCE_BACKEND}' - no Docker daemon needed"
+    try:
+        client = _docker_client()
+        client.ping()
+        return True, "reachable (sidecar backend ready)"
+    except BridgeError as e:
+        return False, str(e)
+    except Exception as e:
+        first = str(e).splitlines()[0] if str(e) else e.__class__.__name__
+        return False, f"unexpected probe failure: {e.__class__.__name__}: {first}"
 
 
 def _resolve_node_id() -> str:

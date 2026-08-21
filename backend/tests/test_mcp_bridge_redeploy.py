@@ -9,7 +9,10 @@
   reaches errors/logs;
 - anyio BaseExceptionGroup explosions from the MCP SDK are flattened into a
   clean, one-line summary and converted to BridgeError (never a 500);
-- deleting a user's config tears down that user's live sidecars immediately.
+- deleting a user's config tears down that user's live sidecars immediately;
+- the boot-time Docker daemon probe surfaces a missing socket mount (the
+  classic stale-Portainer-stack failure) with an actionable fix instead of an
+  opaque "Cannot reach the Docker daemon" on the user's first tool call.
 """
 
 import unittest.mock
@@ -214,3 +217,37 @@ def test_delete_config_kills_live_sidecar(client, fake_template_id, auth_user):
     live_after = [k for k, i in mcp_bridge._REGISTRY.items()
                   if i.template_id == fake_template_id and not i.ephemeral]
     assert live_after == [], "deleting the config must kill its sidecar immediately"
+
+
+# ---------------------------------------------------------------------------
+# Docker daemon reachability (Portainer socket-mount diagnostics)
+# ---------------------------------------------------------------------------
+def test_check_docker_daemon_subprocess_backend_short_circuits(bridge, monkeypatch):
+    """The daemon probe must not require a daemon when the instance backend
+    is subprocess (local dev runs without Docker)."""
+    monkeypatch.setattr(bridge, "INSTANCE_BACKEND", "subprocess")
+    ok, detail = bridge.check_docker_daemon()
+    assert ok is True
+    assert "no Docker daemon needed" in detail
+
+
+def test_check_docker_daemon_reports_missing_socket_with_fix(bridge, monkeypatch):
+    """No socket inside the container (a Portainer stack built from an older
+    compose) must surface an ACTIONABLE message naming the missing socket and
+    the fix, not an opaque 'Cannot reach the Docker daemon'."""
+    monkeypatch.setattr(bridge, "INSTANCE_BACKEND", "docker")
+    monkeypatch.setenv("DOCKER_HOST", "unix:///nonexistent/ee-docker-test.sock")
+    ok, detail = bridge.check_docker_daemon()
+    assert ok is False
+    assert "/nonexistent/ee-docker-test.sock" in detail
+    assert "Portainer" in detail
+    assert "/var/run/docker.sock" in detail
+
+
+def test_docker_socket_path_helper(bridge, monkeypatch):
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    assert bridge._docker_socket_path() == "/var/run/docker.sock"
+    monkeypatch.setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+    assert bridge._docker_socket_path() == "/var/run/docker.sock"
+    monkeypatch.setenv("DOCKER_HOST", "tcp://127.0.0.1:2375")
+    assert bridge._docker_socket_path() == "tcp://127.0.0.1:2375"

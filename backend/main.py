@@ -426,6 +426,19 @@ async def _lifespan(app: FastAPI):
     start the MCP sidecar idle-reaper, tear down live sidecars on shutdown."""
     import asyncio
 
+    # Surface a missing Docker socket mount AT BOOT instead of on the user's
+    # first 'Run live test' click: Portainer stacks created from an older
+    # compose file have no /var/run/docker.sock bind mount on the backend,
+    # in which case sidecar spawning can never succeed.
+    daemon_ok, daemon_detail = await asyncio.to_thread(mcp_bridge.check_docker_daemon)
+    if daemon_ok:
+        logger.info(f"mcp-bridge: docker daemon {daemon_detail}")
+    else:
+        logger.error(
+            f"mcp-bridge: Docker daemon NOT reachable - MCP sidecars will fail on every "
+            f"tool call until this is fixed. {daemon_detail}"
+        )
+
     # Boot reconciliation: every mcp_sidecars row is a leftover sidecar still
     # holding a user's decrypted credentials in its env (OOM kill, kill -9,
     # host reboot, Portainer remove). Remove it; the next request re-spawns.
