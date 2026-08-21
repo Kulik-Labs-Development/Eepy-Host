@@ -507,7 +507,28 @@ there is no vitest in the frontend.)
   the containers (sidecar images are pulled lazily by the bridge, so just
   make sure the backend has fresh access). `stack.env` values rarely change
   — only when a new secret is introduced.
- - **Verify the docker sidecar path (production):** the dev machine has
+  - **The backend needs the Docker socket or sidecars can never spawn:** with
+    `EEPY_MCP_INSTANCE_BACKEND=docker` (the compose default) the backend
+    spawns per-user sidecar containers THROUGH the host Docker socket, which
+    `deploy/docker-compose.yml` mounts ONLY on the backend service
+    (`volumes: - /var/run/docker.sock:/var/run/docker.sock`). A common
+    Portainer failure: the stack was created from an OLDER compose (before
+    this mount / the `eepy-sidecars` network existed) and a later "redeploy"
+    only pulled newer images — the SERVICE CONFIG is still the old one, so
+    the socket is missing and every tool call 502s with "Cannot reach the
+    Docker daemon." Fix: edit the stack in Portainer, paste the CURRENT
+    `deploy/docker-compose.yml`, update & recreate `eepy-backend`. The backend
+    probes the daemon AT BOOT and logs to the Debug Log console: `mcp-bridge:
+    docker daemon reachable (sidecar backend ready)` (good) or a red
+    `Docker daemon NOT reachable` line with the remediation (fix the stack).
+    Host check: `docker exec eepy-backend ls -l /var/run/docker.sock`.
+  - **Sidecars are spawned ON DEMAND, per (user, template, exact credentials),
+    and reaped after `EEPY_MCP_INSTANCE_IDLE_TIMEOUT` (default 300s) idle.**
+    So seeing NO extra `eepy-sidecar-*` containers on the host while idle is
+    NORMAL — a sidecar exists only from first use until ~5 min after the last
+    call. If none EVER appears when a tool is called, spawning is failing
+    (check the daemon line above / the Debug Log console).
+  - **Verify the docker sidecar path (production):** the dev machine has
    Docker, so the full compose stack CAN be exercised locally (build the
    four images with the GHCR tags, `docker compose --env-file stack.env up -d`).
    After a deploy: hit the dashboard's connection test, then a real proxy tool
