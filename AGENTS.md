@@ -69,9 +69,12 @@ docker container in production), short-lived and idle-reaped.
 
 ## Technical Stack
 
-- **Frontend:** Next.js (App Router) + TypeScript, Tailwind ("Void & Neon"
-  aesthetic: `eepy-lavender` / `eepy-peach` / `eepy-mint` accents), Lucide
-  React icons, "console feel" UI convention.
+- **Frontend:** Next.js (App Router) + TypeScript, Tailwind ("Retro Cozy"
+  pixel-art aesthetic: warm `night` aubergine base with `eepy-blush` /
+  `eepy-pink` / `eepy-sage` / `eepy-amber` accents, chunky 2px borders, hard
+  shadows, dithered sky + scanline textures). Fonts via next/font: Pixelify
+  Sans (`font-pixel`), VT323 (`font-console`), Nunito (`font-body`). Lucide
+  React icons; a hand-drawn pixel moon mascot (`src/components/PixelMoon`).
 - **Backend:** FastAPI, PostgreSQL via SQLAlchemy (sync), Alembic migrations
   (also an idempotent `backend/run_migrations.py`), JWT auth (PyJWT),
   slowapi rate limiting on auth routes, `mcp` SDK + `docker` SDK for the
@@ -411,7 +414,24 @@ there is no vitest in the frontend.)
 1. PascalCase component naming.
 2. Tailwind utilities; no arbitrary CSS values unless necessary.
 3. Lucide React icons only.
-4. Dark "console feel" — void surfaces with eepy-lavender/peach/mint accents.
+4. **Follow the "Retro Cozy" design system** (see `tailwind.config.js`):
+   - Surfaces: `night` (base/deep/surface/raise/border/line) — never reintroduce
+     the old `void`/neon palette.
+   - Accents: `eepy-blush` (primary), `eepy-pink` (highlight), `eepy-sage`
+     (success/on), `eepy-amber` (secondary/warn), `eepy-lilac` (tertiary),
+     `eepy-ember` (error/danger). Text: `ink` / `ink-soft` / `ink-faint` /
+     `ink-dim` (no raw `text-gray-*`).
+   - Reuse the component classes in `app/globals.css` instead of re-deriving:
+     `.panel` (raised card), `.well` (recessed), `.card` (mid), `.btn` +
+     `.btn-blush|sage|amber|ghost|danger`, `.btn-icon`, `.input-pixel`,
+     `.label-pixel`, `.chip` (+ `-blush|-sage|-amber|-lilac|-ember`), `.led`
+     (squared status light — not a glowing dot).
+   - Fonts: `font-pixel` (headings/buttons/nav), `font-console` (logs/code/
+     URLs, keep ≥13px), `font-body` (prose).
+   - Pixel touches: `.pixel-caps` corner rivets (color via
+     `[--cap:theme('colors.eepy.…')]`), `.tex-dither` / `.tex-bands` textures,
+     `.text-px` hard text shadow, `steps()` animations (no smooth ease on
+     hovers/presses), hard `shadow-pixel*` (no blurred glows).
 
 ## Operational Notes
 

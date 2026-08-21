@@ -2,24 +2,327 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------------------------------------------------------------------------
+ * Eepy Host — Retro Cozy base
+ * Warm aubergine night, dithered sky, subtle CRT scanlines, pixel scrollbars.
+ * ------------------------------------------------------------------------- */
+
 :root {
-  --foreground-rgb: 255, 255, 255;
-  --background-start-rgb: 0, 0, 0;
-  --background-end-rgb: 0, 0, 0;
+  --px-shadow: rgba(16, 9, 13, 0.5);
+  --cap: theme('colors.eepy.blush');
+}
+
+html {
+  background: theme('colors.night.DEFAULT');
 }
 
 body {
-  color: rgb(var(--foreground-rgb));
-  background: #0a0a0c; /* Fallback to void color */
+  font-family: theme('fontFamily.body');
+  color: theme('colors.ink.DEFAULT');
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(255, 127, 166, 0.07) 0%, rgba(255, 127, 166, 0) 55%),
+    linear-gradient(to bottom, #2B2027 0%, theme('colors.night.DEFAULT') 60%, #211A20 100%);
+  background-attachment: fixed;
+  min-height: 100vh;
 }
 
-@keyframes gradient-rotate {
-  0% { background-color: #c3b1de; } /* lavender */
-  33% { background-color: #a2f2d1; } /* mint */
-  66% { background-color: #fadadd; } /* peach */
-  100% { background-color: #c3b1de; }
+/* Subtle CRT scanlines over everything (purely decorative). */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.09) 0px,
+    rgba(0, 0, 0, 0.09) 1px,
+    transparent 1px,
+    transparent 4px
+  );
 }
 
-.animate-gradient-border {
-  animation: gradient-rotate 8s infinite linear;
+::selection {
+  background: theme('colors.eepy.pink');
+  color: theme('colors.night.deep');
+}
+
+/* Pixel scrollbars (WebKit) */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track {
+  background: theme('colors.night.deep');
+}
+::-webkit-scrollbar-thumb {
+  background: theme('colors.night.border');
+  border: 3px solid theme('colors.night.deep');
+}
+::-webkit-scrollbar-thumb:hover {
+  background: theme('colors.eepy.blush');
+}
+* {
+  scrollbar-color: theme('colors.night.border') theme('colors.night.deep');
+}
+
+@layer components {
+  /* --- Panels ---------------------------------------------------------- */
+
+  /* Raised surface card: 2px border + hard drop shadow (the core look). */
+  .panel {
+    position: relative;
+    background: theme('colors.night.surface');
+    border: 2px solid theme('colors.night.border');
+    box-shadow: 0 4px 0 0 var(--px-shadow);
+  }
+
+  /* Recessed well inside a panel (inputs, code blocks, lists). */
+  .well {
+    position: relative;
+    background: theme('colors.night.deep');
+    border: 2px solid theme('colors.night.line');
+  }
+
+  /* Mid-level surface, no drop shadow. */
+  .card {
+    position: relative;
+    background: theme('colors.night.raise');
+    border: 2px solid theme('colors.night.border');
+  }
+
+  /* --- Buttons --------------------------------------------------------- */
+
+  /* Base: chunky, hard bottom shadow, presses down when clicked. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-family: theme('fontFamily.pixel');
+    font-weight: 700;
+    font-size: 0.875rem;
+    letter-spacing: 0.02em;
+    padding: 0.55rem 1.1rem;
+    border-width: 2px;
+    border-style: solid;
+    box-shadow: 0 3px 0 0 var(--px-shadow);
+    cursor: pointer;
+    user-select: none;
+    transition: transform 75ms steps(2), box-shadow 75ms steps(2), background-color 120ms, border-color 120ms, color 120ms;
+  }
+  .btn:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+  .btn:active:not(:disabled) {
+    transform: translateY(3px);
+    box-shadow: 0 0 0 0 var(--px-shadow);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-blush {
+    background: theme('colors.eepy.blush');
+    border-color: theme('colors.eepy.pink');
+    color: theme('colors.night.deep');
+  }
+  .btn-sage {
+    background: theme('colors.eepy.sage');
+    border-color: #7C9E70;
+    color: theme('colors.night.deep');
+  }
+  .btn-amber {
+    background: theme('colors.eepy.amber');
+    border-color: #C9954F;
+    color: theme('colors.night.deep');
+  }
+  .btn-ghost {
+    background: theme('colors.night.DEFAULT');
+    border-color: theme('colors.night.border');
+    color: theme('colors.ink.soft');
+  }
+  .btn-ghost:hover:not(:disabled) {
+    border-color: theme('colors.eepy.blush');
+    color: theme('colors.ink.DEFAULT');
+    filter: none;
+  }
+  .btn-danger {
+    background: theme('colors.night.DEFAULT');
+    border-color: theme('colors.night.border');
+    color: theme('colors.eepy.ember');
+  }
+  .btn-danger:hover:not(:disabled) {
+    border-color: theme('colors.eepy.ember');
+    filter: none;
+  }
+
+  /* Small square icon button (trash, copy, close...). */
+  .btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.45rem;
+    border: 2px solid theme('colors.night.border');
+    background: theme('colors.night.DEFAULT');
+    color: theme('colors.ink.faint');
+    cursor: pointer;
+    box-shadow: 0 2px 0 0 var(--px-shadow);
+    transition: transform 75ms steps(2), box-shadow 75ms steps(2), color 120ms, border-color 120ms;
+  }
+  .btn-icon:hover {
+    color: theme('colors.ink.DEFAULT');
+    border-color: theme('colors.eepy.blush');
+  }
+  .btn-icon:active {
+    transform: translateY(2px);
+    box-shadow: 0 0 0 0 var(--px-shadow);
+  }
+  .btn-icon:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* --- Forms ----------------------------------------------------------- */
+
+  .input-pixel {
+    width: 100%;
+    background: theme('colors.night.deep');
+    border: 2px solid theme('colors.night.border');
+    color: theme('colors.ink.DEFAULT');
+    font-family: theme('fontFamily.body');
+    font-size: 0.875rem;
+    padding: 0.65rem 0.8rem;
+    outline: none;
+    transition: border-color 120ms, box-shadow 120ms;
+  }
+  .input-pixel::placeholder {
+    color: theme('colors.ink.dim');
+  }
+  .input-pixel:focus {
+    border-color: theme('colors.eepy.blush');
+    box-shadow: 0 0 0 2px rgba(242, 163, 176, 0.16);
+  }
+  .input-pixel:disabled,
+  .input-pixel[readonly] {
+    color: theme('colors.ink.dim');
+    cursor: not-allowed;
+  }
+
+  .label-pixel {
+    display: block;
+    font-family: theme('fontFamily.pixel');
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: theme('colors.ink.faint');
+    margin-bottom: 0.4rem;
+  }
+
+  /* Tiny retro tag/chip (badges, categories, counts). */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.15rem 0.55rem;
+    border: 2px solid theme('colors.night.border');
+    background: theme('colors.night.DEFAULT');
+    font-family: theme('fontFamily.console');
+    font-size: 13px;
+    line-height: 1.4;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: theme('colors.ink.faint');
+  }
+  .chip-blush {
+    border-color: rgba(242, 163, 176, 0.5);
+    background: rgba(242, 163, 176, 0.1);
+    color: theme('colors.eepy.blush');
+  }
+  .chip-sage {
+    border-color: rgba(163, 192, 154, 0.5);
+    background: rgba(163, 192, 154, 0.1);
+    color: theme('colors.eepy.sage');
+  }
+  .chip-amber {
+    border-color: rgba(239, 189, 127, 0.5);
+    background: rgba(239, 189, 127, 0.1);
+    color: theme('colors.eepy.amber');
+  }
+  .chip-lilac {
+    border-color: rgba(183, 159, 216, 0.5);
+    background: rgba(183, 159, 216, 0.1);
+    color: theme('colors.eepy.lilac');
+  }
+  .chip-ember {
+    border-color: rgba(226, 114, 110, 0.5);
+    background: rgba(226, 114, 110, 0.1);
+    color: theme('colors.eepy.ember');
+  }
+
+  /* --- Squared status LED (replaces glowing dots) ---------------------- */
+  .led {
+    display: inline-block;
+    width: 0.55rem;
+    height: 0.55rem;
+    border: 1px solid rgba(0, 0, 0, 0.35);
+  }
+}
+
+@layer utilities {
+  /* --- Pixel textures --------------------------------------------------- */
+
+  /* Fine dither dot grid — the 16-bit "noise" texture. */
+  .tex-dither {
+    background-image: radial-gradient(rgba(246, 231, 211, 0.05) 1px, transparent 1.3px);
+    background-size: 8px 8px;
+  }
+
+  /* Horizontal banded gradient overlay — the retro "8-level dithered sky". */
+  .tex-bands {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      rgba(255, 226, 235, 0.022) 0px,
+      rgba(255, 226, 235, 0.022) 2px,
+      transparent 2px,
+      transparent 9px
+    );
+  }
+
+  /* Hard pixel text shadow — instant 16-bit depth on display type. */
+  .text-px {
+    text-shadow: 3px 3px 0 rgba(16, 9, 13, 0.45);
+  }
+  .text-px-sm {
+    text-shadow: 2px 2px 0 rgba(16, 9, 13, 0.45);
+  }
+
+  /* Corner rivets: four little squares capping a 2px border.
+     Color via: class="[--cap:theme('colors.eepy.sage')]" */
+  .pixel-caps {
+    position: relative;
+  }
+  .pixel-caps::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    z-index: 1;
+    pointer-events: none;
+    background:
+      linear-gradient(var(--cap) 0 0) 0 0 / 7px 7px no-repeat,
+      linear-gradient(var(--cap) 0 0) 100% 0 / 7px 7px no-repeat,
+      linear-gradient(var(--cap) 0 0) 0 100% / 7px 7px no-repeat,
+      linear-gradient(var(--cap) 0 0) 100% 100% / 7px 7px no-repeat;
+  }
+
+  /* Stepped (non-smooth) hover lift for cards. */
+  .lift {
+    transition: transform 90ms steps(2), border-color 120ms, box-shadow 90ms steps(2);
+  }
+  .lift:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 7px 0 0 var(--px-shadow);
+  }
 }

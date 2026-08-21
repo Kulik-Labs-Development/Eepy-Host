@@ -161,47 +161,48 @@ export default function ServersPage() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 max-w-6xl mx-auto">
       <header className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-2">
         <div>
-          <h2 className="text-2xl sm:text-3xl font-bold font-console text-white">MCP Server Engine</h2>
-          <p className="text-gray-500 font-console text-sm mt-1 flex items-center gap-1">
-            <ShieldCheck size={14} className="text-eepy-mint" />
+          <h2 className="font-pixel font-bold text-2xl sm:text-3xl text-ink text-px-sm">MCP Server Engine</h2>
+          <p className="text-ink-dim font-body text-sm mt-1 flex items-center gap-1.5">
+            <ShieldCheck size={14} className="text-eepy-sage shrink-0" />
             Admin-approved integrations. Credentials encrypted at rest.
           </p>
         </div>
         <button
           onClick={refresh}
-          className="px-4 py-2 bg-void border border-void-border rounded-xl hover:bg-void-border transition-all flex items-center gap-2 font-console text-sm shrink-0 self-start sm:self-auto"
+          className="btn btn-ghost px-4 py-2 text-sm shrink-0 self-start sm:self-auto"
         >
           <PlugZap size={16} /> Refresh
         </button>
       </header>
 
       {error && (
-        <div className="p-4 bg-void-surface border-l-2 border-red-500 rounded text-sm text-red-400 flex items-center justify-between">
+        <div className="p-4 bg-eepy-ember/10 border-2 border-eepy-ember/50 text-eepy-ember text-sm font-body flex items-center justify-between">
           <span>{error}</span>
-          <button onClick={refresh} className="text-gray-400 hover:text-white text-xs underline">
+          <button onClick={refresh} className="text-ink-soft hover:text-ink text-xs underline font-body">
             Retry
           </button>
         </div>
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-24 text-gray-500">
-          <Loader2 className="animate-spin mr-2" size={20} /> Loading integrations...
+        <div className="flex items-center justify-center py-24 text-ink-faint">
+          <Loader2 className="animate-spin mr-3" size={20} />
+          <span className="font-pixel font-bold">Loading integrations...</span>
         </div>
       ) : (
         <>
           {/* Active servers (primary, at top) */}
-          <section className="p-4 sm:p-6 md:p-8 bg-void-surface/30 border border-void-border rounded-eepy backdrop-blur-sm">
-            <h3 className="text-xl font-bold font-console mb-6 flex items-center gap-2">
-              <Server size={20} className="text-eepy-mint" /> Your Active Servers
+          <section className="panel pixel-caps p-4 sm:p-6 md:p-8 [--cap:theme('colors.eepy.sage')]">
+            <h3 className="font-pixel font-bold text-xl mb-6 flex items-center gap-2.5 text-ink">
+              <Server size={20} className="text-eepy-sage" /> Your Active Servers
             </h3>
             {configs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center space-y-2 border-2 border-dashed border-void-border rounded-xl">
-                <p className="text-gray-600 font-console text-sm italic">No servers connected yet.</p>
-                <p className="text-gray-700 font-console text-xs">Pick one from the integration library below to begin.</p>
+              <div className="flex flex-col items-center justify-center py-12 text-center space-y-2 border-2 border-dashed border-night-border">
+                <p className="text-ink-faint font-body text-sm italic">No servers connected yet.</p>
+                <p className="text-ink-dim font-body text-xs">Pick one from the integration library below to begin.</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -209,17 +210,17 @@ export default function ServersPage() {
                   const result = testResults[config.id];
                   const isTemplate = templates.find((t) => t.id === config.template_name);
                   return (
-                    <div key={config.id} className="p-4 sm:p-5 bg-void border border-void-border rounded-xl">
+                    <div key={config.id} className="card p-4 sm:p-5">
                       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-3">
                         <div className="flex items-center gap-3 min-w-0">
-                          <div className={`p-2 rounded-lg shrink-0 ${config.is_active ? 'bg-eepy-mint/10 text-eepy-mint' : 'bg-void border border-void-border text-gray-500'}`}>
+                          <div className={`well p-2 shrink-0 ${config.is_active ? 'text-eepy-sage' : 'text-ink-dim'}`}>
                             {config.is_active ? <Wifi size={18} /> : <WifiOff size={18} />}
                           </div>
                           <div className="min-w-0">
-                            <p className="font-console text-white font-bold truncate">
+                            <p className="font-pixel font-bold text-ink truncate">
                               {isTemplate?.name || config.name_display || config.template_name}
                             </p>
-                            <p className="text-xs text-gray-500 font-console truncate">
+                            <p className="text-[13px] text-ink-dim font-console truncate">
                               {config.template_name}
                               {config.last_used_at ? ` · last used ${new Date(config.last_used_at).toLocaleDateString()}` : ' · never used'}
                             </p>
@@ -229,13 +230,13 @@ export default function ServersPage() {
                           <button
                             onClick={() => runTest(config.template_name, config.id)}
                             disabled={testingId === config.id}
-                            className="px-3 py-2 bg-void border border-void-border rounded-lg text-xs font-console hover:bg-void-border transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                            className="btn btn-ghost px-3 py-2 text-xs flex items-center gap-1.5"
                           >
                             <FlaskConical size={14} /> {testingId === config.id ? 'Testing...' : 'Run Live Test'}
                           </button>
                           <button
                             onClick={() => disconnect(config.template_name, config.id)}
-                            className="p-2 border border-void-border rounded-lg hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                            className="btn-icon"
                             title="Disconnect"
                           >
                             <Trash2 size={16} />
@@ -244,25 +245,27 @@ export default function ServersPage() {
                       </div>
 
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-xs font-console text-gray-500 flex items-center gap-1 shrink-0">
+                        <span className="text-ink-dim flex items-center gap-1 shrink-0">
                           <ExternalLink size={13} />
                         </span>
-                        <code className="flex-1 text-xs bg-void border border-void-border rounded px-3 py-2 text-eepy-mint break-all">
+                        <code className="well flex-1 text-[15px] px-3 py-2 text-eepy-sage break-all font-console leading-snug">
                           {typeof window !== 'undefined' ? `${window.location.origin}${proxyUrl(config.template_name)}` : proxyUrl(config.template_name)}
                         </code>
                         <button
                           onClick={() => copyUrl(config.template_name, config.id)}
-                          className="p-2 border border-void-border rounded-lg hover:bg-void-border transition-colors"
+                          className="btn-icon"
                           title="Copy proxy URL"
                         >
-                          {copiedId === config.id ? <Check size={16} className="text-eepy-mint" /> : <Copy size={16} />}
+                          {copiedId === config.id ? <Check size={16} className="text-eepy-sage" /> : <Copy size={16} />}
                         </button>
                       </div>
 
                       {result && (
                         <p
-                          className={`text-xs mt-3 p-2.5 rounded border-l-2 bg-void ${
-                            result.status === 'ok' ? 'text-eepy-mint border-eepy-mint' : 'text-red-400 border-red-500'
+                          className={`text-sm mt-3 p-2.5 font-body border-l-4 ${
+                            result.status === 'ok'
+                              ? 'text-eepy-sage border-eepy-sage bg-eepy-sage/5'
+                              : 'text-eepy-ember border-eepy-ember bg-eepy-ember/5'
                           }`}
                         >
                           {result.detail}
@@ -278,30 +281,30 @@ export default function ServersPage() {
           {/* Integration Library (browsable catalog, filtered) */}
           <section>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-              <h3 className="text-xl font-bold font-console flex items-center gap-2">
-                <PlugZap size={20} className="text-eepy-lavender" /> Integration Library
-                <span className="text-xs font-normal text-gray-600">({filteredTemplates.length})</span>
+              <h3 className="font-pixel font-bold text-xl flex items-center gap-2.5 text-ink">
+                <PlugZap size={20} className="text-eepy-lilac" /> Integration Library
+                <span className="text-xs font-normal text-ink-dim font-body">({filteredTemplates.length})</span>
               </h3>
               {templates.length > 0 && (
-                <div className="relative">
-                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                <div className="relative w-full sm:w-72">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-dim" />
                   <input
                     type="text"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Search integrations..."
-                    className="w-full sm:w-72 pl-9 pr-3 py-2 bg-void border border-void-border rounded-lg text-sm text-white font-console placeholder:text-gray-600 focus:outline-none focus:border-eepy-lavender transition-colors"
+                    className="input-pixel pl-9 py-2.5 text-sm"
                   />
                 </div>
               )}
             </div>
             {templates.length === 0 ? (
-              <div className="p-8 bg-void-surface/30 border border-void-border rounded-eepy text-center text-gray-600 font-console text-sm italic">
+              <div className="panel p-8 text-center text-ink-dim font-body text-sm italic">
                 No approved integrations yet. Check back soon.
               </div>
             ) : filteredTemplates.length === 0 ? (
-              <div className="p-8 bg-void-surface/30 border border-void-border rounded-eepy text-center text-gray-600 font-console text-sm italic">
-                No integrations match “{search}”.
+              <div className="panel p-8 text-center text-ink-dim font-body text-sm italic">
+                No integrations match &ldquo;{search}&rdquo;.
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
@@ -310,28 +313,26 @@ export default function ServersPage() {
                   return (
                     <div
                       key={template.id}
-                      className="p-6 bg-void-surface border-t-4 border-eepy-lavender border-x border-b border-void-border rounded-eepy group hover:scale-[1.02] transition-all shadow-xl flex flex-col"
+                      className="panel pixel-caps lift p-6 [--cap:theme('colors.eepy.blush')] hover:border-eepy-blush/60 flex flex-col"
                     >
                       <div className="flex justify-between items-start mb-4">
-                        <div className="p-3 bg-void rounded-lg text-gray-400 group-hover:text-white transition-colors">
-                          <PlugZap size={24} />
+                        <div className="well p-3 text-ink-faint">
+                          <PlugZap size={22} />
                         </div>
                         {template.config_schema?.category && (
-                          <span className="px-2 py-1 bg-void border border-void-border text-[10px] font-console text-gray-500 rounded uppercase tracking-tighter">
-                            {template.config_schema.category}
-                          </span>
+                          <span className="chip">{template.config_schema.category}</span>
                         )}
                       </div>
-                      <h4 className="text-lg font-bold font-console mb-2 text-eepy-mint">{template.name}</h4>
-                      <p className="text-gray-500 text-sm mb-6 leading-relaxed flex-1">{template.description}</p>
+                      <h4 className="font-pixel font-bold text-lg mb-2 text-eepy-sage">{template.name}</h4>
+                      <p className="text-ink-faint font-body text-sm mb-6 leading-relaxed flex-1">{template.description}</p>
                       {isConnected ? (
-                        <div className="w-full py-2 bg-void border border-eepy-mint rounded-lg text-xs font-console text-eepy-mint flex items-center justify-center gap-2">
+                        <div className="w-full chip chip-sage justify-center py-2">
                           <Check size={14} /> Connected
                         </div>
                       ) : (
                         <button
                           onClick={() => setWizardTemplate(template)}
-                          className="w-full py-2 bg-eepy-lavender text-void rounded-lg text-xs font-console font-bold hover:bg-opacity-90 transition-all"
+                          className="btn btn-blush w-full py-2.5 text-sm"
                         >
                           Connect
                         </button>

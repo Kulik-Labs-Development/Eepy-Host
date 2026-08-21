@@ -1,93 +1,103 @@
 import React from 'react';
 import Link from 'next/link';
-import { Cloud, Moon, Zap, Sparkles, Globe, ShieldCheck } from 'lucide-react';
+import { Zap, Sparkles, Globe, ShieldCheck } from 'lucide-react';
+import PixelMoon from '../src/components/PixelMoon';
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen flex flex-col items-center p-6 relative overflow-hidden bg-void">
-      {/* Background Decorative Glows - Enhanced Visual Flare */}
-      <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-eepy-lavender/10 blur-[120px] rounded-full animate-pulse" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-eepy-mint/10 blur-[120px] rounded-full" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[80%] h-[80%] bg-eepy-peach/5 blur-[150px] rounded-full" />
-
+    <div className="min-h-screen flex flex-col items-center p-6 relative overflow-hidden">
       {/* Top Navigation */}
-      <nav className="w-full max-w-6xl flex justify-end p-6 z-20">
-        <Link 
-          href="/auth" 
-          className="px-6 py-2 bg-void-surface border border-void-border text-white rounded-full hover:border-eepy-lavender transition-all font-console text-sm backdrop-blur-md"
-        >
-          Log In
+      <nav className="w-full max-w-6xl flex items-center justify-between p-4 z-20">
+        <div className="flex items-center gap-3">
+          <PixelMoon size={40} />
+          <span className="font-pixel font-bold text-xl tracking-tight text-ink text-px-sm">
+            Eepy <span className="text-eepy-blush">Host</span>
+          </span>
+        </div>
+        <Link href="/auth">
+          <button className="btn btn-ghost px-5 py-2 text-sm">Log In</button>
         </Link>
       </nav>
 
-      <main className="z-10 text-center space-y-12 max-w-4xl flex-grow flex flex-col justify-center py-12">
-        <div className="flex justify-center mb-6">
-          <div className="p-4 bg-void-surface border border-void-border rounded-eepy shadow-[0_0_30px_rgba(195,177,225,0.3)] relative group">
-            <Moon size={48} className="text-eepy-lavender animate-pulse" />
-            {/* Tiny decorative sparks */}
-            <Sparkles size={16} className="absolute -top-2 -right-2 text-eepy-peach animate-bounce" />
-            <Sparkles size={16} className="absolute -bottom-2 -left-2 text-eepy-mint animate-pulse" />
+      <main className="z-10 text-center space-y-12 max-w-4xl flex-grow flex flex-col justify-center py-12 w-full">
+        {/* Hero mascot */}
+        <div className="flex justify-center mb-2">
+          <div className="relative panel pixel-caps p-8 sm:p-10 [--cap:theme('colors.eepy.pink')]">
+            <div className="relative inline-block">
+              <PixelMoon size={128} />
+              <span className="absolute -right-7 top-4 font-pixel font-bold text-eepy-lilac text-lg animate-float-z">z</span>
+              <span className="absolute -right-12 top-0 font-pixel font-bold text-eepy-lilac/80 text-xl animate-float-z" style={{ animationDelay: '0.9s' }}>z</span>
+              <span className="absolute -right-16 top-[-14px] font-pixel font-bold text-eepy-lilac/60 text-2xl animate-float-z" style={{ animationDelay: '1.8s' }}>z</span>
+            </div>
           </div>
         </div>
 
-        <div className="space-y-4 sm:space-y-6">
-          <h1 className="text-5xl sm:text-6xl md:text-7xl font-bold tracking-tight leading-tight">
-            Eepy <span className="text-eepy-lavender italic">Host</span>
+        <div className="space-y-5 sm:space-y-6">
+          <h1 className="font-pixel font-bold text-5xl sm:text-6xl md:text-7xl tracking-tight leading-tight text-px">
+            Eepy <span className="text-eepy-blush">Host</span>
           </h1>
-          <p className="text-gray-400 text-lg sm:text-2xl max-w-2xl mx-auto leading-relaxed font-light">
-            The ultimate playground for the <span className="text-eepy-peach font-semibold">Vibe Coder</span>. 
-            Host your MCP servers in a space designed for focus and flow.
+          <p className="text-ink-soft text-lg sm:text-2xl max-w-2xl mx-auto leading-relaxed font-medium">
+            The cozy corner of the internet for the{' '}
+            <span className="text-eepy-pink font-bold">Vibe Coder</span>. Host your MCP
+            servers in a space built for focus, flow, and a good long nap.
           </p>
         </div>
 
-        <div className="flex gap-4 justify-center pt-4">
+        <div className="flex gap-4 justify-center pt-2 flex-wrap">
           <Link href="/auth">
-            <button className="px-8 sm:px-10 py-3.5 sm:py-4 bg-eepy-lavender text-void font-bold rounded-full hover:bg-opacity-90 transition-all transform hover:scale-105 shadow-[0_0_20px_rgba(195,177,225,0.5)] animate-gradient-border font-console text-sm sm:text-base">
-              Get Started
-            </button>
+            <button className="btn btn-blush px-10 py-3.5 text-base shadow-glow-blush">Get Started</button>
+          </Link>
+          <Link href="/auth">
+            <button className="btn btn-ghost px-8 py-3.5 text-base">Log In</button>
           </Link>
         </div>
 
-        {/* Core Feature Highlight */}
-        <div className="mt-12 sm:mt-16 p-5 sm:p-8 bg-void-surface/30 border border-void-border rounded-eepy backdrop-blur-sm max-w-2xl mx-auto space-y-4 relative overflow-hidden group">
-          <div className="absolute top-0 left-0 w-1 h-full bg-eepy-lavender" />
-          <div className="flex items-center gap-3 mb-2 justify-center">
-            <Globe size={20} className="text-eepy-mint" />
-            <span className="text-xs font-console uppercase tracking-widest text-gray-500">The Engine</span>
+        {/* Core Feature Highlight — a game dialog box */}
+        <div className="mt-8 sm:mt-12 panel pixel-caps p-6 sm:p-8 max-w-2xl mx-auto text-left space-y-4 [--cap:theme('colors.eepy.lilac')]">
+          <div className="flex items-center gap-3">
+            <span className="chip chip-lilac">The Engine</span>
+            <Globe size={16} className="text-eepy-sage" />
           </div>
-          <h2 className="text-lg sm:text-xl font-semibold text-white">Connecting Models to the World</h2>
-          <p className="text-gray-400 text-sm leading-relaxed">
-            Eepy Host is a powerful MCP platform that lets you pick from a curated library of 
-            <span className="text-eepy-mint font-medium"> pre-configured servers</span>. 
-            Instantly connect your AI models to real-time data, APIs, and local tools.
+          <h2 className="font-pixel font-bold text-xl sm:text-2xl text-ink">
+            Connecting Models to the World
+          </h2>
+          <p className="text-ink-faint text-sm sm:text-base leading-relaxed">
+            Eepy Host is a cozy MCP platform that lets you pick from a curated
+            library of <span className="text-eepy-sage font-semibold">pre-configured servers</span>.
+            Instantly connect your AI models to real-time data, APIs, and local tools —
+            while you rest easy.
           </p>
-          <div className="pt-4 flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs font-console text-gray-500">
-             <span className="flex items-center gap-1"><Zap size={12} /> High Performance</span>
-             <span className="flex items-center gap-1"><Moon size={12} /> Zero Friction</span>
+          <div className="pt-2 flex flex-wrap gap-x-5 gap-y-2">
+            <span className="chip"><Zap size={13} className="text-eepy-amber" /> High Performance</span>
+            <span className="chip"><Sparkles size={13} className="text-eepy-blush" /> Zero Friction</span>
           </div>
         </div>
 
-        {/* Self-Hosted Pairing Note + Privacy Highlight */}
-        <p className="text-gray-500 text-sm font-console italic max-w-md mx-auto">
-          ✨ Best paired with self-hosted LLM interfaces like <span className="text-eepy-peach">Open WebUI</span> for a <span className="text-white underline decoration-eepy-mint">fully private stack</span>. Your data, your vibes, zero leaks.
+        {/* Self-Hosted Pairing Note */}
+        <p className="text-ink-dim text-sm font-console text-[15px] max-w-lg mx-auto leading-relaxed">
+          Best paired with self-hosted LLM interfaces like{' '}
+          <span className="text-eepy-amber">Open WebUI</span> for a{' '}
+          <span className="text-ink-soft underline decoration-eepy-sage decoration-2 underline-offset-4">fully private stack</span>.
+          Your data, your vibes, zero leaks.
         </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mt-12 sm:mt-20 pb-12">
+        {/* Feature cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mt-8 sm:mt-12 pb-8 w-full max-w-4xl mx-auto">
           {[
-            { icon: <Zap size={24} />, title: "Fast", desc: "Streamable HTTP endpoints." },
-            { icon: <ShieldCheck size={24} />, title: "Private", desc: "Fully self-hosted, total data sovereignty." },
-            { icon: <Moon size={24} />, title: "Cozy", desc: "A UI that doesn't scream at you." },
-          ].map((feature, i) => (
-            <div key={i} className="p-6 bg-void-surface/50 border border-void-border rounded-eepy backdrop-blur-sm hover:border-eepy-lavender/50 transition-colors group">
-              <div className="text-eepy-lavender mb-3 group-hover:scale-110 transition-transform">{feature.icon}</div>
-              <h3 className="font-semibold text-lg mb-2">{feature.title}</h3>
-              <p className="text-gray-500 text-sm">{feature.desc}</p>
+            { icon: <Zap size={22} />, tint: 'text-eepy-amber', cap: "[--cap:theme('colors.eepy.amber')]", title: 'Fast', desc: 'Streamable HTTP endpoints that keep up with your imagination.' },
+            { icon: <ShieldCheck size={22} />, tint: 'text-eepy-sage', cap: "[--cap:theme('colors.eepy.sage')]", title: 'Private', desc: 'Fully self-hosted. Total data sovereignty, encrypted at rest.' },
+            { icon: <Sparkles size={22} />, tint: 'text-eepy-blush', cap: "[--cap:theme('colors.eepy.pink')]", title: 'Cozy', desc: 'A warm little UI that never screams at you. Just soft beeps.' },
+          ].map((feature) => (
+            <div key={feature.title} className={`panel pixel-caps lift p-6 text-left ${feature.cap}`}>
+              <div className={`well inline-flex p-3 mb-4 ${feature.tint}`}>{feature.icon}</div>
+              <h3 className="font-pixel font-bold text-lg mb-2 text-ink">{feature.title}</h3>
+              <p className="text-ink-faint text-sm leading-relaxed">{feature.desc}</p>
             </div>
           ))}
         </div>
       </main>
 
-      <footer className="w-full py-8 text-center text-gray-600 text-sm font-console">
+      <footer className="w-full py-8 text-center text-ink-dim font-console text-[15px]">
         &copy; 2026 Eepy Host &bull; Stay cozy.
       </footer>
     </div>

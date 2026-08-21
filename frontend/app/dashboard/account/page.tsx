@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { UserCircle, Mail, Lock, ShieldCheck, Camera, CreditCard, Wallet, LogOut } from 'lucide-react';
+import { UserCircle, Mail, Lock, Camera, CreditCard, Wallet, LogOut } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
 export default function AccountPage() {
@@ -95,15 +95,15 @@ export default function AccountPage() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 max-w-6xl mx-auto">
       <header className="mb-8 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h2 className="text-2xl sm:text-3xl font-bold font-console text-white">Account Profile</h2>
-          <p className="text-gray-500 font-console text-sm mt-1 italic">Manage your identity and presence in the void.</p>
+          <h2 className="font-pixel font-bold text-2xl sm:text-3xl text-ink text-px-sm">Account Profile</h2>
+          <p className="text-ink-dim font-body text-sm mt-1">Manage your identity and presence in the night.</p>
         </div>
-        <button 
+        <button
           onClick={logout}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl text-gray-400 hover:bg-red-500/10 hover:text-red-400 transition-all font-console text-xs border border-void-border shrink-0 self-start sm:self-auto"
+          className="btn btn-danger px-4 py-2 text-xs shrink-0 self-start sm:self-auto"
         >
           <LogOut size={16} /> Sign Out
         </button>
@@ -111,132 +111,131 @@ export default function AccountPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Profile Sidebar */}
-        <div className="p-4 sm:p-6 md:p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl text-center space-y-6 h-fit sm:sticky sm:top-8">
+        <div className="panel pixel-caps p-4 sm:p-6 md:p-8 space-y-6 h-fit sm:sticky sm:top-8 [--cap:theme('colors.eepy.sage')] text-center">
           <div className="relative inline-block group">
-            <div className={`p-1 rounded-full border-2 transition-colors ${profileData.profilePicture ? 'border-eepy-mint' : 'border-void-border'} overflow-hidden`}>
+            <div className={`well p-1.5 ${profileData.profilePicture ? 'border-eepy-sage' : ''}`}>
               {profileData.profilePicture ? (
-                <img 
-                  src={profileData.profilePicture} 
-                  alt="Profile" 
-                  className="w-32 h-32 rounded-full object-cover" 
+                <img
+                  src={profileData.profilePicture}
+                  alt="Profile"
+                  className="w-32 h-32 object-cover"
+                  style={{ imageRendering: 'pixelated' }}
                 />
               ) : (
-                <div className="w-32 h-32 rounded-full bg-void flex items-center justify-center text-eepy-lavender">
+                <div className="w-32 h-32 bg-night-deep flex items-center justify-center text-eepy-blush">
                   <UserCircle size={64} />
                 </div>
               )}
             </div>
-            <label className="absolute bottom-2 right-2 p-2 bg-void border border-void-border rounded-full text-white cursor-pointer hover:text-eepy-mint transition-colors shadow-lg">
+            <label className="btn-icon absolute -bottom-2 -right-2 cursor-pointer" title="Change avatar">
               <Camera size={16} />
               <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} disabled={isUploading} />
             </label>
             {isUploading && (
-              <div className="absolute inset-0 bg-void/50 rounded-full flex items-center justify-center backdrop-blur-sm">
-                <div className="w-6 h-6 border-2 border-eepy-mint border-t-transparent rounded-full animate-spin" />
+              <div className="absolute inset-0 bg-night-deep/60 flex items-center justify-center">
+                <div className="w-6 h-6 border-2 border-eepy-sage border-t-transparent animate-spin" style={{ borderRadius: '2px' }} />
               </div>
             )}
           </div>
           <div className="space-y-1">
-            <h3 className="text-xl font-bold font-console">{profileData.fullName || user?.username}</h3>
-            <p className="text-gray-500 font-console text-xs italic uppercase tracking-widest">Verified Identity</p>
+            <h3 className="font-pixel font-bold text-xl text-ink">{profileData.fullName || user?.username}</h3>
+            <p className="text-ink-dim font-console text-[13px] uppercase tracking-widest">Verified Identity</p>
           </div>
-          <div className="flex justify-center gap-2">
-            <span className="px-2 py-1 bg-void border border-void-border text-[10px] font-console text-eepy-mint rounded uppercase tracking-tighter">Vibe Coder</span>
-            <span className="px-2 py-1 bg-void border border-void-border text-[10px] font-console text-gray-600 rounded uppercase tracking-tighter">Beta Tester</span>
+          <div className="flex justify-center gap-2 flex-wrap">
+            <span className="chip chip-blush">Vibe Coder</span>
+            <span className="chip">Beta Tester</span>
           </div>
         </div>
 
         {/* Settings Content */}
         <div className="lg:col-span-2 space-y-8">
           {/* Personal Information Section */}
-          <div className="p-4 sm:p-6 md:p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl space-y-6 backdrop-blur-sm relative overflow-hidden group">
-            <div className="absolute top-0 left-0 w-1 h-full bg-eepy-lavender" />
-            <h3 className="text-lg font-bold font-console text-eepy-lavender mb-4 flex items-center gap-2">
+          <div className="panel pixel-caps p-4 sm:p-6 md:p-8 space-y-6 [--cap:theme('colors.eepy.blush')] relative overflow-hidden">
+            <div className="absolute left-0 top-0 w-1.5 h-full bg-eepy-blush" />
+            <h3 className="font-pixel font-bold text-lg text-eepy-blush mb-4 flex items-center gap-2">
               <UserCircle size={18} /> Personal Information
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
               <div className="space-y-2">
-                <label className="text-[10px] font-console uppercase text-gray-500 ml-1">Full Name</label>
-                <div className="relative">
-                  <input 
-                    type="text" 
-                    placeholder="Enter your full name" 
-                    className="w-full px-4 py-3 bg-void border border-void-border rounded-xl font-console text-sm focus:border-eepy-lavender transition-colors outline-none"
-                    value={profileData.fullName}
-                    onChange={(e) => setProfileData({...profileData, fullName: e.target.value})}
-                  />
-                </div>
+                <label className="label-pixel">Full Name</label>
+                <input
+                  type="text"
+                  placeholder="Enter your full name"
+                  className="input-pixel"
+                  value={profileData.fullName}
+                  onChange={(e) => setProfileData({ ...profileData, fullName: e.target.value })}
+                />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-console uppercase text-gray-500 ml-1">Email Address</label>
+                <label className="label-pixel">Email Address</label>
                 <div className="relative">
-                  <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
-                  <input readOnly value={profileData.email} className="w-full pl-10 pr-4 py-3 bg-void border border-void-border rounded-xl font-console text-sm text-gray-500 cursor-not-allowed outline-none" />
+                  <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-dim" />
+                  <input readOnly value={profileData.email} className="input-pixel pl-9" />
                 </div>
               </div>
             </div>
-            <button 
+            <button
               onClick={handleSaveChanges}
               disabled={isSaving}
-              className={`px-6 py-2 bg-eepy-lavender text-void font-bold rounded-lg font-console text-xs transition-all shadow-[0_0_15px_rgba(195,177,225,0.3)] ${isSaving ? 'opacity-50 cursor-not-allowed' : 'hover:bg-opacity-90'}`}
+              className="btn btn-blush px-6 py-2.5 text-xs"
             >
               {isSaving ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
 
           {/* Security Section */}
-          <div className="p-4 sm:p-6 md:p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl space-y-6 backdrop-blur-sm relative overflow-hidden group">
-            <div className="absolute top-0 left-0 w-1 h-full bg-eepy-peach" />
-            <h3 className="text-lg font-bold font-console text-eepy-peach mb-4 flex items-center gap-2">
+          <div className="panel pixel-caps p-4 sm:p-6 md:p-8 space-y-6 [--cap:theme('colors.eepy.amber')] relative overflow-hidden">
+            <div className="absolute left-0 top-0 w-1.5 h-full bg-eepy-amber" />
+            <h3 className="font-pixel font-bold text-lg text-eepy-amber mb-4 flex items-center gap-2">
               <Lock size={18} /> Security & Access
             </h3>
-            <div className="space-y-4">
-              <div className="relative space-y-2">
-                <label className="text-[10px] font-console uppercase text-gray-500 ml-1">Current Password</label>
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <label className="label-pixel">Current Password</label>
                 <div className="relative">
-                  <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
-                  <input type="password" placeholder="••••••••" className="w-full pl-10 pr-4 py-3 bg-void border border-void-border rounded-xl font-console text-sm focus:border-eepy-peach transition-colors outline-none" />
+                  <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-dim" />
+                  <input type="password" placeholder="••••••••" className="input-pixel pl-9" />
                 </div>
               </div>
-              <div className="relative space-y-2">
-                <label className="text-[10px] font-console uppercase text-gray-500 ml-1">New Password</label>
+              <div className="space-y-2">
+                <label className="label-pixel">New Password</label>
                 <div className="relative">
-                  <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
-                  <input type="password" placeholder="Enter new password" className="w-full pl-10 pr-4 py-3 bg-void border border-void-border rounded-xl font-console text-sm focus:border-eepy-peach transition-colors outline-none" />
+                  <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-dim" />
+                  <input type="password" placeholder="Enter new password" className="input-pixel pl-9" />
                 </div>
               </div>
-              <button className="px-6 py-2 bg-eepy-peach text-void font-bold rounded-lg font-console text-xs hover:bg-opacity-90 transition-all shadow-[0_0_15px_rgba(250,218,221,0.3)]">
+              <button className="btn btn-amber px-6 py-2.5 text-xs">
                 Update Password
               </button>
             </div>
           </div>
 
           {/* Billing & Payments Placeholder */}
-          <div className="p-4 sm:p-6 md:p-8 bg-void-surface border border-void-border rounded-eepy shadow-xl space-y-6 backdrop-blur-sm relative overflow-hidden group">
-            <div className="absolute top-0 left-0 w-1 h-full bg-eepy-mint" />
+          <div className="panel pixel-caps p-4 sm:p-6 md:p-8 space-y-6 [--cap:theme('colors.eepy.sage')] relative overflow-hidden">
+            <div className="absolute left-0 top-0 w-1.5 h-full bg-eepy-sage" />
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-4">
-              <h3 className="text-lg font-bold font-console text-eepy-mint flex items-center gap-2">
+              <h3 className="font-pixel font-bold text-lg text-eepy-sage flex items-center gap-2">
                 <Wallet size={18} /> Billing & Subscription
               </h3>
-              <span className="px-2 py-1 bg-void border border-void-border text-[10px] font-console text-gray-500 rounded uppercase">Plan: Free Tier</span>
+              <span className="chip">Plan: Free Tier</span>
             </div>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="p-4 bg-void border border-void-border rounded-xl space-y-3 group hover:border-eepy-mint transition-colors">
-                <div className="flex items-center gap-2 text-gray-400 font-console text-xs">
+              <div className="card p-4 space-y-3 group hover:border-eepy-sage/70 transition-colors">
+                <div className="flex items-center gap-2 text-ink-faint font-console text-[15px]">
                   <CreditCard size={14} /> Payment Method
                 </div>
-                <p className="text-sm font-console text-gray-600 italic">No card on file.</p>
-                <button className="w-full py-2 bg-void-surface border border-void-border rounded-lg text-[10px] font-console hover:bg-void-border transition-colors uppercase tracking-wider">
+                <p className="text-sm font-body text-ink-dim italic">No card on file.</p>
+                <button className="btn btn-ghost w-full py-2 text-[11px] uppercase tracking-wider">
                   Add Payment Method
                 </button>
               </div>
-              <div className="p-4 bg-void border border-void-border rounded-xl space-y-3 group hover:border-eepy-mint transition-colors">
-                <div className="flex items-center gap-2 text-gray-400 font-console text-xs">
-                  <ShieldCheck size={14} /> Billing History
+              <div className="card p-4 space-y-3 group hover:border-eepy-sage/70 transition-colors">
+                <div className="flex items-center gap-2 text-ink-faint font-console text-[15px]">
+                  <Wallet size={14} /> Billing History
                 </div>
-                <p className="text-sm font-console text-gray-600 italic">No transactions yet.</p>
-                <button className="w-full py-2 bg-void-surface border border-void-border rounded-lg text-[10px] font-console hover:bg-void-border transition-colors uppercase tracking-wider">
+                <p className="text-sm font-body text-ink-dim italic">No transactions yet.</p>
+                <button className="btn btn-ghost w-full py-2 text-[11px] uppercase tracking-wider">
                   View Invoices
                 </button>
               </div>

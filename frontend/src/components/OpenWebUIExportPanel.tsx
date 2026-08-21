@@ -113,30 +113,30 @@ export default function OpenWebUIPanel({ onClose }: Props) {
   const newestKey = keys.find((k) => k.key);
 
   return (
-    <div className="fixed inset-0 bg-black/75 flex items-end sm:items-center justify-center sm:p-4 z-[999] backdrop-blur-sm">
-      <div className="bg-void-surface border-2 border-eepy-lavender rounded-t-2xl sm:rounded-xl p-4 sm:p-6 max-w-2xl w-full relative shadow-2xl max-h-[92vh] overflow-y-auto">
-        <header className="flex items-center justify-between mb-5 pb-4 border-b border-void-border gap-3">
+    <div className="fixed inset-0 bg-night-deep/80 flex items-end sm:items-center justify-center sm:p-4 z-[999] backdrop-blur-sm">
+      <div className="panel pixel-caps border-eepy-lilac/60 p-4 sm:p-6 max-w-2xl w-full relative shadow-pixel-lg max-h-[92vh] overflow-y-auto [--cap:theme('colors.eepy.lilac')]">
+        <header className="flex items-center justify-between mb-5 pb-4 border-b-2 border-night-line gap-3">
           <div>
-            <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
-              <Plug className="text-eepy-mint" size={18} /> Connect Open WebUI to Eepy
+            <h2 className="font-pixel font-bold text-base sm:text-lg flex items-center gap-2 text-ink">
+              <Plug className="text-eepy-sage" size={18} /> Connect Open WebUI to Eepy
             </h2>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-ink-dim mt-1.5 font-body">
               One connection. Every Eepy integration - now and in the future.
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors shrink-0 p-1">
-            <X size={20} />
+          <button onClick={onClose} className="btn-icon shrink-0" aria-label="Close">
+            <X size={16} />
           </button>
         </header>
 
         {error && (
-          <p className="text-sm text-red-400 mb-4 bg-void border-l-2 border-red-500 p-3 rounded">{error}</p>
+          <p className="text-sm text-eepy-ember mb-4 bg-eepy-ember/10 border-l-4 border-eepy-ember p-3 font-body">{error}</p>
         )}
 
         {/* Step 1 - generate / show key */}
-        <Step title="1. Create your Eepy API Key">
-          <p className="text-xs text-gray-500 mb-3 leading-relaxed">
-            This key covers <span className="text-eepy-mint">every integration you have connected</span> - and every
+        <Step title="Create your Eepy API Key" step="1">
+          <p className="text-xs text-ink-faint mb-3 leading-relaxed font-body">
+            This key covers <span className="text-eepy-sage font-semibold">every integration you have connected</span> - and every
             one you connect later. It only works on Eepy&apos;s MCP routes (never on your account or billing), and
             you can revoke it here at any time.
           </p>
@@ -144,21 +144,21 @@ export default function OpenWebUIPanel({ onClose }: Props) {
           {newestKey ? (
             <div className="mb-4">
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <span className="text-xs font-console text-gray-500 shrink-0 sm:w-auto">Shown once:</span>
+                <span className="text-[13px] font-console text-ink-dim shrink-0 sm:w-auto">Shown once:</span>
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <code className="flex-1 min-w-0 text-sm bg-void border border-eepy-mint/40 rounded px-3 py-2 text-eepy-mint break-all">
+                  <code className="well flex-1 min-w-0 text-[15px] px-3 py-2 text-eepy-sage break-all font-console leading-snug">
                     {newestKey.key}
                   </code>
                   <button
                     onClick={() => copy(newestKey.key!, 'newkey')}
-                    className="p-2 border border-void-border rounded-lg hover:bg-void-border transition-colors shrink-0"
+                    className="btn-icon shrink-0"
                     title="Copy key"
                   >
-                    {copied === 'newkey' ? <Check size={16} className="text-eepy-mint" /> : <Copy size={16} />}
+                    {copied === 'newkey' ? <Check size={15} className="text-eepy-sage" /> : <Copy size={15} />}
                   </button>
                 </div>
               </div>
-              <p className="text-xs text-amber-400/90 flex items-center gap-1 mt-2">
+              <p className="text-xs text-eepy-amber flex items-center gap-1.5 mt-2 font-body">
                 <ShieldAlert size={13} /> Copy it now - it is not stored in plain text and cannot be retrieved again.
               </p>
             </div>
@@ -166,7 +166,7 @@ export default function OpenWebUIPanel({ onClose }: Props) {
             <button
               onClick={generate}
               disabled={generating || (loading && keys.length > 0)}
-              className="w-full py-2.5 bg-eepy-lavender text-void rounded-lg text-xs font-console font-bold hover:bg-opacity-90 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              className="btn btn-blush w-full py-2.5 text-xs flex items-center justify-center gap-2"
             >
               {generating ? (
                 <>
@@ -183,33 +183,33 @@ export default function OpenWebUIPanel({ onClose }: Props) {
           {/* Existing keys */}
           {keys.length > 0 && (
             <div className="mt-4 space-y-2">
-              <p className="text-xs font-console text-gray-500">Your Eepy API keys</p>
+              <p className="text-[13px] font-console text-ink-dim">Your Eepy API keys</p>
               {keys.map((k) => (
                 <div
                   key={k.id}
-                  className="flex items-center justify-between bg-void border border-void-border rounded-lg px-3 py-2"
+                  className="card flex items-center justify-between px-3 py-2 gap-3"
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
                     <span
-                      className={`w-2 h-2 rounded-full ${k.is_active ? 'bg-eepy-mint' : 'bg-gray-600'}`}
+                      className={`led ${k.is_active ? 'bg-eepy-sage' : 'bg-ink-dim'}`}
                       title={k.is_active ? 'Active' : 'Revoked'}
                     />
-                    <code className="text-xs text-gray-400 font-console">
+                    <code className="text-[15px] text-ink-faint font-console truncate">
                       {k.key_prefix}
-                      <span className="text-gray-600">…</span>
+                      <span className="text-ink-dim">…</span>
                     </code>
-                    <span className="text-[10px] font-console text-gray-600">{k.name}</span>
+                    <span className="text-[11px] font-body text-ink-dim">{k.name}</span>
                   </div>
                   {k.is_active ? (
                     <button
                       onClick={() => revoke(k.id)}
-                      className="text-[11px] font-console text-gray-500 hover:text-red-400 transition-colors flex items-center gap-1"
+                      className="text-[11px] font-body font-semibold text-ink-dim hover:text-eepy-ember transition-colors flex items-center gap-1 shrink-0"
                       title="Revoke key"
                     >
                       <Trash2 size={13} /> Revoke
                     </button>
                   ) : (
-                    <span className="text-[10px] font-console text-gray-600">revoked</span>
+                    <span className="text-[11px] font-body text-ink-dim shrink-0">revoked</span>
                   )}
                 </div>
               ))}
@@ -218,37 +218,37 @@ export default function OpenWebUIPanel({ onClose }: Props) {
         </Step>
 
         {/* Step 2 - spec URL */}
-        <Step title="2. Copy the Eepy OpenAPI URL">
+        <Step title="Copy the Eepy OpenAPI URL" step="2">
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 min-w-0">
-            <span className="text-xs font-console text-gray-500 shrink-0">OpenAPI:</span>
+            <span className="text-[13px] font-console text-ink-dim shrink-0">OpenAPI:</span>
             <div className="flex items-center gap-2 min-w-0 flex-1">
-              <code className="flex-1 min-w-0 text-xs bg-void border border-void-border rounded px-3 py-2 text-eepy-lavender break-all">
+              <code className="well flex-1 min-w-0 text-[15px] px-3 py-2 text-eepy-lilac break-all font-console leading-snug">
                 {specUrl}
               </code>
               <button
                 onClick={() => copy(specUrl, 'spec')}
-                className="p-2 border border-void-border rounded-lg hover:bg-void-border transition-colors shrink-0"
+                className="btn-icon shrink-0"
                 title="Copy spec URL"
               >
-                {copied === 'spec' ? <Check size={16} className="text-eepy-mint" /> : <Copy size={16} />}
+                {copied === 'spec' ? <Check size={15} className="text-eepy-sage" /> : <Copy size={15} />}
               </button>
             </div>
           </div>
         </Step>
 
         {/* Step 3 - instructions */}
-        <Step title="3. In Open WebUI, add the Tool Server">
-          <ol className="text-xs text-gray-400 space-y-2 list-decimal list-inside leading-relaxed">
+        <Step title="In Open WebUI, add the Tool Server" step="3">
+          <ol className="text-[13px] text-ink-soft space-y-2 list-decimal list-inside leading-relaxed font-body">
             <li>
-              Go to <span className="text-white font-medium">Settings → Tools</span> (or the Tools page) and choose{' '}
-              <span className="text-white font-medium">Add New → Tool Server</span> (external / OpenAPI).
+              Go to <span className="text-ink font-bold">Settings → Tools</span> (or the Tools page) and choose{' '}
+              <span className="text-ink font-bold">Add New → Tool Server</span> (external / OpenAPI).
             </li>
             <li>
-              Set the <span className="text-white font-medium">URL</span> to the Eepy OpenAPI URL from step 2. Open
+              Set the <span className="text-ink font-bold">URL</span> to the Eepy OpenAPI URL from step 2. Open
               WebUI fetches it and lists every Eepy tool automatically.
             </li>
             <li>
-              For <span className="text-white font-medium">authentication</span>, select <span className="text-eepy-mint">Bearer</span>{' '}
+              For <span className="text-ink font-bold">authentication</span>, select <span className="text-eepy-sage font-bold">Bearer</span>{' '}
               and paste the Eepy API Key from step 1 as the token.
             </li>
             <li>
@@ -256,7 +256,7 @@ export default function OpenWebUIPanel({ onClose }: Props) {
               (Slack, Notion, …) their tools show up here automatically. No re-import, no second connection.
             </li>
           </ol>
-          <p className="text-[11px] text-gray-600 mt-3 leading-relaxed">
+          <p className="text-[11px] text-ink-dim mt-3 leading-relaxed font-body">
             Security note: the key only authenticates MCP tool calls for your account - it cannot access your Eepy
             profile, billing, or other areas - and every tool call still requires that you have that integration
             connected. Revoke the key here at any time to cut access instantly.
@@ -267,10 +267,15 @@ export default function OpenWebUIPanel({ onClose }: Props) {
   );
 }
 
-function Step({ title, children }: { title: string; children: React.ReactNode }) {
+function Step({ title, step, children }: { title: string; step: string; children: React.ReactNode }) {
   return (
     <div className="mb-6">
-      <h3 className="text-sm font-bold font-console text-eepy-peach mb-3">{title}</h3>
+      <h3 className="font-pixel font-bold text-sm mb-3 flex items-center gap-2.5 text-ink">
+        <span className="well w-6 h-6 inline-flex items-center justify-center font-pixel text-[12px] text-eepy-blush shrink-0">
+          {step}
+        </span>
+        {title}
+      </h3>
       {children}
     </div>
   );

@@ -89,18 +89,18 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
   };
 
   return (
-    <div className="fixed inset-0 bg-black/75 flex items-end sm:items-center justify-center sm:p-4 z-[999] backdrop-blur-sm">
-      <div className="bg-void-surface border-2 border-eepy-lavender rounded-t-2xl sm:rounded-xl p-4 sm:p-6 max-w-md w-full relative shadow-2xl max-h-[92vh] overflow-y-auto">
-        <header className="flex items-center justify-between mb-6 pb-4 border-b border-void-border gap-3">
+    <div className="fixed inset-0 bg-night-deep/80 flex items-end sm:items-center justify-center sm:p-4 z-[999] backdrop-blur-sm">
+      <div className="panel pixel-caps border-eepy-blush/70 p-4 sm:p-6 max-w-md w-full relative shadow-pixel-lg max-h-[92vh] overflow-y-auto [--cap:theme('colors.eepy.pink')]">
+        <header className="flex items-center justify-between mb-6 pb-4 border-b-2 border-night-line gap-3">
           <div className="min-w-0">
-            <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
-              <ShieldCheck className="text-eepy-mint" size={18} shrink-0 />
+            <h2 className="font-pixel font-bold text-base sm:text-lg flex items-center gap-2 text-ink">
+              <ShieldCheck className="text-eepy-sage" size={18} shrink-0 />
               <span className="truncate">Connect: {templateName}</span>
             </h2>
-            <p className="text-xs text-gray-500 mt-1">Credentials are encrypted at rest (Fernet) on the server.</p>
+            <p className="text-xs text-ink-dim mt-1.5 font-body">Credentials are encrypted at rest (Fernet) on the server.</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors shrink-0 p-1">
-            <X size={20} />
+          <button onClick={onClose} className="btn-icon shrink-0" aria-label="Close">
+            <X size={16} />
           </button>
         </header>
 
@@ -108,37 +108,38 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
           <div className="space-y-4 mb-6">
             {Object.entries(properties).map(([key, prop]) => (
               <div key={key}>
-                <label className="text-sm font-medium text-eepy-peach mb-2 flex items-center gap-2">
+                <label className="label-pixel flex items-center gap-2">
                   {prop.label || key}
-                  {required.has(key) && <span className="w-2 h-2 bg-red-500 rounded-full" />}
+                  {required.has(key) && <span className="w-2 h-2 bg-eepy-ember inline-block" title="Required" />}
                 </label>
                 <div className="relative">
-                  <KeyRound size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                  <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-dim" />
                   <input
                     type={isPassword(key) && !showPasswords[key] ? 'password' : 'text'}
                     required={required.has(key)}
                     placeholder={prop.placeholder || key}
                     value={formData[key] || ''}
                     onChange={(e) => setField(key, e.target.value)}
-                    className="w-full pl-9 pr-10 py-3 bg-void border border-void-border rounded-lg focus:outline-none focus:border-eepy-lavender text-white text-sm transition-colors"
+                    className="input-pixel pl-9 pr-10"
                   />
                   {isPassword(key) && (
                     <button
                       type="button"
                       onClick={() => toggleVisibility(key)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-dim hover:text-eepy-blush transition-colors"
+                      aria-label={showPasswords[key] ? 'Hide value' : 'Show value'}
                     >
-                      {showPasswords[key] ? <EyeOff size={16} /> : <Eye size={16} />}
+                      {showPasswords[key] ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>
                   )}
                 </div>
-                {prop.help && <p className="text-xs text-gray-600 mt-1.5">{prop.help}</p>}
+                {prop.help && <p className="text-xs text-ink-dim mt-1.5 font-body">{prop.help}</p>}
               </div>
             ))}
           </div>
 
           {error && (
-            <p className="text-sm text-red-400 mb-4 bg-void border-l-2 border-red-500 p-3 rounded">
+            <p className="text-sm text-eepy-ember mb-4 bg-eepy-ember/10 border-l-4 border-eepy-ember p-3 font-body">
               {error}
             </p>
           )}
@@ -146,9 +147,7 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
           <button
             type="submit"
             disabled={loading}
-            className={`w-full py-3 bg-eepy-lavender text-void font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
-              loading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-opacity-90'
-            }`}
+            className="btn btn-blush w-full py-3"
           >
             {loading ? (
               <>
