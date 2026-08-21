@@ -45,6 +45,15 @@ services:
       # host-gateway route (extra_hosts below) - required because the backend
       # is itself in a container here.
       - EEPY_MCP_DOCKER_HOST=host.docker.internal
+      # Sidecar containment (third-party code holds the user's decrypted creds
+      # in its env): CPU/memory caps on every sidecar container. Override to
+      # match the host's budget.
+      - EEPY_MCP_SIDECAR_MEM_LIMIT=${EEPY_MCP_SIDECAR_MEM_LIMIT:-512m}
+      - EEPY_MCP_SIDECAR_CPU_LIMIT=${EEPY_MCP_SIDECAR_CPU_LIMIT:-1.0}
+      # Optional: unique per-backend-process id for the sidecar orphan sweep.
+      # Leave unset (default) and each process self-identifies with a uuid.
+      # Only set it if your orchestrator already guarantees uniqueness.
+      - EEPY_NODE_ID=${EEPY_NODE_ID:-}
     # host.docker.internal -> Docker host, so the backend can dial the
     # loopback-bound sidecar ports (EEPY_MCP_DOCKER_HOST above).
     extra_hosts:

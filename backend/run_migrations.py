@@ -121,6 +121,7 @@ def run_migration() -> None:
                 container_id VARCHAR,
                 image VARCHAR(255),
                 name VARCHAR(255),
+                node_id VARCHAR(64),            -- backend process that owns this sidecar (boot sweep scope)
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 last_used_at TIMESTAMP WITH TIME ZONE
             );

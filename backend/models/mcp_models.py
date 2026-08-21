@@ -30,6 +30,8 @@ class MCPTemplate(Base):
     # Sidecar spec for runtime=mcp-server. JSON, e.g.:
     # {"image": "ghcr.io/.../server", "command": ["python", "server.py"],
     #  "env_mapping": {"FIELD": "UPSTREAM_ENV_VAR"}, "env": {"MCP_TRANSPORT": "..."},
+    #  "subprocess_env": {"MCP_TRANSPORT": "stdio"},  # replaces env for the subprocess backend
+    #  "user": "1000:1000",                            # optional non-root uid for the sidecar container
     #  "endpoint": "/mcp", "port": "8000", "test_tool": {"name": "list_x", "arguments": {}}}
     # NEVER contains secrets -- only template-level static config.
     runtime_config = Column(JSON, nullable=True)
@@ -121,6 +123,7 @@ class MCPSidecar(Base):
     container_id = Column(String, nullable=True)
     image = Column(String, nullable=True)
     name = Column(String, nullable=True)  # container name (eepy-mcp-<key prefix>)
+    node_id = Column(String, nullable=True)  # backend process that owns this sidecar (boot sweep scope)
     created_at = Column(DateTime, default=_utcnow)
     last_used_at = Column(DateTime, nullable=True)
 

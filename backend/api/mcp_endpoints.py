@@ -18,6 +18,7 @@ Security model:
   and is never persisted.
 """
 
+import asyncio
 import hashlib
 import re
 import secrets
@@ -188,6 +189,24 @@ def get_current_user_or_key(request: Request, db: Session = Depends(get_db)) -> 
     return _resolve_scoped_user(request, db)
 
 
+def get_proxy_context(
+    template_id: str,
+    current_user: User = Depends(get_current_user_or_key),
+    db: Session = Depends(get_db),
+) -> tuple[MCPTemplate, dict[str, str], User]:
+    """Sync dependency (runs in the threadpool, never blocks the event loop).
+
+    Loads the approved+enabled template and the caller's decrypted credentials
+    for the proxy / connection-test routes. Accepts JWT or Tool API Key via
+    get_current_user_or_key (eekey route scoping is enforced there).
+    """
+    template = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
+    if not template or not template.approved_by_admin or not template.enabled_global:
+        raise HTTPException(status_code=404, detail=f"Unknown template '{template_id}'.")
+    creds = _load_active_creds(db, current_user, template_id)
+    return template, creds, current_user
+
+
 def _generate_tool_key() -> str:
     return "eekey_" + secrets.token_urlsafe(32)
 
@@ -216,7 +235,7 @@ class ToolKeyCreateIn(BaseModel):
 
 
 @router.post("/api-keys")
-async def create_tool_api_key(
+def create_tool_api_key(
     body: ToolKeyCreateIn,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -254,7 +273,7 @@ async def create_tool_api_key(
 
 
 @router.get("/api-keys")
-async def list_tool_api_keys(
+def list_tool_api_keys(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -269,7 +288,7 @@ async def list_tool_api_keys(
 
 
 @router.delete("/api-keys/{key_id}")
-async def revoke_tool_api_key(
+def revoke_tool_api_key(
     key_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -293,7 +312,7 @@ async def revoke_tool_api_key(
 # Template library
 # ---------------------------------------------------------------------------
 @router.get("/templates/list", response_model=list[TemplateOut])
-async def list_templates(
+def list_templates(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -322,7 +341,7 @@ async def list_templates(
 # Connection configuration (credential lifecycle)
 # ---------------------------------------------------------------------------
 @router.post("/config/register")
-async def register_mcp_config(
+def register_mcp_config(
     body: ConfigRegisterIn,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -371,7 +390,7 @@ async def register_mcp_config(
 
 
 @router.get("/config/list", response_model=list[ConfigOut])
-async def list_my_configs(
+def list_my_configs(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -386,7 +405,7 @@ async def list_my_configs(
 
 
 @router.delete("/config/{template_id}")
-async def delete_mcp_config(
+def delete_mcp_config(
     template_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -404,7 +423,7 @@ async def delete_mcp_config(
 
 
 @router.get("/config/{template_id}/mcp-url")
-async def mcp_proxy_url(
+def mcp_proxy_url(
     template_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -434,10 +453,9 @@ async def mcp_proxy_url(
 @router.post("/config/{template_id}/test")
 async def test_mcp_connection(
     template_id: str,
-    db: Session = Depends(get_db),
-    # Accept EITHER a session JWT OR a scoped Tool API Key so the Open WebUI
-    # Tool Server connection can self-test.
-    current_user: User = Depends(get_current_user_or_key),
+    # Sync dependency (threadpool): auth (JWT or Tool API Key — eekey route
+    # scoping enforced there) + template lookup + credential decryption.
+    context: tuple[MCPTemplate, dict[str, str], User] = Depends(get_proxy_context),
 ):
     """Validate stored credentials against the external API (read-only call).
 
@@ -446,10 +464,9 @@ async def test_mcp_connection(
     output is inspected for error markers.
     native runtime: the original hardcoded HappyFox path.
     """
-    creds = _load_active_creds(db, current_user, template_id)
+    template, creds, current_user = context
 
-    template = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
-    if template and template.runtime == "mcp-server":
+    if template.runtime == "mcp-server":
         rctx = template.runtime_config or {}
         test_spec = rctx.get("test_tool") or {}
         test_name = test_spec.get("name")
@@ -586,10 +603,26 @@ async def mcp_proxy(
     template_id: str,
     tool_name: str,
     request: Request,
+    # Sync dependency (threadpool): auth (JWT or Tool API Key — eekey route
+    # scoping enforced there) + template lookup + credential decryption.
+    context: tuple[MCPTemplate, dict[str, str], User] = Depends(get_proxy_context),
+    # Same shared session (FastAPI caches the dependency per request); used
+    # for the usage counter after the call.
     db: Session = Depends(get_db),
-    # Accept EITHER a session JWT OR a scoped Tool API Key (Open WebUI).
-    current_user: User = Depends(get_current_user_or_key),
 ):
+    """Route a single MCP tool call through the user's encrypted credentials.
+
+    `params` may arrive as query params (GET) or a JSON body (POST/PUT).
+    Credentials are decrypted in memory only (on a worker thread) and never
+    appear in the response path.
+
+    Two runtimes:
+      mcp-server - generic sidecar bridge: spawn/reuse the upstream MCP server
+                   (per user+credentials) and forward a standard tools/call.
+      native     - hardcoded in-backend tool map (reference implementation).
+    """
+    template, creds, current_user = context
+
     # Collect params from either the JSON body or the query string.
     params: dict[str, Any] = {}
     try:
@@ -600,25 +633,10 @@ async def mcp_proxy(
         pass
     if request.query_params:
         params.update(dict(request.query_params))
-    """Route a single MCP tool call through the user's encrypted credentials.
-
-    `params` may arrive as query params (GET) or a JSON body (POST/PUT).
-    Credentials are decrypted in memory only and stripped from the response path.
-
-    Two runtimes:
-      mcp-server - generic sidecar bridge: spawn/reuse the upstream MCP server
-                   (per user+credentials) and forward a standard tools/call.
-      native     - hardcoded in-backend tool map (reference implementation).
-    """
-    template = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
-    if not template or not template.approved_by_admin or not template.enabled_global:
-        raise HTTPException(status_code=404, detail=f"Unknown template '{template_id}'.")
-
-    creds = _load_active_creds(db, current_user, template_id)
 
     if template.runtime == "mcp-server":
         return await _proxy_mcp_server(db, template, current_user, creds, tool_name, params)
-    return _proxy_native(db, template, current_user, creds, tool_name, params)
+    return await _proxy_native(db, template, current_user, creds, tool_name, params)
 
 
 def _mark_used(db: Session, user: User, template_id: str) -> None:
@@ -645,7 +663,7 @@ async def _proxy_mcp_server(db: Session, template: MCPTemplate, user: User,
     except mcp_bridge.BridgeError as exc:
         raise HTTPException(status_code=502, detail=f"Sidecar call failed: {exc}") from exc
 
-    _mark_used(db, user, template.id)
+    await asyncio.to_thread(_mark_used, db, user, template.id)  # sync DB commit off the loop
     return {"status_code": 200 if not is_error else 502,
             "tool": tool_name,
             "data": data,
@@ -697,7 +715,7 @@ async def _proxy_native(db: Session, template: MCPTemplate, user: User, creds: d
         logger.warning(f"HappyFox proxy {tool_name} network error: {exc.__class__.__name__}")
         raise HTTPException(status_code=502, detail="Upstream HappyFox request failed.") from exc
 
-    _mark_used(db, user, template.id)
+    await asyncio.to_thread(_mark_used, db, user, template.id)  # sync DB commit off the loop
 
     try:
         payload = r.json()
@@ -845,7 +863,7 @@ def _build_minimal_operation(tag: str, tool_name: str, display_name: str) -> dic
 
 
 @router.get("/openapi.json")
-async def unified_openapi_spec(request: Request, db: Session = Depends(get_db)):
+def unified_openapi_spec(request: Request, db: Session = Depends(get_db)):
     """The single OpenAPI 3.0 document for the ENTIRE Eepy tool surface.
 
     Users import THIS one URL into Open WebUI as their only Tool Server

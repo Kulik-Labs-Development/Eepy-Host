@@ -30,6 +30,12 @@ memory_handler = MemoryLogHandler()
 memory_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
 logger.addHandler(memory_handler)
 
+# Avatars are stored as base64 data-URIs in the `users.profile_picture` TEXT
+# column and returned in full on every profile read, so cap uploads at a
+# realistic photo size. Anything larger is a storage/DoS vector, not an avatar.
+MAX_AVATAR_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
 def sync_database_schema():
     try:
         with engine.connect() as conn:
@@ -61,6 +67,14 @@ def sync_database_schema():
                 if col not in template_cols:
                     logger.info(f"Adding missing column {col} to mcp_templates table...")
                     conn.execute(text(f"ALTER TABLE mcp_templates ADD COLUMN {col} {col_type}"))
+
+            # mcp_sidecars.node_id scopes the boot orphan sweep to the node
+            # that owns a sidecar (single-host, multi-replica safe).
+            result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='mcp_sidecars'"))
+            sidecar_cols = {row[0] for row in result}
+            if sidecar_cols and "node_id" not in sidecar_cols:
+                logger.info("Adding missing column node_id to mcp_sidecars table...")
+                conn.execute(text("ALTER TABLE mcp_sidecars ADD COLUMN node_id VARCHAR(64)"))
 
             conn.commit()
             logger.info("Database columns synchronized.")
@@ -151,10 +165,18 @@ def seed_mcp_templates():
             "image": "ghcr.io/kulik-labs-development/eepy-host-happyfox:latest",
             "command": ["python", "happyfox_mcp.py"],
             "cwd": "integrations/happyfox-mcp",
+            # Docker backend env: the sidecar serves streamable-HTTP so the
+            # bridge can dial it on its loopback-bound host port.
             "env": {
                 "MCP_TRANSPORT": "streamable-http",
                 "PORT": "8000",
             },
+            # Subprocess backend env (local dev): the bridge speaks stdio to
+            # subprocess sidecars, so the server must run in stdio mode.
+            # Without this override the docker-oriented env above would make
+            # the sidecar bind 0.0.0.0:8000 in HTTP mode and the stdio
+            # handshake fail (port clash + no stdio traffic).
+            "subprocess_env": {"MCP_TRANSPORT": "stdio"},
             "endpoint": "/",
             "port": "8000",
             "env_mapping": {
@@ -234,7 +256,9 @@ async def _lifespan(app: FastAPI):
     try:
         yield
     finally:
-        mcp_bridge.shutdown_all_instances()
+        # Blocking Docker/proc teardown must not stall the event loop even at
+        # shutdown time.
+        await asyncio.to_thread(mcp_bridge.shutdown_all_instances)
 
 
 app.router.lifespan_context = _lifespan
@@ -272,7 +296,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-async def get_current_user(request: Request, db: Session = Depends(get_db)):
+# NOTE: sync `def` on purpose — FastAPI runs these in the threadpool, so the
+# JWT decode + DB lookup never block the event loop. (Async endpoints below
+# that only do sync work have the same problem and must stay sync def too.)
+def get_current_user(request: Request, db: Session = Depends(get_db)):
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
@@ -288,17 +315,17 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
-async def get_superuser(current_user: User = Depends(get_current_user)):
+def get_superuser(current_user: User = Depends(get_current_user)):
     if current_user.role != UserRole.SUPERUSER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Operation restricted to superusers only")
     return current_user
 
 @app.get("/")
-async def root():
+def root():
     return {"status": "online", "message": "Welcome to Eepy Host API. Stay cozy."}
 
 @app.get("/health")
-async def health():
+def health():
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -373,14 +400,15 @@ def login(
 def get_profile(current_user: User = Depends(get_current_user)):
     return {"full_name": current_user.full_name, "email": current_user.email, "profile_picture": current_user.profile_picture, "username": current_user.username}
 
+class ProfileUpdateIn(BaseModel):
+    full_name: str | None = None
+
+
 @app.patch("/user/profile")
-async def update_profile(request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def update_profile(body: ProfileUpdateIn, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
-        data = await request.json()
-        if "full_name" in data:
-            if not isinstance(data["full_name"], str):
-                raise HTTPException(status_code=400, detail="full_name must be a string")
-            current_user.full_name = data["full_name"][:255]
+        if body.full_name is not None:
+            current_user.full_name = body.full_name[:255]
             db.commit()
             db.refresh(current_user)
         return {"message": "Profile updated successfully", "full_name": current_user.full_name}
@@ -391,13 +419,20 @@ async def update_profile(request: Request, current_user: User = Depends(get_curr
         raise HTTPException(status_code=500, detail="Failed to update profile") from e
 
 @app.post("/user/avatar")
-async def upload_avatar(file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def upload_avatar(file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
         logger.info(f"Avatar upload started for user: {current_user.username}")
         if not file.content_type.startswith("image/"):
             logger.warning(f"Invalid file type attempted by {current_user.username}: {file.content_type}")
             raise HTTPException(status_code=400, detail="Invalid file type. Please upload an image.")
-        contents = await file.read()
+        # Sync def + file.file (the SpooledTemporaryFile underneath UploadFile):
+        # the bounded read runs in the threadpool, never on the event loop.
+        # Bounded read: never buffer more than the cap + 1 byte, then reject
+        # oversized uploads before they touch the database.
+        contents = file.file.read(MAX_AVATAR_BYTES + 1)
+        if len(contents) > MAX_AVATAR_BYTES:
+            logger.warning(f"Oversized avatar rejected for {current_user.username}: {len(contents)} bytes > {MAX_AVATAR_BYTES}")
+            raise HTTPException(status_code=413, detail=f"Avatar too large. Maximum size is {MAX_AVATAR_BYTES // (1024 * 1024)} MB.")
         base64_encoded = base64.b64encode(contents).decode('utf-8')
         logger.info(f"Encoded image for {current_user.username} to Base64 string of length {len(base64_encoded)} bytes")
         data_uri = f"data:{file.content_type};base64,{base64_encoded}"
@@ -458,24 +493,27 @@ def delete_user_by_admin(user_id: int, superuser: User = Depends(get_superuser),
     db.commit()
     return {"message": f"User {target_user.username} has been removed from the system"}
 
+class AdminUserUpdateIn(BaseModel):
+    full_name: str | None = None
+    email: str | None = None
+    role: str | None = None
+
+
 @app.patch("/superuser/users/{user_id}/update")
-async def update_user_details(user_id: int, request: Request, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
+def update_user_details(user_id: int, body: AdminUserUpdateIn, superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
     try:
-        data = await request.json()
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        if "full_name" in data:
-            if not isinstance(data["full_name"], str):
-                raise HTTPException(status_code=400, detail="full_name must be a string")
-            user.full_name = data["full_name"][:255]
-        if "email" in data:
-            if not isinstance(data["email"], str) or "@" not in data["email"]:
+        if body.full_name is not None:
+            user.full_name = body.full_name[:255]
+        if body.email is not None:
+            if "@" not in body.email:
                 raise HTTPException(status_code=400, detail="Invalid email")
-            user.email = data["email"]
-        if "role" in data:
+            user.email = body.email
+        if body.role is not None:
             try:
-                user.role = UserRole(data["role"])
+                user.role = UserRole(body.role)
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid role specified") from None
         db.commit()
@@ -499,7 +537,7 @@ class TemplateRuntimeIn(BaseModel):
 
 
 @app.patch("/superuser/mcp/templates/{template_id}/runtime")
-async def update_mcp_template_runtime(
+def update_mcp_template_runtime(
     template_id: str,
     body: TemplateRuntimeIn,
     superuser: User = Depends(get_superuser),

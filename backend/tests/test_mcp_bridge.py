@@ -276,21 +276,54 @@ def test_sidecar_tracking_and_orphan_sweep(client, fake_template_id):
     mcp_bridge._untrack_sidecar(key)
     assert len(_rows()) == 0
 
-    # --- boot sweep: rows left by a "crashed" backend are reconciled against
-    # the (fake) daemon: container force-removed, row deleted. ---
+    # --- boot sweep (node-aware): this node's leftovers are force-removed;
+    # another node's RUNNING sidecar is left alone (it may still be serving
+    # live users); another node's stale rows (container gone/dead) are
+    # reconciled. The fake daemon knows three container states. ---
+    def _foreign_row(key: str, container_id: str, node_id: str = "other-node") -> None:
+        db = SessionLocal()
+        try:
+            db.add(MCPSidecar(key=key, owner_id=user_id, template_id=fake_template_id,
+                              kind="docker", container_id=container_id,
+                              name=f"eepy-mcp-{key[:9]}", node_id=node_id))
+            db.commit()
+        finally:
+            db.close()
+
+    # Row A: ours (node_id=NODE_ID via _track_sidecar) -> force-removed.
     mcp_bridge._track_sidecar(user_id, fake_template_id, inst)
+    # Row A2: NULL node_id (pre-node-tracking legacy row) -> treated as ours,
+    # force-removed even while running.
+    _foreign_row("legacy-null-node-key", "cid-legacy", node_id=None)
+    # Row B: foreign, container RUNNING -> must survive untouched.
+    _foreign_row("foreign-running-key", "cid-foreign-live")
+    # Row C: foreign, container gone (stale row) -> row deleted.
+    _foreign_row("foreign-gone-key", "cid-gone")
+    # Row D: foreign, container exited -> dead container removed + row deleted.
+    _foreign_row("foreign-dead-key", "cid-dead")
+
     removed: list = []
+    container_states = {
+        "cid-123": "running",
+        "cid-legacy": "running",
+        "cid-foreign-live": "running",
+        "cid-dead": "exited",
+        # "cid-gone" absent from the daemon on purpose
+    }
 
     class _SweepClient:
         class _Containers:
-            @staticmethod
-            def get(cid):
-                if cid != "cid-123":
+            def get(self, cid):
+                state = container_states.get(cid)
+                if state is None:
                     raise Exception("no such container")
 
                 class _C:
+                    def __init__(self):
+                        self.status = state
+
                     def remove(self, force=False):
-                        removed.append(force)
+                        removed.append((cid, force))
                 return _C()
 
         def __init__(self):
@@ -299,10 +332,241 @@ def test_sidecar_tracking_and_orphan_sweep(client, fake_template_id):
     with unittest.mock.patch.object(mcp_bridge, "_docker_client", return_value=_SweepClient()):
         mcp_bridge.sweep_orphan_sidecars()
 
-    assert removed == [True], "sweep must force-remove the leftover container"
-    assert len(_rows()) == 0, "sweep must clear the tracking table"
+    assert ("cid-123", True) in removed, "sweep must force-remove OUR leftover container"
+    assert ("cid-legacy", True) in removed, \
+        "sweep must force-remove a legacy (NULL node_id) orphan even while running"
+    assert ("cid-dead", True) in removed, "sweep must clean up a foreign node's dead container"
+    assert not any(cid == "cid-foreign-live" for cid, _ in removed), \
+        "sweep must NEVER remove another node's running sidecar"
+    remaining = {r.key: r.container_id for r in _rows()}
+    assert remaining == {"foreign-running-key": "cid-foreign-live"}, \
+        "only the foreign node's live sidecar row may survive the sweep"
 
-    # An empty table is a no-op and must not raise.
+    # A second sweep is a no-op (the surviving row belongs to a live node).
     with unittest.mock.patch.object(mcp_bridge, "_docker_client", return_value=_SweepClient()):
         mcp_bridge.sweep_orphan_sidecars()
-    assert len(removed) == 1  # nothing extra removed
+    assert len(removed) == 3, "second sweep must not remove anything extra"
+    assert {r.key for r in _rows()} == {"foreign-running-key"}
+
+
+# ---------------------------------------------------------------------------
+# Subprocess backend: per-backend env selection (subprocess_env)
+#
+# The real HappyFox seed configures docker-oriented static env
+# (MCP_TRANSPORT=streamable-http, PORT=8000). The subprocess backend speaks
+# stdio, so the server must run in stdio mode instead. These tests mirror the
+# REAL seed's env shape with the fake server (which, like the real upstream
+# server, refuses to serve stdio when an HTTP transport is selected), so a
+# bridge regression that passes the docker env to the subprocess backend fails
+# loudly instead of hanging for the startup timeout.
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def http_env_template_id():
+    """Template mirroring the production HappyFox runtime_config env shape."""
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    template_id = "fake-mcp-http-env"
+    fake_path = os.path.join(os.path.dirname(__file__), "fake_mcp_server.py")
+    db = SessionLocal()
+    try:
+        existing = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
+        if existing:
+            db.delete(existing)
+            db.commit()
+        t = MCPTemplate(
+            id=template_id,
+            name="Fake MCP (HTTP env shape)",
+            description="Mirrors the real HappyFox runtime_config env/subprocess_env shape.",
+            config_schema={
+                "category": "Test",
+                "type": "object",
+                "properties": {
+                    "FAKE_DOMAIN_FIELD": {"type": "string", "label": "Domain", "required": True},
+                    "FAKE_API_KEY": {"type": "password", "label": "API Key", "required": True},
+                    "FAKE_AUTH_CODE": {"type": "password", "label": "Auth Code", "required": True},
+                },
+                "required": ["FAKE_DOMAIN_FIELD", "FAKE_API_KEY", "FAKE_AUTH_CODE"],
+            },
+            runtime="mcp-server",
+            runtime_config={
+                "command": [sys.executable, fake_path],
+                # Docker-backend env: would make a stdio sidecar exit instantly.
+                "env": {"MCP_TRANSPORT": "streamable-http", "PORT": "8000"},
+                # Subprocess-backend override: stdio mode.
+                "subprocess_env": {"MCP_TRANSPORT": "stdio"},
+                "env_mapping": {
+                    "FAKE_DOMAIN_FIELD": "FAKE_DOMAIN",
+                    "FAKE_API_KEY": "FAKE_API_KEY",
+                    "FAKE_AUTH_CODE": "FAKE_API_TOKEN",
+                },
+                "test_tool": {"name": "list_items", "arguments": {"limit": 1}},
+            },
+            approved_by_admin=True,
+            enabled_global=True,
+        )
+        db.add(t)
+        db.commit()
+    finally:
+        db.close()
+    return template_id
+
+
+def test_subprocess_backend_uses_subprocess_env_not_docker_env(client, auth_user, http_env_template_id):
+    r = client.post("/api/mcp/config/register",
+                    headers=_h(auth_user["token"]),
+                    json={"template_id": http_env_template_id, "credentials_json": FAKE_CREDS})
+    assert r.status_code == 200, r.text
+
+    r = client.post(f"/api/mcp/proxy/{http_env_template_id}/list_items",
+                    headers=_h(auth_user["token"]), json={"limit": 2})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["is_error"] is False
+    assert "api=fake-key-123" in body["data"]
+    assert "token=fake-token-456" in body["data"]
+
+
+def test_static_env_helper_prefers_subprocess_env_for_subprocess_backend(monkeypatch):
+    """_static_env picks subprocess_env over env only for the subprocess backend."""
+    from api import mcp_bridge
+
+    cfg = {
+        "env": {"MCP_TRANSPORT": "streamable-http", "PORT": "8000"},
+        "subprocess_env": {"MCP_TRANSPORT": "stdio"},
+    }
+    monkeypatch.setattr(mcp_bridge, "INSTANCE_BACKEND", "subprocess")
+    assert mcp_bridge._static_env(cfg) == {"MCP_TRANSPORT": "stdio"}
+    monkeypatch.setattr(mcp_bridge, "INSTANCE_BACKEND", "docker")
+    assert mcp_bridge._static_env(cfg) == {"MCP_TRANSPORT": "streamable-http", "PORT": "8000"}
+    # Without subprocess_env the subprocess backend falls back to env.
+    assert mcp_bridge._static_env({"env": {"A": "1"}}) == {"A": "1"}
+    assert mcp_bridge._static_env({}) == {}
+
+
+# ---------------------------------------------------------------------------
+# Real upstream server: pinned happyfox-mcp submodule through the subprocess
+# bridge path, with the SAME runtime_config shape as the production seed.
+# Proves spawn + stdio handshake + tools/call + admin discovery against the
+# actual upstream code so the documented local-dev path cannot silently rot.
+# ---------------------------------------------------------------------------
+HAPPYFOX_SUBMODULE = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "integrations", "happyfox-mcp"))
+
+
+@pytest.mark.skipif(
+    not os.path.isfile(os.path.join(HAPPYFOX_SUBMODULE, "happyfox_mcp.py")),
+    reason="integrations/happyfox-mcp submodule is not checked out")
+def test_real_happyfox_submodule_subprocess_path(client, auth_user):
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    template_id = "happyfox-submodule-test"
+    fake_upstream_creds = {
+        "HAPPYFOX_DOMAIN": "fake.example.com",
+        "HAPPYFOX_API_KEY": "fake-key",
+        "HAPPYFOX_AUTH_CODE": "fake-code",
+    }
+    db = SessionLocal()
+    try:
+        existing = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
+        if existing:
+            db.delete(existing)
+            db.commit()
+        t = MCPTemplate(
+            id=template_id,
+            name="HappyFox (submodule e2e test)",
+            description="Runs the pinned integrations/happyfox-mcp submodule through the bridge.",
+            config_schema={
+                "category": "Test",
+                "type": "object",
+                "properties": {
+                    "HAPPYFOX_DOMAIN": {"type": "string", "label": "Domain", "required": True},
+                    "HAPPYFOX_API_KEY": {"type": "password", "label": "API Key", "required": True},
+                    "HAPPYFOX_AUTH_CODE": {"type": "password", "label": "Auth Code", "required": True},
+                },
+                "required": ["HAPPYFOX_DOMAIN", "HAPPYFOX_API_KEY", "HAPPYFOX_AUTH_CODE"],
+            },
+            runtime="mcp-server",
+            runtime_config={
+                "image": "ghcr.io/kulik-labs-development/eepy-host-happyfox:latest",
+                "command": ["python", "happyfox_mcp.py"],
+                "cwd": "integrations/happyfox-mcp",
+                "env": {"MCP_TRANSPORT": "streamable-http", "PORT": "8000"},
+                "subprocess_env": {"MCP_TRANSPORT": "stdio"},
+                "endpoint": "/",
+                "port": "8000",
+                "env_mapping": {
+                    "HAPPYFOX_DOMAIN": "HAPPYFOX_DOMAIN",
+                    "HAPPYFOX_API_KEY": "HAPPYFOX_API_KEY",
+                    "HAPPYFOX_AUTH_CODE": "HAPPYFOX_AUTH_CODE",
+                },
+                "test_tool": {"name": "list_tickets", "arguments": {"status": "_pending", "size": 1}},
+            },
+            approved_by_admin=True,
+            enabled_global=True,
+        )
+        db.add(t)
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        r = client.post("/api/mcp/config/register", headers=_h(auth_user["token"]),
+                        json={"template_id": template_id, "credentials_json": fake_upstream_creds})
+        assert r.status_code == 200, r.text
+
+        # Proxy call against the REAL upstream server with fake credentials:
+        # the sidecar must spawn in stdio mode, complete the MCP handshake,
+        # and relay the upstream failure as tool text (NOT a handshake error).
+        r = client.post(f"/api/mcp/proxy/{template_id}/list_tickets",
+                        headers=_h(auth_user["token"]),
+                        json={"status": "_pending", "size": 1})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["tool"] == "list_tickets"
+        assert isinstance(body["data"], str) and body["data"].strip(), "expected tool text, got empty data"
+        assert body["is_error"] is True, "fake credentials must produce an upstream tool error"
+
+        # Connection test endpoint (test_tool path) must report a clean
+        # credential failure, not a bridge/handshake failure.
+        r = client.post(f"/api/mcp/config/{template_id}/test", headers=_h(auth_user["token"]))
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "failed", r.json()
+
+        # Admin discovery against the real server: the pinned submodule commit
+        # (91906dc) exposes exactly the 16 tools listed in the production seed.
+        r = client.post(f"/superuser/mcp/templates/{template_id}/discover",
+                        headers=_h(auth_user["token"]))
+        assert r.status_code == 200, r.text
+        assert r.json()["tool_count"] == 16, r.json()
+        assert "download_attachment" in r.json()["tools"]
+    finally:
+        from api import mcp_bridge
+        mcp_bridge.shutdown_all_instances()
+
+
+# ---------------------------------------------------------------------------
+# Sidecar containment: resource limits + non-root user opt-in
+# ---------------------------------------------------------------------------
+def test_sidecar_run_kwargs_default_limits(monkeypatch):
+    from api import mcp_bridge
+
+    monkeypatch.setattr(mcp_bridge, "SIDECAR_MEM_LIMIT", "512m")
+    monkeypatch.setattr(mcp_bridge, "SIDECAR_CPU_LIMIT", 1.0)
+    kwargs = mcp_bridge._sidecar_run_kwargs({})
+    assert kwargs["mem_limit"] == "512m"
+    assert kwargs["cpu_period"] == 100000
+    assert kwargs["cpu_quota"] == 100000
+    assert "user" not in kwargs, "no user override -> image default"
+
+
+def test_sidecar_run_kwargs_user_and_env_overrides(monkeypatch):
+    from api import mcp_bridge
+
+    monkeypatch.setattr(mcp_bridge, "SIDECAR_MEM_LIMIT", "1g")
+    monkeypatch.setattr(mcp_bridge, "SIDECAR_CPU_LIMIT", 2.5)
+    kwargs = mcp_bridge._sidecar_run_kwargs({"user": "1000:1000"})
+    assert kwargs["mem_limit"] == "1g"
+    assert kwargs["cpu_quota"] == 250000
+    assert kwargs["user"] == "1000:1000"

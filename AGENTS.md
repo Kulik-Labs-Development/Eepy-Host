@@ -241,12 +241,17 @@ image from that exact commit. Re-run discovery. No Eepy backend code changes
   `EEPY_MCP_INSTANCE_IDLE_TIMEOUT` (default 300s). MCP sessions are
   short-lived (one `initialize` + call per proxy request) so a stuck session
   cannot wedge a long-lived sidecar.
-- **Node-local by design:** a sidecar is a local process/container on whichever
-  backend node receives the request. All durable state (templates, encrypted
-  credentials, tool keys, discovered tools) lives in the shared PostgreSQL, so
-  any node can serve any user — it just (re)spawns a sidecar on demand. This is
-  what keeps the stack horizontally scalable/load-balancable.
-- **Instance backends:** `subprocess` (local dev; spawns `command`, with an
+ - **Node-local, single-host by design:** a sidecar is a local
+  process/container on whichever backend replica receives the request. All
+  durable state (templates, encrypted credentials, tool keys, discovered
+  tools) lives in the shared PostgreSQL, so any replica on the same host can
+  serve any user — it just (re)spawns a sidecar on demand. Multi-replica on
+  ONE host is safe (the boot sweep is node-scoped, below); multi-HOST is NOT:
+  a sidecar's port is dialed through this host's loopback/host-gateway
+  (`EEPY_MCP_DOCKER_HOST`), so a sidecar spawned on another host would be
+  unreachable. Scale out by moving the whole stack, not by adding remote
+  backend nodes.
+ - **Instance backends:** `subprocess` (local dev; spawns `command`, with an
   optional relative `cwd` resolved against the repo root so the integration
   can be run straight from its `integrations/` submodule; the backend's
   interpreter is put first on PATH so the sidecar's deps resolve) or `docker`
@@ -258,23 +263,52 @@ image from that exact commit. Re-run discovery. No Eepy backend code changes
   on-host dev; compose sets it to `host.docker.internal` + `extra_hosts:
   host-gateway` because the backend is itself containerized). The bridge
   speaks MCP over stdio (subprocess) or streamable-HTTP (docker/url).
-- **Durable tracking + boot orphan sweep (Portainer-safety):** the in-memory
+  **Per-backend env:** the two backends need different upstream transports
+  for the same server, so runtime_config may set `subprocess_env` (replaces
+  `env` for the subprocess backend; `env` stays the docker-backend value).
+  The HappyFox seed uses `env: {MCP_TRANSPORT: streamable-http, PORT: 8000}`
+  + `subprocess_env: {MCP_TRANSPORT: stdio}` — without the override the
+  subprocess sidecar would bind 0.0.0.0:8000 in HTTP mode and the stdio
+  handshake would fail (regression-tested; the fake test server refuses
+  stdio when an HTTP transport is selected, and an e2e test drives the real
+  pinned happyfox-mcp submodule through the subprocess path).
+ - **Durable tracking + boot orphan sweep (Portainer-safety):** the in-memory
   registry dies with the process, so long-lived docker sidecars are ALSO
   recorded in the `mcp_sidecars` table (key = secret-free credential hash;
-  never credentials). Every sidecar container is labelled
-  `eepy-host.sidecar=true` (plus template + key prefix) so it is identifiable
-  in Portainer's container list and by filter. On boot the lifespan runs
-  `sweep_orphan_sidecars()`: each recorded container is force-removed (it may
-  still hold a user's decrypted creds in its env and the restarted process
-  has no session handle to it — the next request re-spawns) and its row is
-  deleted. This self-heals after OOM kills, `docker kill -9`, host reboots,
-  daemon restarts, and Portainer removes that skip the graceful shutdown
-  hook. Tracking is fail-soft: a DB hiccup must never break a tool call.
+  never credentials; `node_id` = the backend process that owns it). Every
+  sidecar container is labelled `eepy-host.sidecar=true` (plus template +
+  key prefix) so it is identifiable in Portainer's container list and by
+  filter. On boot the lifespan runs `sweep_orphan_sidecars()`:
+  - rows recorded by THIS node (`node_id == NODE_ID`, or NULL pre-node
+    tracking) are definitive leftovers holding a user's decrypted creds in
+    their env with no session handle: force-remove the container, delete the
+    row (the next request re-spawns).
+  - rows recorded by ANOTHER node are only reconciled when their container
+    is NOT running on the shared daemon (exited/dead/gone → clean up +
+    delete the stale row). A foreign RUNNING sidecar is never touched — it
+    may still be serving live users.
+  This self-heals after OOM kills, `docker kill -9`, host reboots, daemon
+  restarts, and Portainer removes that skip the graceful shutdown hook.
+  `NODE_ID` is a per-process uuid by default; set `EEPY_NODE_ID` only if your
+  orchestrator already guarantees a unique id per backend process. Tracking
+  is fail-soft: a DB hiccup must never break a tool call.
 
 **Security note (sidecars run third-party code):** the `approved_by_admin` /
-`enabled_global` gate is the moderation layer. Pin image tags to digests for
-production, and consider resource/egress limits on sidecars before opening the
-library to unvetted community repos.
+`enabled_global` gate is the moderation layer. Containment in place today:
+docker sidecars run with CPU/memory limits (`EEPY_MCP_SIDECAR_MEM_LIMIT`
+default 512m, `EEPY_MCP_SIDECAR_CPU_LIMIT` default 1.0) and may drop to a
+non-root uid via the optional runtime_config `user` field (e.g.
+`"1000:1000"` — the image must contain that uid; enable per-template once
+verified, since a wrong uid kills the container). Known trade-offs to close
+before opening the library to unvetted community repos: (1) images deploy as
+`:latest` (the push-to-main pipeline re-tags on every build) — for a
+production lock-in, register the template with a digest-pinned reference
+(`ghcr.io/.../eepy-host-happyfox@sha256:...`), which the bridge passes
+through unchanged; (2) sidecars need outbound egress to reach their upstream
+API and hold the user's decrypted creds in their env, so egress is
+unrestricted by design — put community-repo sidecars behind an egress
+allowlist/proxy (dedicated docker network + forward proxy) before trusting
+unknown code.
 
 ## Setup Commands
 
@@ -347,6 +381,22 @@ there is no vitest in the frontend.)
    into third-party processes.
 4. **Role enforcement is server-side.** Client-side role checks are UX only;
    every privileged endpoint validates the JWT role in a FastAPI dependency.
+5. **Event-loop rule — keep it or the app serializes under load.** A FastAPI
+   `async def` runs ON the event loop; any synchronous work in it (SQLAlchemy,
+   Fernet, subprocess/docker API, `proc.wait`) blocks EVERY other in-flight
+   request. So:
+   - Endpoints/deps that only do sync work must be plain `def` — FastAPI runs
+     them in the threadpool. (Guarded by `tests/test_event_loop.py`; do not
+     "modernize" a sync `def` route back to `async def`.)
+   - Endpoints that genuinely await non-blocking I/O (the MCP bridge, httpx
+     upstream calls, `request.json()` streaming) stay `async def`; their sync
+     DB work goes in a sync dependency (`get_proxy_context`) or is offloaded
+     with `asyncio.to_thread`.
+   - In `api/mcp_bridge.py`, blocking work (spawns, image pulls, kills,
+     liveness) is ALWAYS wrapped in `asyncio.to_thread` from the async entry
+     points. `_spawn_docker`/`_spawn_subprocess` are sync on purpose.
+   - Sidecar spawn locks are PER-KEY (`_KEY_LOCKS`), never global: one user's
+     first-call docker pull must not serialize every other user's request.
 
 ## Code Style Guidelines
 
@@ -401,12 +451,15 @@ there is no vitest in the frontend.)
   `/tmp/eepy_test.sh` + `/tmp/eepy_test.py` (22 end-to-end checks: role
   escalation, JWT, superuser authz, Fernet-at-rest, rate limits, eekey
   scoping). Tests use a throwaway SQLite DB via `conftest.py`.
-- **Secrets** come from `deploy/stack.env` (git-ignored): `POSTGRES_PASSWORD`,
+ - **Secrets** come from `deploy/stack.env` (git-ignored): `POSTGRES_PASSWORD`,
   `DATABASE_URL`, `SECRET_KEY`, `MCP_ENCRYPTION_KEY`, plus the optional
   `EEPY_MCP_INSTANCE_BACKEND` (sidecar runtime: `docker` default in compose,
   or `subprocess`). `EEPY_MCP_DOCKER_HOST` is set by the compose file itself
   (not in stack.env) to `host.docker.internal` so a containerized backend can
-  reach loopback-bound sidecar ports.
+  reach loopback-bound sidecar ports. Optional sidecar containment dials
+  (env-overridable, sensible defaults): `EEPY_MCP_SIDECAR_MEM_LIMIT`,
+  `EEPY_MCP_SIDECAR_CPU_LIMIT`, and per-template `user` / digest-pinned
+  `image` in `runtime_config` (see the security note above).
   `SECRET_KEY` signs JWTs (also the Fernet fallback key) — see Key
   Architecture Decision #3 before ever rotating it.
 - **Initial superuser** is bootstrapped from the `SUPERUSER_USERNAME` env var

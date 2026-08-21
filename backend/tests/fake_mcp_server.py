@@ -12,6 +12,14 @@ import sys
 
 API_VERSION = "1.0"
 
+# Mirror the real upstream servers' transport selection (e.g. happyfox_mcp.py):
+# an HTTP-mode server never speaks stdio. If the bridge selects the wrong
+# (docker-oriented) static env for the subprocess backend, the sidecar exits
+# immediately and the handshake test fails instead of passing silently.
+if os.getenv("MCP_TRANSPORT", "stdio").lower() in ("streamable-http", "sse"):
+    sys.stderr.write(f"fake-mcp-server: MCP_TRANSPORT={os.getenv('MCP_TRANSPORT')} is not supported on stdio; exiting\n")
+    sys.exit(3)
+
 
 def handle(req: dict) -> dict | None:
     method = req.get("method")

@@ -25,3 +25,17 @@ def client():
     import main
 
     return TestClient(main.app)
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Reset the in-memory slowapi storage between tests.
+
+    All test traffic shares one client identity ('testclient'), so without
+    this the 5/hour signup limit fires on the 6th signup across the whole
+    session and every later fixture setup 429s.
+    """
+    import main
+
+    main.limiter.reset()
+    yield
