@@ -20,6 +20,13 @@ WORKDIR /app
 COPY integrations/happyfox-mcp/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# The submodule's requirements.txt declares `mcp[cli]>=1.0.0` (no upper bound).
+# The 2.0.0 SDK release removed the high-level `mcp.server.fastmcp` module
+# (FastMCP) that this server imports, which made the container exit at startup
+# with ModuleNotFoundError. Pin the 1.x line here — in OUR Dockerfile, so the
+# pin survives every CI rebuild without touching the upstream submodule code.
+RUN pip install --no-cache-dir --force-reinstall 'mcp[cli]>=1.0,<2'
+
 # Server code (single-file upstream repo)
 COPY integrations/happyfox-mcp/happyfox_mcp.py .
 
