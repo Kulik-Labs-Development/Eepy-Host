@@ -157,10 +157,10 @@ All under `/api/mcp` (router prefix in `api/mcp_endpoints.py`):
 | `DELETE /api/mcp/config/{template_id}` | Remove a config + stored creds | USER (owner) |
 | `GET /api/mcp/config/{template_id}/mcp-url` | Per-template MCP URL | USER |
 | `POST /api/mcp/config/{template_id}/test` | Test stored credentials live | USER / Tool Key |
-| `GET/POST/PUT /api/mcp/proxy/{template_id}/{tool_name}` | The core proxy: decrypt in memory → call upstream → stream back | USER / Tool Key |
+| `GET/POST/PUT /api/mcp/proxy/{template_id}/{tool_name}` | The core proxy: decrypt in memory → call upstream → stream back. ALSO bound at `/api/mcp/{template_id}/{tool_name}` (no `proxy` segment) via `mcp_proxy_alias` so pre-fix Open WebUI spec imports (which call the base-URL + path shape) keep working | USER / Tool Key |
 | `POST /superuser/mcp/templates/{template_id}/discover` | Run `tools/list` against the template's sidecar (superuser's own creds) and store the tool schemas | SUPERUSER |
 | `PATCH /superuser/mcp/templates/{template_id}/runtime` | Register/update a template's sidecar spec (`runtime`, `runtime_config`, approval flags) | SUPERUSER |
-| `GET /api/mcp/openapi.json` | Unified OpenAPI spec of ALL connected tools (Open WebUI import). Also served at `/api/mcp/openapi.json/openapi.json` because Open WebUI auto-appends `/openapi.json` to the pasted URL (users paste the base URL `.../api/mcp`) | public |
+| `GET /api/mcp/openapi.json` | Unified OpenAPI spec of ALL connected tools (Open WebUI import). Paths are `/proxy/{template_id}/{tool_name}` and `servers[0].url` is the base URL `.../api/mcp` — because Open WebUI appends spec paths to the PASTED base URL and ignores `servers[].url`, both compositions must yield the same route. Also served at `/api/mcp/openapi.json/openapi.json` because Open WebUI auto-appends `/openapi.json` to the pasted URL (users paste the base URL `.../api/mcp`) | public |
 
 **Tool API Keys** are stored hashed (`mcp_user_tool_keys`) and accepted ONLY
 on the proxy and config-test routes. On any other route an `eekey_` bearer is
