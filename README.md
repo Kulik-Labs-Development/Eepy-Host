@@ -124,8 +124,14 @@ no second connection.
 Eepy Host is designed to be **one** external tool server for your agent, not one per integration:
 
 1. **Create a key** — In the Eepy dashboard, open the **Open WebUI** section on the **Overview** page (it shows your live connection status at a glance) and generate a Tool API Key (`eekey_…`). The plaintext is shown once; only a SHA-256 hash is stored. The key is user-scoped: it unlocks every integration *you* have connected.
-2. **Copy the spec URL** — `https://<your-host>/api/mcp/openapi.json` is a public, secret-free OpenAPI 3.0 document describing the entire Eepy tool surface (tools namespaced as `/{template}/{tool}`).
-3. **Import in Open WebUI** — Settings → Tools → add an external Tool Server → paste the URL → Bearer auth with your key. Done.
+2. **Copy the URL** — `https://<your-host>/api/mcp` is what you paste into Open WebUI (leave it exactly as copied — Open WebUI appends `/openapi.json` itself). The spec it fetches is a public, secret-free OpenAPI 3.0 document describing the entire Eepy tool surface (tools namespaced as `/{template}/{tool}`).
+3. **Import in Open WebUI** — Settings → Tools → add an external Tool Server → paste the URL from step 2 → Bearer auth with your key. Done.
+
+> **CORS note:** Open WebUI calls the API from *its* browser origin, so the
+> backend answers preflights from **any origin by default** (the API is
+> Bearer-token authenticated only — no cookie sessions — so a wildcard origin
+> cannot leak cross-origin data). Set `CORS_ORIGINS` (comma-separated list) in
+> the backend environment to pin exact origins instead.
 
 Security properties of the key:
 
@@ -247,7 +253,7 @@ All endpoints live under a single FastAPI app. Interactive docs at `/docs` when 
 | `POST/GET/PUT /api/mcp/proxy/{template}/{tool}` | Execute a tool call through the gateway | JWT or tool key |
 | `POST /superuser/mcp/templates/{id}/discover` | Capture the template's upstream `tools/list` schemas | SUPERUSER |
 | `PATCH /superuser/mcp/templates/{id}/runtime` | Set a template's sidecar spec + approval flags | SUPERUSER |
-| `GET /api/mcp/openapi.json` | Unified OpenAPI spec for Open WebUI | public |
+| `GET /api/mcp/openapi.json` | Unified OpenAPI spec for Open WebUI (also served at `/api/mcp/openapi.json/openapi.json` for Open WebUI's URL auto-append) | public |
 | `POST /api/mcp/api-keys` | Create a user-scoped, revocable tool key | JWT |
 | `GET /api/mcp/api-keys` | List keys (hash-only; prefixes only) | JWT |
 | `DELETE /api/mcp/api-keys/{id}` | Revoke a key | JWT |

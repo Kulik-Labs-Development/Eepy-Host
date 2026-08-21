@@ -863,6 +863,7 @@ def _build_minimal_operation(tag: str, tool_name: str, display_name: str) -> dic
 
 
 @router.get("/openapi.json")
+@router.get("/openapi.json/openapi.json", include_in_schema=False)
 def unified_openapi_spec(request: Request, db: Session = Depends(get_db)):
     """The single OpenAPI 3.0 document for the ENTIRE Eepy tool surface.
 
@@ -870,6 +871,11 @@ def unified_openapi_spec(request: Request, db: Session = Depends(get_db)):
     connection. It lists every approved+enabled template: native integrations
     from the hardcoded registry, mcp-server integrations from their stored
     tools/list discovery. Per-user availability is enforced at call time.
+
+    Served at BOTH /api/mcp/openapi.json and /api/mcp/openapi.json/openapi.json:
+    Open WebUI's Tool Server connector appends "/openapi.json" to whatever URL
+    the user pastes, so pasting the spec URL itself would hit the doubled path.
+    The doubled route is the same spec — both forms work.
     """
     base_url = str(request.base_url).rstrip("/")
     proxy_base = f"{base_url}/api/mcp/proxy"

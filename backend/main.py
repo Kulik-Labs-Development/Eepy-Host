@@ -396,15 +396,20 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": first_error.get("msg", "Validation failed")},
     )
 
+# CORS: browser-based clients (notably Open WebUI, which fetches the spec AND
+# calls the proxy from its own origin) send preflights from whatever domain the
+# user self-hosts them on. Default to allowing ALL origins: the API is
+# Bearer-token authenticated only (no cookie sessions), so a wildcard origin
+# cannot leak cross-origin data — the token itself is the security boundary.
+# Operators can pin an exact comma-separated origin list via CORS_ORIGINS; an
+# explicit list re-enables credentials mode for those origins.
+_cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+if not _cors_origins:
+    _cors_origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://dev.eepy.host",
-        "https://www.eepy.host",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

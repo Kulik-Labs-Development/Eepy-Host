@@ -47,8 +47,12 @@ export default function OpenWebUIPanel({ onClose }: Props) {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
 
-  // The single spec URL the user pastes into Open WebUI - covers ALL of Eepy.
-  const specUrl = `${getApiUrl()}/api/mcp/openapi.json`;
+  // The URL the user pastes into Open WebUI - covers ALL of Eepy. This is the
+  // BASE url (without /openapi.json): Open WebUI appends "/openapi.json" to
+  // whatever is pasted, so the spec it fetches is <base>/openapi.json.
+  // (The backend also serves the spec at <base>/openapi.json/openapi.json, so
+  // a spec URL pasted from older instructions still resolves.)
+  const specUrl = `${getApiUrl()}/api/mcp`;
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -244,8 +248,9 @@ export default function OpenWebUIPanel({ onClose }: Props) {
               <span className="text-ink font-bold">Add New → Tool Server</span> (external / OpenAPI).
             </li>
             <li>
-              Set the <span className="text-ink font-bold">URL</span> to the Eepy OpenAPI URL from step 2. Open
-              WebUI fetches it and lists every Eepy tool automatically.
+              Set the <span className="text-ink font-bold">URL</span> to the Eepy URL from step 2, exactly as copied.
+              Open WebUI appends <code className="font-console text-[12px] text-eepy-lilac">/openapi.json</code> itself,
+              fetches the spec, and lists every Eepy tool automatically.
             </li>
             <li>
               For <span className="text-ink font-bold">authentication</span>, select <span className="text-eepy-sage font-bold">Bearer</span>{' '}

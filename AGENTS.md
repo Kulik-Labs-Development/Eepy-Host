@@ -51,7 +51,13 @@ docker container in production), short-lived and idle-reaped.
 - Open WebUI integration: per-user **Tool API Keys** (`eekey_...`, one key
   unlocks every integration) + a single unified OpenAPI spec for import.
   The spec is generated from the DB (admin-discovered `tools/list` output for
-  mcp-server templates; `TEMPLATE_REGISTRY` for native).
+  mcp-server templates; `TEMPLATE_REGISTRY` for native). Open WebUI calls the
+  API from **its browser origin** (spec fetch AND proxy calls), so CORS is
+  wildcard by default (`CORS_ORIGINS` env pins an exact list; safe because
+  auth is Bearer-token only, no cookie sessions). Open WebUI also **appends
+  `/openapi.json`** to the pasted URL, so users paste the base URL
+  (`https://<host>/api/mcp`) and the backend serves the spec at BOTH
+  `/api/mcp/openapi.json` and `/api/mcp/openapi.json/openapi.json`.
 
 ## Key Architecture Decisions
 
@@ -153,7 +159,7 @@ All under `/api/mcp` (router prefix in `api/mcp_endpoints.py`):
 | `GET/POST/PUT /api/mcp/proxy/{template_id}/{tool_name}` | The core proxy: decrypt in memory → call upstream → stream back | USER / Tool Key |
 | `POST /superuser/mcp/templates/{template_id}/discover` | Run `tools/list` against the template's sidecar (superuser's own creds) and store the tool schemas | SUPERUSER |
 | `PATCH /superuser/mcp/templates/{template_id}/runtime` | Register/update a template's sidecar spec (`runtime`, `runtime_config`, approval flags) | SUPERUSER |
-| `GET /api/mcp/openapi.json` | Unified OpenAPI spec of ALL connected tools (Open WebUI import) | public |
+| `GET /api/mcp/openapi.json` | Unified OpenAPI spec of ALL connected tools (Open WebUI import). Also served at `/api/mcp/openapi.json/openapi.json` because Open WebUI auto-appends `/openapi.json` to the pasted URL (users paste the base URL `.../api/mcp`) | public |
 
 **Tool API Keys** are stored hashed (`mcp_user_tool_keys`) and accepted ONLY
 on the proxy and config-test routes. On any other route an `eekey_` bearer is
@@ -487,8 +493,11 @@ there is no vitest in the frontend.)
  - **Secrets** come from `deploy/stack.env` (git-ignored): `POSTGRES_PASSWORD`,
   `DATABASE_URL`, `SECRET_KEY`, `MCP_ENCRYPTION_KEY`, plus the optional
   `EEPY_MCP_INSTANCE_BACKEND` (sidecar runtime: `docker` default in compose,
-  or `subprocess`). `EEPY_MCP_DOCKER_HOST` is set by the compose file itself
-  (not in stack.env) to `host.docker.internal` so a containerized backend can
+  or `subprocess`) and `CORS_ORIGINS` (comma-separated origin pin for
+  browser-based clients like Open WebUI; unset = wildcard, which is safe —
+  Bearer-token auth only, no cookie sessions). `EEPY_MCP_DOCKER_HOST` is set
+  by the compose file itself (not in stack.env) to `host.docker.internal` so
+  a containerized backend can
   reach loopback-bound sidecar ports. Optional sidecar containment dials
   (env-overridable, sensible defaults): `EEPY_MCP_SIDECAR_MEM_LIMIT`,
   `EEPY_MCP_SIDECAR_CPU_LIMIT`, and per-template `user` / digest-pinned
