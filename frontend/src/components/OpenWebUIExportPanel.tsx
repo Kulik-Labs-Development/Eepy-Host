@@ -17,6 +17,7 @@ import {
   Plug,
   Trash2,
   ShieldAlert,
+  RefreshCw,
 } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
 
@@ -46,6 +47,7 @@ export default function OpenWebUIPanel({ onClose }: Props) {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
+  const [keyName, setKeyName] = useState('Open WebUI');
 
   // The URL the user pastes into Open WebUI - covers ALL of Eepy. This is the
   // BASE url (without /openapi.json): Open WebUI appends "/openapi.json" to
@@ -73,18 +75,33 @@ export default function OpenWebUIPanel({ onClose }: Props) {
     refresh();
   }, [refresh]);
 
-  const generate = async () => {
+  const activeKeys = keys.filter((k) => k.is_active);
+
+  // Create a key. With `replace` = true the previously-active keys are revoked
+  // in the same action, so rotating a key no longer requires a separate
+  // Revoke + Create dance ("clear your settings and re-make it").
+  const generate = async (replace: boolean) => {
+    if (replace && activeKeys.length > 0) {
+      const ok = window.confirm(
+        `Replace your current Eepy API key?\n\nThe active key (${activeKeys[0].key_prefix}...) stops working immediately - you will need to paste the new key into Open WebUI.`,
+      );
+      if (!ok) return;
+    }
     setGenerating(true);
     setError('');
     try {
       const res = await fetch(`${getApiUrl()}/api/mcp/api-keys`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ name: 'Open WebUI' }),
+        body: JSON.stringify({ name: keyName.trim() || 'Open WebUI' }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || `Backend returned ${res.status}`);
-      setKeys((prev) => [data, ...prev]);
+      const stale = replace ? keys.filter((k) => k.is_active).map((k) => k.id) : [];
+      setKeys((prev) => [data, ...prev.map((k) => (stale.includes(k.id) ? { ...k, is_active: false } : k))]);
+      for (const id of stale) {
+        await fetch(`${getApiUrl()}/api/mcp/api-keys/${id}`, { method: 'DELETE', headers: authHeaders() });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -142,10 +159,20 @@ export default function OpenWebUIPanel({ onClose }: Props) {
           <p className="text-xs text-ink-faint mb-3 leading-relaxed font-body">
             This key covers <span className="text-eepy-sage font-semibold">every integration you have connected</span> - and every
             one you connect later. It only works on Eepy&apos;s MCP routes (never on your account or billing), and
-            you can revoke it here at any time.
+            you can replace or revoke it here at any time.
           </p>
 
-          {newestKey ? (
+          <label className="label-pixel mb-1.5 block">Key label</label>
+          <input
+            type="text"
+            value={keyName}
+            onChange={(e) => setKeyName(e.target.value)}
+            maxLength={60}
+            placeholder="Open WebUI"
+            className="input-pixel w-full mb-4"
+          />
+
+          {newestKey && (
             <div className="mb-4">
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                 <span className="text-[13px] font-console text-ink-dim shrink-0 sm:w-auto">Shown once:</span>
@@ -166,22 +193,32 @@ export default function OpenWebUIPanel({ onClose }: Props) {
                 <ShieldAlert size={13} /> Copy it now - it is not stored in plain text and cannot be retrieved again.
               </p>
             </div>
-          ) : (
-            <button
-              onClick={generate}
-              disabled={generating || (loading && keys.length > 0)}
-              className="btn btn-blush w-full py-2.5 text-xs flex items-center justify-center gap-2"
-            >
-              {generating ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" /> Creating key...
-                </>
-              ) : (
-                <>
-                  <KeyRound size={16} /> Create Eepy API Key
-                </>
-              )}
-            </button>
+          )}
+
+          <button
+            onClick={() => generate(activeKeys.length > 0)}
+            disabled={generating || (loading && keys.length > 0)}
+            className="btn btn-blush w-full py-2.5 text-xs flex items-center justify-center gap-2"
+          >
+            {generating ? (
+              <>
+                <Loader2 size={16} className="animate-spin" /> {activeKeys.length > 0 ? 'Replacing key...' : 'Creating key...'}
+              </>
+            ) : activeKeys.length > 0 ? (
+              <>
+                <RefreshCw size={16} /> Replace Eepy API Key
+              </>
+            ) : (
+              <>
+                <KeyRound size={16} /> Create Eepy API Key
+              </>
+            )}
+          </button>
+          {activeKeys.length > 0 && (
+            <p className="text-[11px] text-ink-dim mt-2 font-body">
+              Replacing revokes the current key immediately and shows the new one once - then paste it into
+              Open WebUI (Settings &rarr; Tools &rarr; your Tool Server entry).
+            </p>
           )}
 
           {/* Existing keys */}

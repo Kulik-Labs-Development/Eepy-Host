@@ -14,6 +14,7 @@ export default function DebugLogPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [forbidden, setForbidden] = useState(false);
 
   async function fetchLogs() {
     setIsLoading(true);
@@ -25,6 +26,13 @@ export default function DebugLogPage() {
           'Authorization': `Bearer ${localStorage.getItem('eepy_token')}`,
         },
       });
+
+      if (response.status === 403) {
+        // The stream itself is healthy; this account just lacks the role.
+        // Say so explicitly instead of a bare "Forbidden" error box.
+        setForbidden(true);
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(`Failed to fetch logs: ${response.statusText}`);
@@ -62,7 +70,9 @@ export default function DebugLogPage() {
           <h2 className="font-pixel font-bold text-2xl sm:text-3xl text-ink text-px-sm flex items-center gap-3">
             <Terminal size={28} className="text-eepy-blush" /> Debug Log
           </h2>
-          <p className="text-ink-dim font-body text-sm mt-1">Real-time backend stream. Auto-refreshing every 5s.</p>
+          <p className="text-ink-dim font-body text-sm mt-1">
+            Real-time backend stream, incl. MCP server connection events. Auto-refreshing every 5s.
+          </p>
         </div>
         <button
           onClick={fetchLogs}
@@ -88,7 +98,18 @@ export default function DebugLogPage() {
 
         {/* Terminal Body */}
         <div className="p-3 sm:p-4 h-[60vh] sm:h-[70vh] overflow-y-auto space-y-0.5 text-[16px] leading-relaxed bg-night-deep">
-          {error ? (
+          {forbidden ? (
+            <div className="text-[16px] p-4 border-2 border-eepy-amber/50 bg-eepy-amber/10 text-ink-soft space-y-2">
+              <div className="text-eepy-amber font-bold">[RESTRICTED] Superuser account required</div>
+              <div className="font-body text-[14px] leading-relaxed">
+                This console streams the backend&apos;s live log (including MCP server connection
+                events: sidecar spawns, handshakes, failures). Your account does not have the
+                superuser role. Ask a superuser to elevate your role (Organization &rarr; User
+                Directory), or set <code className="font-console text-eepy-lilac">SUPERUSER_USERNAME</code> in
+                the stack environment to your username and sign in again.
+              </div>
+            </div>
+          ) : error ? (
             <div className="text-eepy-ember text-[16px] p-4 border-2 border-eepy-ember/50 bg-eepy-ember/10">
               [ERROR] {error}
             </div>
