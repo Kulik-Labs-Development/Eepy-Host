@@ -174,20 +174,28 @@ def _resolve_scoped_user(request: Request, db: Session) -> User:
     """Auth for proxy + connection-test routes: accepts EITHER a session JWT OR a
     user-scoped Tool API Key.
 
-    The key is ONLY honored on /api/mcp/proxy/{template}/* and
-    /api/mcp/config/{template}/test. On any other route an eekey_ token is treated
-    as a (invalid) JWT and rejected - so the key can never touch /user/*, /auth/*,
-    /superuser/*, billing, or even other MCP management endpoints (keys, template
-    list, config register/delete). Per-call, the proxy additionally requires the
-    user to have an active connection to the requested template.
+    The key is ONLY honored on the proxy routes (canonical
+    /api/mcp/proxy/{template}/{tool} and the alias /api/mcp/{template}/{tool})
+    and /api/mcp/config/{template}/test. On any other route an eekey_ token is
+    treated as a (invalid) JWT and rejected - so the key can never touch
+    /user/*, /auth/*, /superuser/*, billing, or even other MCP management
+    endpoints (keys, template list, config register/delete). Per-call, the
+    proxy additionally requires the user to have an active connection to the
+    requested template.
     """
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid authentication token")
     token = auth_header.split(" ", 1)[1].strip()
 
+    # Proxy shapes: the canonical /api/mcp/proxy/{template}/{tool} and the
+    # backwards-compatible alias /api/mcp/{template}/{tool} (mcp_proxy_alias).
+    # The alias regex must exclude the first segments of every static
+    # two-segment MCP route so a tool key can never be honored on management
+    # endpoints (config register/list, template list).
     key_allowed = bool(
         re.match(r"^/api/mcp/proxy/[\w-]+/", request.url.path)
+        or re.match(r"^/api/mcp/(?!config/|templates/|api-keys/)[\w-]+/[\w-]+$", request.url.path)
         or re.match(r"^/api/mcp/config/[\w-]+/test$", request.url.path)
     )
 
@@ -657,6 +665,17 @@ async def mcp_proxy(
 ):
     """Route a single MCP tool call through the user's encrypted credentials.
 
+    Also reachable at `/api/mcp/{template_id}/{tool_name}` (no `proxy`
+    segment) via the mcp_proxy_alias bound at the very end of this module:
+    the unified OpenAPI spec is consumed by clients (notably Open WebUI)
+    that append spec paths to the pasted base URL and ignore
+    `servers[].url`, so both call shapes must hit the same handler. The
+    alias MUST stay the LAST route registered on this router — it is a
+    two-segment catch-all that would otherwise shadow every static
+    two-segment route registered after it (including the doubled
+    /openapi.json/openapi.json spec path); unknown templates 404 via
+    get_proxy_context.
+
     `params` may arrive as query params (GET) or a JSON body (POST/PUT).
     Credentials are decrypted in memory only (on a worker thread) and never
     appear in the response path.
@@ -923,7 +942,13 @@ def unified_openapi_spec(request: Request, db: Session = Depends(get_db)):
     The doubled route is the same spec — both forms work.
     """
     base_url = str(request.base_url).rstrip("/")
-    proxy_base = f"{base_url}/api/mcp/proxy"
+    # The spec is rooted at /api/mcp (the URL users paste into Open WebUI).
+    # Paths below are "/proxy/{id}/{tool}" so the full call URL is the same
+    # whether a client (a) concatenates spec path onto the pasted base URL —
+    # Open WebUI does this and IGNORES servers[].url — or (b) composes
+    # servers[0].url + path per the OpenAPI spec. Both yield
+    # /api/mcp/proxy/{id}/{tool}.
+    api_base = f"{base_url}/api/mcp"
 
     paths: dict[str, Any] = {}
     tags: list = []
@@ -940,7 +965,7 @@ def unified_openapi_spec(request: Request, db: Session = Depends(get_db)):
             tools = [x for x in (t.discovered_tools or []) if isinstance(x, dict) and x.get("name")]
             if tools:
                 for tool in tools:
-                    paths[f"/{t.id}/{tool['name']}"] = _build_discovered_operation(tool, t.id, t.name)
+                    paths[f"/proxy/{t.id}/{tool['name']}"] = _build_discovered_operation(tool, t.id, t.name)
             else:
                 # Not discovered yet: list the known tool names (from
                 # runtime_config.tool_names, or the native registry as a last
@@ -952,13 +977,13 @@ def unified_openapi_spec(request: Request, db: Session = Depends(get_db)):
                     entry = TEMPLATE_REGISTRY.get(t.id)
                     known_names = list(entry["tool_map"].keys()) if entry else ["(run discovery)"]
                 for name in known_names:
-                    paths[f"/{t.id}/{name}"] = _build_minimal_operation(t.id, name, t.name)
+                    paths[f"/proxy/{t.id}/{name}"] = _build_minimal_operation(t.id, name, t.name)
         else:
             entry = TEMPLATE_REGISTRY.get(t.id)
             if not entry:
                 continue
             for tool_name, (method, path_tpl) in entry["tool_map"].items():
-                paths[f"/{t.id}/{tool_name}"] = _build_tool_operation(
+                paths[f"/proxy/{t.id}/{tool_name}"] = _build_tool_operation(
                     tool_name, method, path_tpl, t.id, t.name)
 
     spec = {
@@ -975,7 +1000,7 @@ def unified_openapi_spec(request: Request, db: Session = Depends(get_db)):
                 "return 404."
             ),
         },
-        "servers": [{"url": proxy_base, "description": "Eepy unified MCP proxy - all integrations"}],
+        "servers": [{"url": api_base, "description": "Eepy Host API root - tool calls live under /proxy/{template}/{tool}"}],
         "tags": tags,
         "paths": paths,
         "components": {
@@ -991,3 +1016,27 @@ def unified_openapi_spec(request: Request, db: Session = Depends(get_db)):
     }
 
     return JSONResponse(content=spec, media_type="application/json")
+
+
+@router.api_route(
+    "/{template_id}/{tool_name}",
+    methods=["GET", "POST", "PUT"],
+    include_in_schema=False,
+)
+async def mcp_proxy_alias(
+    template_id: str,
+    tool_name: str,
+    request: Request,
+    context: tuple[MCPTemplate, dict[str, str], User] = Depends(get_proxy_context),
+    db: Session = Depends(get_db),
+):
+    """Backwards-compatible proxy shape without the `proxy` segment.
+
+    Open WebUI (and any OpenAPI client that ignores servers[].url) appends
+    the spec's paths to the pasted base URL (.../api/mcp), producing
+    /api/mcp/{template_id}/{tool_name}. Pre-fix spec imports call this shape,
+    so it must keep working without a re-import. Bound LAST in this module on
+    purpose: as a two-segment catch-all it would shadow later-registered
+    static routes (e.g. /openapi.json/openapi.json) if registered earlier.
+    """
+    return await mcp_proxy(template_id, tool_name, request, context, db)

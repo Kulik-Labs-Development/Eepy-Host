@@ -88,11 +88,77 @@ def test_openapi_spec_includes_discovered_tools(client, fake_template_id):
     r = client.get("/api/mcp/openapi.json")
     assert r.status_code == 200, r.text
     spec = r.json()
-    op = spec["paths"][f"/{fake_template_id}/create_item"]["post"]
+    op = spec["paths"][f"/proxy/{fake_template_id}/create_item"]["post"]
     props = op["requestBody"]["content"]["application/json"]["schema"]["properties"]
     assert "name" in props
     assert op["requestBody"]["content"]["application/json"]["schema"]["required"] == ["name"]
-    assert f"/{fake_template_id}/list_items" in spec["paths"]
+    assert f"/proxy/{fake_template_id}/list_items" in spec["paths"]
+
+
+def test_openapi_spec_paths_and_servers_compose_to_proxy_route(client, fake_template_id):
+    """Open WebUI appends spec paths to the pasted base URL and ignores
+    servers[].url, so BOTH compositions must yield the real proxy route:
+      pasted base (.../api/mcp) + path, and servers[0].url + path."""
+    r = client.get("/api/mcp/openapi.json")
+    assert r.status_code == 200, r.text
+    spec = r.json()
+    assert spec["paths"], "expected tool paths in the unified spec"
+    for path in spec["paths"]:
+        assert path.startswith("/proxy/"), path
+    server_url = spec["servers"][0]["url"].rstrip("/")
+    assert server_url.endswith("/api/mcp")
+    # Open WebUI's composition: pasted base URL (.../api/mcp) + spec path must
+    # land on the real proxy route.
+    target = f"/proxy/{fake_template_id}/list_items"
+    assert any((server_url + p).endswith(f"/api/mcp{target}") for p in spec["paths"])
+
+
+def test_proxy_alias_route_without_proxy_segment(client, auth_user, fake_template_id):
+    """The exact call shape Open WebUI makes with the pre-fix spec:
+    base URL (.../api/mcp) + '/{template}/{tool}', no 'proxy' segment."""
+    r = client.post(f"/api/mcp/{fake_template_id}/list_items",
+                    headers=_h(auth_user["token"]), json={"limit": 2})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["tool"] == "list_items"
+    assert body["is_error"] is False
+    assert "api=fake-key-123" in body["data"]
+
+
+def test_proxy_alias_works_with_tool_key(client, auth_user, fake_template_id):
+    r = client.post(f"/api/mcp/{fake_template_id}/list_items",
+                    headers=_h(auth_user["eekey"]), json={"limit": 1})
+    assert r.status_code == 200, r.text
+    assert "api=fake-key-123" in r.json()["data"]
+
+
+def test_proxy_alias_does_not_shadow_static_routes(client, auth_user, fake_template_id):
+    """The /{template_id}/{tool_name} alias must not swallow the static
+    two-segment routes registered before it (/templates/list, /config/list)."""
+    r = client.get("/api/mcp/templates/list", headers=_h(auth_user["token"]))
+    assert r.status_code == 200, r.text
+    ids = [t["id"] for t in r.json()]
+    assert fake_template_id in ids
+
+    r = client.get("/api/mcp/config/list", headers=_h(auth_user["token"]))
+    assert r.status_code == 200, r.text
+    assert isinstance(r.json(), list)
+
+    # Unknown template via the alias degrades to the standard 404.
+    r = client.post("/api/mcp/not-a-template/some_tool",
+                    headers=_h(auth_user["token"]), json={})
+    assert r.status_code == 404
+
+
+def test_tool_key_still_rejected_on_management_routes(client, auth_user):
+    """The alias path-shape must not widen eekey scope: two-segment MCP
+    management routes keep rejecting tool keys."""
+    r = client.get("/api/mcp/templates/list", headers=_h(auth_user["eekey"]))
+    assert r.status_code == 401
+
+    r = client.post("/api/mcp/config/register",
+                    headers=_h(auth_user["eekey"]), json={})
+    assert r.status_code == 401
 
 
 def test_tool_key_works_on_proxy(client, auth_user, fake_template_id):
