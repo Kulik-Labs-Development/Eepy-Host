@@ -572,6 +572,39 @@ def _drain_stderr(proc: subprocess.Popen, tail: deque) -> None:
         tail.append(line.decode("utf-8", "replace").rstrip()[:500])
 
 
+def _spawn_error_bridge(exc: Exception, image: str, network: str | None) -> BridgeError:
+    """Turn a raw docker-SDK exception from spawn/pull into an operator-facing
+    BridgeError. Kept as a pure classifier (no logging/raising here) so the
+    message mapping is unit-testable without a daemon."""
+    msg = str(exc).lower()
+    first_line = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+    if "unauthorized" in msg or "authentication required" in msg:
+        # GHCR packages default to PRIVATE: the host daemon's anonymous
+        # (or stale) pull is rejected. The backend pulls THROUGH the host
+        # daemon (mounted socket), so the fix is on the HOST.
+        return BridgeError(
+            f"Cannot pull sidecar image '{image}': registry access denied "
+            f"({first_line}). This image is a private registry package and the "
+            "Docker daemon on the host has no valid credentials for it. Fix "
+            "either way: (a) make the package public — GitHub → the org that owns "
+            "the image → Packages → the eepy-host-* packages → Change visibility → "
+            "Public (safe here: all images are built from public repos and carry no "
+            "secrets); or (b) ON THE HOST run `docker logout ghcr.io` then "
+            "`docker login ghcr.io` with an org-member username and a personal "
+            "access token that has the read:packages scope."
+        )
+    if "not found" in msg and "pull access" in msg:
+        return BridgeError(f"Cannot pull sidecar image '{image}' (private registry?).")
+    if network and "network" in msg and ("is not found" in msg or "invalid reference" in msg):
+        return BridgeError(
+            f"Docker network '{network}' not found. The backend and its "
+            f"sidecars must share a docker network (compose defines 'eepy-sidecars')."
+        )
+    # Keep the daemon's own words (first line) in the 502 detail: a bare
+    # exception class name ("APIError") tells the operator nothing.
+    return BridgeError(f"Failed to start sidecar container: {first_line[:400]}")
+
+
 def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
                   ephemeral: bool, user_id: int | None = None) -> Instance:
     # Runs in a worker thread (see spawn_instance): every call here — daemon
@@ -630,16 +663,8 @@ def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
         logger.info(f"mcp-bridge: starting sidecar container for {template.id} key={key[:12]} image={image}")
         container = client.containers.run(**run_kwargs)
     except Exception as exc:
-        msg = str(exc).lower()
-        if "not found" in msg and "pull access" in msg:
-            raise BridgeError(f"Cannot pull sidecar image '{image}' (private registry?).") from exc
-        if network and "network" in msg and ("is not found" in msg or "invalid reference" in msg):
-            raise BridgeError(
-                f"Docker network '{network}' not found. The backend and its "
-                f"sidecars must share a docker network (compose defines 'eepy-sidecars')."
-            ) from exc
         logger.error(f"mcp-bridge: failed to start sidecar container for {template.id} key={key[:12]}: {exc}")
-        raise BridgeError(f"Failed to start sidecar container ({exc.__class__.__name__}).") from exc
+        raise _spawn_error_bridge(exc, image, network) from exc
 
     # Wait until running (blocking sleep is fine: this runs in a worker thread).
     deadline = time.time() + STARTUP_TIMEOUT_S

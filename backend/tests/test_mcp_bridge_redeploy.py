@@ -12,7 +12,10 @@
 - deleting a user's config tears down that user's live sidecars immediately;
 - the boot-time Docker daemon probe surfaces a missing socket mount (the
   classic stale-Portainer-stack failure) with an actionable fix instead of an
-  opaque "Cannot reach the Docker daemon" on the user's first tool call.
+  opaque "Cannot reach the Docker daemon" on the user's first tool call;
+- spawn/pull failures carry the daemon's own words in the 502 detail, and a
+  private-registry (GHCR "unauthorized") pull yields the two host-side fixes
+  instead of a bare "(APIError)".
 """
 
 import unittest.mock
@@ -251,3 +254,39 @@ def test_docker_socket_path_helper(bridge, monkeypatch):
     assert bridge._docker_socket_path() == "/var/run/docker.sock"
     monkeypatch.setenv("DOCKER_HOST", "tcp://127.0.0.1:2375")
     assert bridge._docker_socket_path() == "tcp://127.0.0.1:2375"
+
+
+# ---------------------------------------------------------------------------
+# Spawn/pull error classification (private-GHCR diagnostics)
+# ---------------------------------------------------------------------------
+def test_spawn_error_unauthorized_pull_is_actionable(bridge):
+    """The production failure: host daemon has no GHCR credentials for a
+    private package. The 502 detail must carry the registry's own words AND
+    the two fixes (make package public / docker login on the host)."""
+    exc = Exception(
+        '500 Server Error for http+docker://localhost/v1.54/images/create'
+        '?tag=latest&fromImage=ghcr.io%2Fkulik-labs-development%2Feepy-host-happyfox: '
+        'Internal Server Error ("error from registry: unauthorized unauthorized")'
+    )
+    err = bridge._spawn_error_bridge(exc, "ghcr.io/kulik-labs-development/eepy-host-happyfox:latest", "deploy_eepy-sidecars")
+    assert "unauthorized" in str(err)
+    assert "private registry package" in str(err)
+    assert "docker login ghcr.io" in str(err)
+    assert "read:packages" in str(err)
+    assert "Change visibility" in str(err)
+
+
+def test_spawn_error_generic_keeps_daemon_message(bridge):
+    """A non-registry failure must surface the daemon's first line, not just
+    the exception class name (the old '(APIError)' dead end)."""
+    exc = Exception("409 Conflict: port is already allocated")
+    err = bridge._spawn_error_bridge(exc, "img:latest", None)
+    assert "409 Conflict" in str(err)
+    assert "APIError" not in str(err)
+
+
+def test_spawn_error_network_not_found(bridge):
+    exc = Exception('network "deploy_eepy-sidecars" not found')
+    err = bridge._spawn_error_bridge(exc, "img:latest", "deploy_eepy-sidecars")
+    assert "eepy-sidecars" in str(err)
+    assert "not found" in str(err)

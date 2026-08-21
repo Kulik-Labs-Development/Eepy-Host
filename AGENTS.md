@@ -537,7 +537,17 @@ there is no vitest in the frontend.)
    and the call returns upstream data. Sidecars dial through the
    `eepy-sidecars` network (container IP) — the legacy `EEPY_MCP_DOCKER_HOST`
    loopback/host-gateway path is fallback-only and NOT reliable on Linux.
- - **Sidecar images must pin the mcp SDK 1.x line:** the submodules'
+   - **Sidecar images are pulled by the HOST daemon on demand — GHCR
+    visibility matters:** the bridge pulls `ghcr.io/.../eepy-host-happyfox`
+    etc. through the host Docker socket, with whatever credentials the HOST
+    daemon has. GHCR packages default to PRIVATE, so an anonymous host gets
+    `error from registry: unauthorized` on the first tool call. Fix either
+    by making the org's `eepy-host-*` packages Public (GitHub → org →
+    Packages → Change visibility; safe — all images build from public repos
+    and carry no secrets) or by `docker login ghcr.io` on the host with a
+    token that has `read:packages`. The spawn error carries these steps in
+    the 502 detail (see `_spawn_error_bridge`).
+  - **Sidecar images must pin the mcp SDK 1.x line:** the submodules'
    `requirements.txt` declares `mcp>=1.0.0` with no upper bound, and the
    2.0.0 release removed `mcp.server.fastmcp` (FastMCP), which crashes the
    HappyFox sidecar at startup (container exits, bridge reports "cannot
