@@ -84,6 +84,42 @@ def test_discovery_populates_tools(client, auth_user, fake_template_id):
     assert probe_keys == []
 
 
+def test_discovery_stores_input_schema_and_spec_exposes_properties(client, auth_user, fake_template_id):
+    """Production regression: the live spec fell back to name-only, UNTYPED
+    tools because admin discovery had never stored schemas (the sidecar path
+    was broken first). Open WebUI then presented every tool as
+    parameter-less, the model sent {}, and the upstream server answered
+    'Field required' for every tool that takes arguments.
+
+    Discovery must store the real inputSchema, and the spec must expose
+    properties + required - that is the ONLY way Open WebUI shows the model
+    the fields AND passes them through (its middleware drops any model
+    argument not present in the spec's properties).
+    """
+    r = client.post(f"/superuser/mcp/templates/{fake_template_id}/discover",
+                    headers={"Authorization": f"Bearer {auth_user['token']}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["tool_count"] == 4
+
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    db = SessionLocal()
+    try:
+        t = db.query(MCPTemplate).filter(MCPTemplate.id == fake_template_id).first()
+        schemas = {x["name"]: x.get("inputSchema") for x in (t.discovered_tools or [])}
+    finally:
+        db.close()
+    create = schemas.get("create_item") or {}
+    assert "name" in (create.get("properties") or {}), f"inputSchema lost in discovery: {create}"
+
+    r = client.get("/api/mcp/openapi.json")
+    op = r.json()["paths"][f"/proxy/{fake_template_id}/create_item"]["post"]
+    schema = op["requestBody"]["content"]["application/json"]["schema"]
+    assert "name" in schema.get("properties", {}), f"spec lacks properties: {schema}"
+    assert "name" in schema.get("required", []), f"spec lacks required: {schema}"
+
+
 def test_openapi_spec_includes_discovered_tools(client, fake_template_id):
     r = client.get("/api/mcp/openapi.json")
     assert r.status_code == 200, r.text
