@@ -23,8 +23,10 @@ import {
   Wifi,
   WifiOff,
   Search,
+  Radar,
 } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 import MCPConnectionWizard, { TemplateSchema } from '@/src/components/MCPConnectionWizard';
 
 interface Template {
@@ -41,6 +43,14 @@ interface MyConfig {
   name_display: string | null;
   is_active: boolean;
   last_used_at: string | null;
+}
+
+interface DiscoveryRow {
+  id: string;
+  name: string;
+  runtime: string;
+  tool_count: number;
+  tools_discovered_at: string | null;
 }
 
 function authHeaders(): Record<string, string> {
@@ -64,6 +74,61 @@ export default function ServersPage() {
 
   // Search box for the (potentially long) integration library.
   const [search, setSearch] = useState('');
+
+  // Superuser-only Tool Discovery: captures each integration's real tool
+  // schemas (tools/list) so the unified OpenAPI spec is typed. Without it a
+  // template serves name-only untyped tools and Open WebUI cannot pass
+  // arguments to them (upstream 'Field required').
+  const { user } = useAuth();
+  const isSuperuser = user?.role === 'SUPERUSER';
+  const [discovery, setDiscovery] = useState<DiscoveryRow[]>([]);
+  const [discoveringId, setDiscoveringId] = useState<string | null>(null);
+  const [discoveryResults, setDiscoveryResults] = useState<Record<string, { status: string; detail: string }>>({});
+
+  const loadDiscovery = useCallback(async () => {
+    if (!isSuperuser) return;
+    try {
+      const res = await fetch(`${getApiUrl()}/superuser/mcp/templates`, { headers: authHeaders(), cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        setDiscovery(Array.isArray(data) ? data : []);
+      }
+    } catch {
+      // Non-fatal: the section simply stays empty.
+    }
+  }, [isSuperuser]);
+
+  const runDiscover = useCallback(
+    async (templateId: string) => {
+      setDiscoveringId(templateId);
+      setDiscoveryResults((prev) => ({
+        ...prev,
+        [templateId]: { status: 'running', detail: 'Contacting the integration sidecar (tools/list)...' },
+      }));
+      try {
+        const res = await fetch(`${getApiUrl()}/superuser/mcp/templates/${templateId}/discover`, {
+          method: 'POST',
+          headers: authHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        setDiscoveryResults((prev) => ({
+          ...prev,
+          [templateId]: res.ok
+            ? {
+                status: 'ok',
+                detail: `Discovered ${data.tool_count ?? 0} tools. Re-import the Open WebUI tool server to pick up the new schemas.`,
+              }
+            : { status: 'failed', detail: data.detail || `HTTP ${res.status}` },
+        }));
+        if (res.ok) await loadDiscovery();
+      } catch {
+        setDiscoveryResults((prev) => ({ ...prev, [templateId]: { status: 'failed', detail: 'Could not reach the backend.' } }));
+      } finally {
+        setDiscoveringId(null);
+      }
+    },
+    [loadDiscovery]
+  );
 
   const filteredTemplates = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -277,6 +342,79 @@ export default function ServersPage() {
               </div>
             )}
           </section>
+
+          {/* Tool Discovery (superuser only) */}
+          {isSuperuser && (
+            <section className="panel pixel-caps p-4 sm:p-6 md:p-8 [--cap:theme('colors.eepy.amber')]">
+              <h3 className="font-pixel font-bold text-xl mb-2 flex items-center gap-2.5 text-ink">
+                <Radar size={20} className="text-eepy-amber" /> Tool Discovery
+                <span className="chip chip-amber text-[11px]">superuser</span>
+              </h3>
+              <p className="text-ink-dim font-body text-xs mb-5 leading-relaxed">
+                Captures each integration&apos;s real tool schemas from its upstream server
+                (tools/list) using YOUR OWN stored connection to it. The Open WebUI spec is
+                built from this data &mdash; a template at 0 tools serves UNTYPED tools, so
+                Open WebUI cannot pass arguments to them. Re-run whenever the upstream
+                integration changes.
+              </p>
+              {discovery.length === 0 ? (
+                <p className="text-ink-faint font-body text-sm italic">No approved templates found.</p>
+              ) : (
+                <div className="space-y-3">
+                  {discovery.map((t) => {
+                    const result = discoveryResults[t.id];
+                    const runnable = t.runtime === 'mcp-server';
+                    return (
+                      <div key={t.id} className="card p-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-pixel font-bold text-ink truncate">{t.name}</p>
+                            <p className="text-[13px] text-ink-dim font-console truncate">
+                              {t.id}
+                              {t.tool_count > 0
+                                ? ` · ${t.tool_count} tools discovered` +
+                                  (t.tools_discovered_at
+                                    ? ` · ${new Date(t.tools_discovered_at).toLocaleString()}`
+                                    : '')
+                                : ' · NO schemas discovered — Open WebUI tools will be UNTYPED'}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {t.tool_count === 0 && runnable && (
+                              <span className="chip chip-ember text-[11px]">needs discovery</span>
+                            )}
+                            <button
+                              onClick={() => runDiscover(t.id)}
+                              disabled={discoveringId !== null || !runnable}
+                              className="btn btn-amber px-3 py-2 text-xs flex items-center gap-1.5"
+                            >
+                              {discoveringId === t.id ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <Radar size={14} />
+                              )}
+                              {discoveringId === t.id ? 'Discovering...' : 'Discover tools'}
+                            </button>
+                          </div>
+                        </div>
+                        {result && (
+                          <p
+                            className={`text-sm mt-3 p-2.5 font-body border-l-4 ${
+                              result.status === 'ok'
+                                ? 'text-eepy-sage border-eepy-sage bg-eepy-sage/5'
+                                : 'text-eepy-ember border-eepy-ember bg-eepy-ember/5'
+                            }`}
+                          >
+                            {result.detail}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
 
           {/* Integration Library (browsable catalog, filtered) */}
           <section>

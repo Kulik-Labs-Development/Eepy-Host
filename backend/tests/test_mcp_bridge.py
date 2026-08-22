@@ -70,6 +70,45 @@ def test_connection_test_endpoint(client, auth_user, fake_template_id):
     assert r.json()["status"] == "ok"
 
 
+def test_discovery_state_listing_requires_superuser_and_tracks_state(client, auth_user, fake_template_id):
+    """The superuser dashboard lists discovery state per approved template.
+
+    A template at tool_count=0 serves name-only UNTYPED tools — the exact
+    production incident where Open WebUI presented every tool as
+    parameter-less and could not pass arguments upstream. The dashboard
+    surfaces this state so discovery is never silently skipped.
+    """
+    import random
+
+    # A plain (non-superuser) account cannot list discovery state.
+    username = f"plainuser{random.randint(10000, 99999)}"
+    r = client.post("/auth/signup", json={
+        "username": username, "email": f"{username}@example.com", "password": "plain-password-1"})
+    assert r.status_code == 200, r.text
+    r = client.post("/auth/login", json={"username": username, "password": "plain-password-1"})
+    plain_token = r.json()["access_token"]
+
+    r = client.get("/superuser/mcp/templates", headers={"Authorization": f"Bearer {plain_token}"})
+    assert r.status_code == 403
+
+    # Superuser: fake template present; no schemas discovered yet (this test
+    # runs before the discovery tests in this file).
+    r = client.get("/superuser/mcp/templates", headers=_h(auth_user["token"]))
+    assert r.status_code == 200, r.text
+    row = {x["id"]: x for x in r.json()}[fake_template_id]
+    assert row["runtime"] == "mcp-server"
+    assert row["tool_count"] == 0
+    assert row["tools_discovered_at"] is None
+
+    # After discovery the state reflects the stored schemas.
+    r = client.post(f"/superuser/mcp/templates/{fake_template_id}/discover", headers=_h(auth_user["token"]))
+    assert r.status_code == 200, r.text
+    r = client.get("/superuser/mcp/templates", headers=_h(auth_user["token"]))
+    row = {x["id"]: x for x in r.json()}[fake_template_id]
+    assert row["tool_count"] == 4
+    assert row["tools_discovered_at"] is not None
+
+
 def test_discovery_populates_tools(client, auth_user, fake_template_id):
     r = client.post(f"/superuser/mcp/templates/{fake_template_id}/discover",
                     headers=_h(auth_user["token"]))

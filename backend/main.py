@@ -773,6 +773,46 @@ def update_mcp_template_runtime(
     return {"status": "updated", "template_id": template_id, "runtime": template.runtime}
 
 
+class TemplateDiscoveryOut(BaseModel):
+    id: str
+    name: str
+    runtime: str
+    tool_count: int
+    tools_discovered_at: str | None
+
+
+@app.get("/superuser/mcp/templates", response_model=list[TemplateDiscoveryOut])
+def list_mcp_template_discovery(
+    superuser: User = Depends(get_superuser),
+    db: Session = Depends(get_db),
+):
+    """Discovery state for every approved template (superuser dashboard).
+
+    The unified OpenAPI spec is built from discovered_tools; a template with
+    tool_count=0 is serving name-only UNTYPED tools, so Open WebUI presents
+    them as parameter-less and argument-taking tools fail upstream with
+    'Field required'. The dashboard shows this state so discovery is never
+    silently skipped again.
+    """
+    rows = (
+        db.query(MCPTemplate)
+        .filter(MCPTemplate.approved_by_admin == True)  # noqa: E712
+        .order_by(MCPTemplate.name)
+        .all()
+    )
+    out: list[dict] = []
+    for t in rows:
+        tools = [x for x in (t.discovered_tools or []) if isinstance(x, dict) and x.get("name")]
+        out.append({
+            "id": t.id,
+            "name": t.name,
+            "runtime": t.runtime,
+            "tool_count": len(tools),
+            "tools_discovered_at": t.tools_discovered_at.isoformat() if t.tools_discovered_at else None,
+        })
+    return out
+
+
 @app.post("/superuser/mcp/templates/{template_id}/discover")
 async def discover_mcp_tools(
     template_id: str,
