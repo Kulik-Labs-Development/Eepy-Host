@@ -4,3 +4,6 @@
 [submodule "integrations/ebay-mcp"]
 	path = integrations/ebay-mcp
 	url = https://github.com/YosefHayim/ebay-mcp.git
+[submodule "integrations/portainer-mcp"]
+	path = integrations/portainer-mcp
+	url = https://github.com/portainer/portainer-mcp

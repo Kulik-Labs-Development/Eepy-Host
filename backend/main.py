@@ -114,13 +114,15 @@ def bootstrap_superuser() -> None:
         db.close()
 
 def seed_mcp_templates():
-    """Seed the admin-approved templates (HappyFox #1, eBay #2) into the library.
+    """Seed the admin-approved templates (HappyFox #1, eBay #2, Portainer #3)
+    into the library.
 
     Each integration's MCP server code lives OUTSIDE this backend, in its own
     git submodule under integrations/ (happyfox-mcp →
     github.com/Glitch3dPenguin/happyfox-mcp, ebay-mcp →
-    github.com/YosefHayim/ebay-mcp). These rows only register *how to run*
-    them:
+    github.com/YosefHayim/ebay-mcp, portainer-mcp →
+    github.com/portainer/portainer-mcp). These rows only register *how to
+    run* them:
 
     - docker backend (production/Portainer): CI builds each submodule into its
       eepy-host-<name> GHCR sidecar image on every push (the submodule pin in
@@ -328,9 +330,135 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
+    portainer = MCPTemplate(
+        id="portainer",
+        name="Portainer",
+        description=(
+            "Manage your Portainer instance across ~211 tools: environments and "
+            "endpoints, Docker containers and images, Kubernetes resources, Helm "
+            "releases, stacks, and GitOps workflows — plus proxy calls straight to "
+            "each environment's Docker/K8s API. Runs against YOUR Portainer with "
+            "your own access token (match the server's minor version to your "
+            "Portainer's, e.g. 2.44); credentials stay encrypted at rest and are "
+            "proxied through the Eepy unified proxy."
+        ),
+        config_schema={
+            "category": "DevOps / Container Management",
+            "type": "object",
+            "properties": {
+                "PORTAINER_URL": {
+                    "type": "string",
+                    "label": "Portainer URL",
+                    "placeholder": "https://portainer.example.com",
+                    "help": "Base URL of your Portainer instance (no trailing /api).",
+                    "required": True,
+                },
+                "PORTAINER_API_KEY": {
+                    "type": "password",
+                    "label": "API Key (Access Token)",
+                    "placeholder": "ptr_...",
+                    "help": "Portainer: My Account > Access tokens. The MCP server's minor version must match your Portainer's minor (2.44.x server ↔ 2.44.x instance).",
+                    "required": True,
+                },
+                "PORTAINER_TLS_VERIFY": {
+                    "type": "string",
+                    "label": "Verify TLS Certificates",
+                    "placeholder": "1",
+                    "help": "Optional. Set 0 if your Portainer instance uses a self-signed certificate (default: 1).",
+                    "required": False,
+                },
+            },
+            "required": ["PORTAINER_URL", "PORTAINER_API_KEY"],
+        },
+        image_tag="ghcr.io/kulik-labs-development/eepy-host-portainer",
+        runtime="mcp-server",
+        # Modular sidecar spec (same contract as the HappyFox/eBay reference),
+        # with the two Eepy bridge extensions this upstream needs because its
+        # HTTP mode is per-user passthrough:
+        #
+        #  - generated_secrets: the server REQUIRES an HTTP gate secret
+        #    (PORTAINER_MCP_AUTH_TOKEN, 32+ chars) but the token must be
+        #    unique per sidecar and never stored — the bridge mints a fresh
+        #    random one into the sidecar env on every spawn.
+        #  - headers: every request (initialize AND tools/call) must carry
+        #    the gate bearer in Authorization AND the user's own key in
+        #    X-Portainer-API-Key (validated per request, cached 60s). The
+        #    {{ENV}} placeholders resolve from the sidecar env, so the user's
+        #    key reaches the header without ever being in runtime_config.
+        #  - Host override: the server 421-rejects any Host not in
+        #    PORTAINER_MCP_ALLOWED_HOSTS, but the sidecar's container IP is
+        #    only known AFTER spawn. The bridge therefore dials with a fixed
+        #    Host header (eepy-sidecar:17717) and the allowlist below accepts
+        #    it via the `host:*` wildcard-port pattern.
+        #
+        # Production (docker backend): the image serves streamable-HTTP on
+        # :17717 at /mcp. It is ONLY reachable on the internal eepy-sidecars
+        # docker network, so the plaintext-HTTP opt-in is the deployment's
+        # trusted-private-network posture (the gate token + per-user key are
+        # the auth layers; the Eepy unified proxy is the front door). Under
+        # HTTP the server REFUSES to boot with PORTAINER_API_KEY set (it is
+        # stdio-only), so the docker env_mapping parks the user's key in
+        # EEPY_PORTAINER_API_KEY for the header template.
+        # Local (subprocess backend): stdio transport reads PORTAINER_URL +
+        # PORTAINER_API_KEY from env — hence the subprocess_env_mapping that
+        # swaps the key back to the upstream var name. Needs `uv` on PATH
+        # (one-time dep sync in the submodule on first run).
+        runtime_config={
+            "image": "ghcr.io/kulik-labs-development/eepy-host-portainer:latest",
+            "command": ["uv", "run", "mcp-portainer"],
+            "cwd": "integrations/portainer-mcp",
+            "env": {
+                # Trusted-private-network posture: the sidecar is unreachable
+                # outside the eepy-sidecars docker network.
+                "PORTAINER_MCP_DANGEROUSLY_ALLOW_PLAINTEXT_HTTP": "1",
+                # Accepts the bridge's fixed Host header (eepy-sidecar:17717).
+                "PORTAINER_MCP_ALLOWED_HOSTS": "eepy-sidecar:*",
+            },
+            "subprocess_env": {"PORTAINER_MCP_TRANSPORT": "stdio"},
+            "endpoint": "/mcp",
+            "port": "17717",
+            # Docker backend: key parked under an upstream-ignorable name.
+            "env_mapping": {
+                "PORTAINER_URL": "PORTAINER_URL",
+                "PORTAINER_API_KEY": "EEPY_PORTAINER_API_KEY",
+                "PORTAINER_TLS_VERIFY": "PORTAINER_TLS_VERIFY",
+            },
+            # Subprocess (stdio) backend: the upstream var name the stdio
+            # transport actually reads.
+            "subprocess_env_mapping": {
+                "PORTAINER_URL": "PORTAINER_URL",
+                "PORTAINER_API_KEY": "PORTAINER_API_KEY",
+                "PORTAINER_TLS_VERIFY": "PORTAINER_TLS_VERIFY",
+            },
+            "generated_secrets": ["PORTAINER_MCP_AUTH_TOKEN"],
+            "headers": {
+                "Host": "eepy-sidecar:17717",
+                "Authorization": "Bearer {{PORTAINER_MCP_AUTH_TOKEN}}",
+                "X-Portainer-API-Key": "{{EEPY_PORTAINER_API_KEY}}",
+            },
+            # Read-only probe for POST /config/{id}/test: the server validates
+            # the user's key (per request) before any tool runs, so a bad key
+            # or unreachable instance fails the test loudly.
+            "test_tool": {"name": "systemVersion", "arguments": {}},
+            # Representative subset of the ~211 upstream tools so the OpenAPI
+            # spec has entries before admin discovery stores the full
+            # authoritative tools/list (discovery takes precedence).
+            "tool_names": [
+                "systemVersion", "systemStatus", "systemInfo", "MOTD",
+                "EndpointList", "EndpointInspect", "dockerDashboard",
+                "dockerImagesList", "StackList", "StackInspect",
+                "GitOpsSourcesList", "GitOpsWorkflowsList", "HelmList",
+                "HelmGet", "GetKubernetesNamespaces", "GetKubernetesNodes",
+                "get_guidance",
+            ],
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
     db = SessionLocal()
     try:
-        for spec in (happyfox, ebay):
+        for spec in (happyfox, ebay, portainer):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
                 existing.approved_by_admin = True

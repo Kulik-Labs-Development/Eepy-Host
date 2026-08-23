@@ -8,6 +8,13 @@ carries a ``runtime_config`` (image or command + env mapping) and this module:
    with the user's DECRYPTED credentials injected as environment variables.
    Plaintext credentials exist only in the in-process env of the sidecar
    spawn and the live stdio/http stream -- never written to disk or logs.
+   HTTP sidecars may additionally carry per-request headers (runtime_config
+   ``headers``, with ``{{ENV_VAR}}`` placeholders resolved from the sidecar's
+   env) so an upstream server that gates on a bearer token and/or expects the
+   caller's credential as a per-request header (the Portainer MCP server)
+   works without storing that secret in runtime_config or the DB. The bridge
+   mints fresh random values for each runtime_config ``generated_secrets``
+   env var on every spawn (e.g. the per-sidecar gate token).
 2. Speaks standard MCP (initialize / tools/list / tools/call) to it.
 3. Reaps idle sidecars after ``EEPY_MCP_INSTANCE_IDLE_TIMEOUT`` seconds.
 
@@ -46,6 +53,8 @@ import asyncio
 import contextlib
 import hashlib
 import os
+import re
+import secrets
 import subprocess
 import threading
 import time
@@ -133,13 +142,34 @@ def key_for(user_id: int, template_id: str, credentials: dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _credential_mapping(runtime_cfg: dict[str, Any]) -> dict[str, Any]:
+    """The credential-field -> upstream-env-var map for the ACTIVE backend.
+
+    Mirrors ``_static_env``: an upstream server may read the SAME credential
+    from different env vars per transport (e.g. the Portainer MCP server
+    reads ``PORTAINER_API_KEY`` under stdio but REFUSES to boot under HTTP
+    with that var set — each client sends its key as a per-request header
+    instead). ``subprocess_env_mapping`` replaces ``env_mapping`` for the
+    subprocess backend when present; the docker backend always uses
+    ``env_mapping`` (falling back to ``subprocess_env_mapping`` is NOT
+    done: a docker backend that only has the subprocess map is a
+    misconfiguration, and the missing sidecar env fails loudly at spawn).
+    """
+    if INSTANCE_BACKEND == "subprocess":
+        override = runtime_cfg.get("subprocess_env_mapping")
+        if isinstance(override, dict):
+            return override
+    return runtime_cfg.get("env_mapping") or {}
+
+
 def map_env(runtime_cfg: dict[str, Any], credentials: dict[str, Any]) -> dict[str, str]:
     """Map user credential fields to the upstream server's environment variables.
 
     ``env_mapping``: {user-credential-field: upstream-env-var}. Unmapped
-    credential fields are never passed to the sidecar.
+    credential fields are never passed to the sidecar. See
+    ``_credential_mapping`` for the per-backend override.
     """
-    mapping = runtime_cfg.get("env_mapping") or {}
+    mapping = _credential_mapping(runtime_cfg)
     if not isinstance(mapping, dict):
         raise BridgeError("Template env_mapping is malformed.")
     env: dict[str, str] = {}
@@ -177,7 +207,65 @@ def _sidecar_env(runtime_cfg: dict[str, Any], mapped: dict[str, str]) -> dict[st
         for k, v in static.items():
             env[str(k)] = str(v)
     env.update(mapped)  # user credentials override static values
+    # Bridge-minted per-spawn secrets: the sidecar gets a FRESH random value
+    # in each of these env vars (e.g. the Portainer MCP server's HTTP gate
+    # token, PORTAINER_MCP_AUTH_TOKEN). Never stored in runtime_config or the
+    # DB, never logged (the redaction pass covers them via the env values).
+    # A re-spawn after reaping mints a new value; the matching header template
+    # (see _sidecar_headers) is resolved from the same env, so they stay in
+    # sync by construction.
+    for name in runtime_cfg.get("generated_secrets") or []:
+        env[str(name)] = secrets.token_hex(32)
     return env
+
+
+# {{ENV_VAR}} placeholder in a header template, where ENV_VAR is an env var
+# name resolvable from the sidecar's final env (static + mapped credentials +
+# generated secrets).
+_HEADER_PLACEHOLDER = re.compile(r"\{\{([A-Za-z0-9_]+)\}\}")
+
+
+def _sidecar_headers(runtime_cfg: dict[str, Any], env: dict[str, str]) -> dict[str, str]:
+    """Per-request HTTP headers for an HTTP sidecar (docker/url instance).
+
+    ``headers`` in runtime_config is {header-name: template}; each ``{{NAME}}``
+    placeholder is resolved from the sidecar's FINAL env, so user credentials
+    (mapped) and bridge-minted secrets (generated_secrets) can ride in
+    headers WITHOUT ever being stored in runtime_config. Example (Portainer
+    MCP server, HTTP mode):
+
+        "generated_secrets": ["PORTAINER_MCP_AUTH_TOKEN"],
+        "headers": {
+            "Authorization": "Bearer {{PORTAINER_MCP_AUTH_TOKEN}}",
+            "X-Portainer-API-Key": "{{EEPY_PORTAINER_API_KEY}}",
+        }
+
+    The subprocess backend speaks stdio (there is no HTTP request to carry
+    headers on), so it always gets {} — its env may legitimately lack the
+    vars the header templates reference.
+    """
+    if INSTANCE_BACKEND == "subprocess" and not runtime_cfg.get("url"):
+        return {}
+    template = runtime_cfg.get("headers") or {}
+    if not isinstance(template, dict) or not template:
+        return {}
+    headers: dict[str, str] = {}
+    for name, value in template.items():
+        if not isinstance(value, str):
+            raise BridgeError(f"Template headers[{name!r}] must be a string.")
+
+        def _sub(match: "re.Match[str]") -> str:
+            var = match.group(1)
+            if var not in env:
+                raise BridgeError(
+                    f"Template headers[{name!r}] references env var '{var}', "
+                    f"which is not set on the sidecar (static env, env_mapping, "
+                    f"or generated_secrets)."
+                )
+            return env[var]
+
+        headers[str(name)] = _HEADER_PLACEHOLDER.sub(_sub, value)
+    return headers
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +287,7 @@ class Instance:
     container_name: str | None = None
     stderr_tail: deque | None = None  # subprocess: bounded stderr for diagnostics
     secrets: tuple[str, ...] = ()  # credential values to redact from any surfaced sidecar output
+    headers: dict[str, str] = field(default_factory=dict)  # per-request headers for HTTP sidecars (resolved)
     ephemeral: bool = False
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
@@ -484,13 +573,20 @@ def _proc_alive(inst: Instance) -> bool:
 async def spawn_instance(template: MCPTemplate, key: str,
                           env: dict[str, str],
                           ephemeral: bool = False,
-                          user_id: int | None = None) -> Instance:
+                          user_id: int | None = None,
+                          headers: dict[str, str] | None = None) -> Instance:
     """Spawn a sidecar. ALL blocking work (exec, Docker API, image pulls,
     readiness waits) runs in a worker thread via asyncio.to_thread so the
     event loop is never stalled by a spawn — a first-time docker pull can
     take minutes.
+
+    ``headers`` are the resolved per-request HTTP headers for an HTTP sidecar
+    (see _sidecar_headers); stored on the Instance and attached to the
+    streamable-HTTP client in open_session. Ignored by the subprocess backend
+    (stdio has no HTTP).
     """
     cfg = _runtime_config(template)
+    headers = headers or {}
 
     if cfg.get("url"):
         # Fixed upstream endpoint (no per-user env possible) -- rare, e.g. for
@@ -499,13 +595,13 @@ async def spawn_instance(template: MCPTemplate, key: str,
         if not endpoint.startswith("/"):
             endpoint = "/" + endpoint
         inst = Instance(key=key, kind="url", url=str(cfg["url"]).rstrip("/") + endpoint,
-                        ephemeral=ephemeral)
+                        headers=headers, ephemeral=ephemeral)
         _REGISTRY[key] = inst
         logger.info(f"mcp-bridge: registered url instance {template.id} key={key[:12]}")
         return inst
 
     if INSTANCE_BACKEND == "docker" or (cfg.get("image") and not cfg.get("command")):
-        return await asyncio.to_thread(_spawn_docker, template, key, env, ephemeral, user_id)
+        return await asyncio.to_thread(_spawn_docker, template, key, env, ephemeral, user_id, headers)
 
     if not (isinstance(cfg.get("command"), list) and cfg["command"]):
         raise BridgeError("Template runtime_config is missing 'command'.")
@@ -606,7 +702,8 @@ def _spawn_error_bridge(exc: Exception, image: str, network: str | None) -> Brid
 
 
 def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
-                  ephemeral: bool, user_id: int | None = None) -> Instance:
+                  ephemeral: bool, user_id: int | None = None,
+                  headers: dict[str, str] | None = None) -> Instance:
     # Runs in a worker thread (see spawn_instance): every call here — daemon
     # list/pull/run/reload — is a blocking Docker API call and must not touch
     # the event loop.
@@ -738,7 +835,8 @@ def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
 
     inst = Instance(key=key, kind="docker", template_id=template.id, user_id=user_id, image=image,
                     container_id=container.id, container_name=name, url=dial_url, env=env,
-                    secrets=tuple(v for v in env.values() if len(v) >= 8), ephemeral=ephemeral)
+                    secrets=tuple(v for v in env.values() if len(v) >= 8), headers=headers or {},
+                    ephemeral=ephemeral)
     _REGISTRY[key] = inst
     if not ephemeral and user_id is not None:
         _track_sidecar(user_id, template.id, inst)  # fail-soft: DB record for the boot sweep
@@ -959,6 +1057,7 @@ async def acquire_instance(user: User, template: MCPTemplate,
     if template.runtime != "mcp-server":
         raise BridgeError(f"Template '{template.id}' does not use the MCP server runtime.")
     env = _sidecar_env(cfg, map_env(cfg, credentials))
+    headers = _sidecar_headers(cfg, env)
     key = key_for(user.id, template.id, credentials)
 
     # Per-key lock: only same-sidecar requests serialize (prevents
@@ -972,7 +1071,7 @@ async def acquire_instance(user: User, template: MCPTemplate,
                 existing.last_used = time.time()
                 return existing
             await asyncio.to_thread(kill_instance, key)
-        inst = await spawn_instance(template, key, env, user_id=user.id)
+        inst = await spawn_instance(template, key, env, user_id=user.id, headers=headers)
         inst.last_used = time.time()
         return inst
 
@@ -1079,8 +1178,29 @@ async def open_session(inst: Instance) -> McpSession:
                               _stack=stack)
         else:
             assert inst.url
-            streams = await stack.enter_async_context(streamable_http_client(inst.url))
-            sess = McpSession(kind="http", url=inst.url, _stack=stack)
+            http_client = None
+            if inst.headers:
+                # Per-request headers for this sidecar: e.g. the gate bearer
+                # + the caller's own API-key header the Portainer MCP server
+                # requires in HTTP mode, or a fixed Host override its
+                # DNS-rebinding allowlist (PORTAINER_MCP_ALLOWED_HOSTS)
+                # expects. The mcp SDK's streamable_http_client no longer
+                # accepts a headers kwarg, so hand it a pre-configured httpx
+                # client with the SDK's default timeouts (mirrors
+                # mcp.shared._httpx_utils.create_mcp_http_client). httpx
+                # honours an explicit Host header over the one it would
+                # derive from the dial URL. The SDK does not close a
+                # provided client, so it rides on the session for teardown.
+                import httpx
+
+                http_client = httpx.AsyncClient(
+                    headers=inst.headers,
+                    follow_redirects=True,
+                    timeout=httpx.Timeout(30.0, read=300.0),
+                )
+            streams = await stack.enter_async_context(
+                streamable_http_client(inst.url, http_client=http_client))
+            sess = McpSession(kind="http", url=inst.url, _stack=stack, _client=http_client)
         session = await stack.enter_async_context(ClientSession(streams[0], streams[1]))
         await asyncio.wait_for(session.initialize(), timeout=STARTUP_TIMEOUT_S)
         sess.session = session
@@ -1167,9 +1287,10 @@ async def discover_tools_for_template(db: Session, user: User, template: MCPTemp
     """
     cfg = _runtime_config(template)
     env = _sidecar_env(cfg, map_env(cfg, credentials))
+    headers = _sidecar_headers(cfg, env)
     probe_key = "probe-" + key_for(0, template.id, credentials)[:32]
     try:
-        inst = await spawn_instance(template, probe_key, env, ephemeral=True)
+        inst = await spawn_instance(template, probe_key, env, ephemeral=True, headers=headers)
     except BridgeError as exc:
         logger.error(f"mcp-bridge: discovery spawn failed for {template.id}: {exc}")
         raise HTTPException(status_code=502, detail=f"Sidecar spawn failed: {exc}") from exc

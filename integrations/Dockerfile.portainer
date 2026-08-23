@@ -1,0 +1,69 @@
+# Portainer MCP server sidecar image.
+#
+# SOURCE OF TRUTH: integrations/portainer-mcp (git submodule →
+# github.com/portainer/portainer-mcp). This Dockerfile only builds that code
+# into an image; it is NOT where the server code lives.
+#
+# Mirrors the upstream repo's own Dockerfile (uv builder + python:3.13-slim
+# runtime, non-root `portainer` uid-1000 user). The ONLY changes are the COPY
+# paths, which must resolve from the REPO ROOT build context (CI sets
+# context: ./, as for Dockerfile.happyfox / Dockerfile.ebay) so the image
+# always contains exactly the portainer-mcp commit this repo pins.
+#
+# Transport: streamable-HTTP on :17717 at /mcp (upstream bakes
+# PORTAINER_MCP_TRANSPORT=http + PORTAINER_MCP_HTTP_HOST=0.0.0.0). The Eepy
+# sidecar posture the backend dials it with — plaintext-HTTP opt-in on the
+# internal eepy-sidecars network, the fixed `eepy-sidecar` Host header
+# allowlist, and the per-sidecar gate token — comes from the template
+# runtime_config (env / generated_secrets / headers) at spawn time, NOT from
+# this image. See seed_mcp_templates() in backend/main.py.
+#
+# Version compatibility: match this image's minor to the user's Portainer
+# minor (2.44.x server ↔ 2.44.x instance) — the user's PORTAINER_URL +
+# access token determine whether the spec actually matches their instance.
+
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
+
+WORKDIR /app
+
+COPY integrations/portainer-mcp/pyproject.toml integrations/portainer-mcp/uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev --no-editable
+
+COPY integrations/portainer-mcp/README.md integrations/portainer-mcp/LICENSE ./
+COPY integrations/portainer-mcp/src ./src
+# Needed at build time: hatch force-include copies the hygiene skill into the
+# wheel (see the submodule's pyproject.toml [tool.hatch.build.targets.wheel
+# .force-include]).
+COPY integrations/portainer-mcp/skills ./skills
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable
+
+
+FROM python:3.13-slim-bookworm AS runtime
+
+RUN groupadd --system --gid 1000 portainer \
+ && useradd --system --uid 1000 --gid portainer --no-create-home \
+            --shell /usr/sbin/nologin portainer
+
+WORKDIR /app
+
+COPY --from=builder /app/.venv /app/.venv
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PORTAINER_MCP_TRANSPORT=http \
+    PORTAINER_MCP_HTTP_HOST=0.0.0.0 \
+    PORTAINER_MCP_LOG_FORMAT=json
+
+USER portainer
+EXPOSE 17717
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 17717)); s.close()"
+
+ENTRYPOINT ["mcp-portainer"]
