@@ -250,21 +250,21 @@ def _sidecar_headers(runtime_cfg: dict[str, Any], env: dict[str, str]) -> dict[s
     if not isinstance(template, dict) or not template:
         return {}
     headers: dict[str, str] = {}
-    for name, value in template.items():
+    for header_name, value in template.items():
         if not isinstance(value, str):
-            raise BridgeError(f"Template headers[{name!r}] must be a string.")
+            raise BridgeError(f"Template headers[{header_name!r}] must be a string.")
 
-        def _sub(match: "re.Match[str]") -> str:
+        def _sub(match: re.Match[str], header_name: str = header_name) -> str:
             var = match.group(1)
             if var not in env:
                 raise BridgeError(
-                    f"Template headers[{name!r}] references env var '{var}', "
+                    f"Template headers[{header_name!r}] references env var '{var}', "
                     f"which is not set on the sidecar (static env, env_mapping, "
                     f"or generated_secrets)."
                 )
             return env[var]
 
-        headers[str(name)] = _HEADER_PLACEHOLDER.sub(_sub, value)
+        headers[str(header_name)] = _HEADER_PLACEHOLDER.sub(_sub, value)
     return headers
 
 
@@ -730,7 +730,7 @@ def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
             "image": image,
             "name": name,
             "detach": True,
-            "environment": env,
+            "environment": _docker_container_env(env),
             # Labels make sidecars identifiable in Portainer's container list
             # (they are SDK-spawned, so invisible to stack views) and give ops
             # a precise filter for manual cleanup.
@@ -821,8 +821,12 @@ def _spawn_docker(template: MCPTemplate, key: str, env: dict[str, str],
     # "running" only means the entrypoint started; the app inside may still be
     # importing/binding. Probe the port until it accepts connections so the
     # first MCP handshake does not race the bind (the old failure mode: one
-    # bare connection error, sidecar killed, 502 — retry "fixed" it).
-    ready, why = _wait_port_ready(dial_host, int(dial_port), container)
+    # bare connection error, sidecar killed, 502 — retry "fixed" it). The
+    # legacy port-publish dial probes at HTTP level: a forwarding layer
+    # (Docker Desktop VM) accepts TCP before the app binds, so a TCP connect
+    # alone would declare readiness too early (see _wait_port_ready).
+    ready, why = _wait_port_ready(dial_host, int(dial_port), container,
+                                  http_probe=(not network))
     if not ready:
         tail = _sidecar_log_tail(container, env)
         logger.error(f"mcp-bridge: sidecar for {template.id} key={key[:12]} never became reachable: {why}. {tail}")
@@ -885,15 +889,33 @@ def _network_ip(container: Any, network: str) -> str | None:
         return None
 
 
-def _wait_port_ready(host: str, port: int, container: Any) -> tuple[bool, str]:
-    """Poll a TCP connect to the sidecar's port until it accepts (or the
-    container dies / the deadline passes). Runs in a worker thread."""
+def _wait_port_ready(host: str, port: int, container: Any,
+                     http_probe: bool = False) -> tuple[bool, str]:
+    """Poll the sidecar's port until the APP is actually serving (or the
+    container dies / the deadline passes). Runs in a worker thread.
+
+    ``http_probe`` (legacy port-publish dial only): a bare TCP connect is
+    NOT a reliable readiness signal when the port is published through a
+    forwarding layer (Docker Desktop's Mac/Windows VM forwarder accepts the
+    TCP connection BEFORE the app inside the container has bound its socket —
+    the first MCP handshake then raced the bind and died with a ReadError).
+    An HTTP-level probe fixes that: the forwarder passes the request through
+    only once the app's HTTP stack is bound, so ANY response (200/404/405/
+    421 alike) proves readiness, while a reset/timeout means "not yet".
+    The network dial (container IP, production path) has no forwarder, so a
+    plain TCP connect there is accurate and stays the default.
+    """
     import socket as _socket
 
     deadline = time.time() + SIDECAR_READY_TIMEOUT_S
     last_err = "unknown"
     while time.time() < deadline:
         try:
+            if http_probe:
+                import httpx
+
+                httpx.get(f"http://{host}:{port}/", timeout=3)
+                return True, ""
             with _socket.create_connection((host, port), timeout=3):
                 return True, ""
         except Exception as exc:
@@ -905,7 +927,7 @@ def _wait_port_ready(host: str, port: int, container: Any) -> tuple[bool, str]:
         except Exception:
             return False, "container gone during startup"
         time.sleep(0.5)
-    return False, f"port {port} never accepted a connection in {int(SIDECAR_READY_TIMEOUT_S)}s (last: {last_err})"
+    return False, f"port {port} never became ready in {int(SIDECAR_READY_TIMEOUT_S)}s (last: {last_err})"
 
 
 def _redact_secrets(text: str, env: dict[str, str]) -> str:
@@ -949,6 +971,24 @@ def _image_present(client: Any, image: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def _docker_container_env(env: dict[str, str]) -> dict[str, str]:
+    """The env list handed to ``containers.run`` for a docker sidecar.
+
+    The image's own ENV is the baseline — the Docker API overlays this list
+    on top of it — so only the bridge's additions (static template env,
+    mapped user credentials, generated secrets) cross the boundary. The
+    host-allowlist vars from _sidecar_env are deliberately dropped: notably
+    PATH, whose host value would OVERRIDE the image's ENV PATH and break
+    entrypoints living in image-local locations (e.g. a uv venv at
+    /app/.venv/bin — `exec: "mcp-portainer": executable file not found in
+    $PATH`). For the subprocess backend the host allowlist is still required
+    (it IS the process's whole environment).
+    """
+    container_env = {k: v for k, v in env.items() if k not in _MINIMAL_PROC_ENV}
+    container_env["PYTHONUNBUFFERED"] = "1"
+    return container_env
 
 
 def _sidecar_run_kwargs(runtime_cfg: dict[str, Any]) -> dict[str, Any]:

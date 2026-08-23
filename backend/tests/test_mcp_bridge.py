@@ -9,6 +9,7 @@ idle reaper.
 """
 
 import os
+import shutil
 import sys
 
 import pytest
@@ -764,6 +765,392 @@ def test_real_ebay_submodule_subprocess_path(client, auth_user):
         assert r.status_code == 200, r.text
         assert r.json()["tool_count"] == 299, r.json()
         assert "ebay_get_inventory_items" in r.json()["tools"]
+    finally:
+        from api import mcp_bridge
+        mcp_bridge.shutdown_all_instances()
+
+
+# ---------------------------------------------------------------------------
+# Per-request headers for HTTP sidecars (the Portainer MCP server contract):
+#   - generated_secrets: the bridge mints a fresh random value per spawn
+#   - headers: {{ENV}} placeholders resolved from the sidecar's final env
+#   - subprocess_env_mapping: stdio reads PORTAINER_API_KEY from env while
+#     HTTP mode must NOT have it set (the key rides a per-request header)
+#   - fixed Host header: the upstream 421-rejects Hosts outside its
+#     PORTAINER_MCP_ALLOWED_HOSTS allowlist, and the sidecar's container IP
+#     is only known after spawn
+# ---------------------------------------------------------------------------
+def test_credential_mapping_prefers_subprocess_env_mapping_for_subprocess_backend(monkeypatch):
+    from api import mcp_bridge
+
+    cfg = {
+        "env_mapping": {"FIELD": "DOCKER_NAME"},
+        "subprocess_env_mapping": {"FIELD": "STDIO_NAME"},
+    }
+    creds = {"FIELD": "value-1234567890"}
+    monkeypatch.setattr(mcp_bridge, "INSTANCE_BACKEND", "subprocess")
+    assert mcp_bridge.map_env(cfg, creds) == {"STDIO_NAME": "value-1234567890"}
+    monkeypatch.setattr(mcp_bridge, "INSTANCE_BACKEND", "docker")
+    assert mcp_bridge.map_env(cfg, creds) == {"DOCKER_NAME": "value-1234567890"}
+    # Subprocess backend without an override falls back to env_mapping.
+    monkeypatch.setattr(mcp_bridge, "INSTANCE_BACKEND", "subprocess")
+    assert mcp_bridge.map_env({"env_mapping": {"FIELD": "ONLY"}}, creds) == {
+        "ONLY": "value-1234567890"}
+
+
+def test_sidecar_env_mints_fresh_generated_secrets_per_spawn():
+    from api import mcp_bridge
+
+    cfg = {"env": {"STATIC_VAR": "1"}, "generated_secrets": ["GATE_TOKEN"]}
+    env1 = mcp_bridge._sidecar_env(cfg, {})
+    env2 = mcp_bridge._sidecar_env(cfg, {})
+    assert env1["GATE_TOKEN"] != env2["GATE_TOKEN"], "each spawn must mint a fresh secret"
+    assert len(env1["GATE_TOKEN"]) == 64, "token_hex(32) -> 64 hex chars"
+    assert all(c in "0123456789abcdef" for c in env1["GATE_TOKEN"])
+    # Static env and (mapped) credentials are untouched by the minting pass.
+    assert env1["STATIC_VAR"] == "1"
+
+
+def test_sidecar_headers_substitutes_placeholders_from_env(monkeypatch):
+    from api import mcp_bridge
+
+    monkeypatch.setattr(mcp_bridge, "INSTANCE_BACKEND", "docker")
+    cfg = {"headers": {
+        "Authorization": "Bearer {{GATE_TOKEN}}",
+        "X-Portainer-API-Key": "{{EEPY_KEY}}",
+        "X-Static": "plain-value",
+    }}
+    env = {"GATE_TOKEN": "gate-0123456789abcdef", "EEPY_KEY": "ptr_userkey123"}
+    assert mcp_bridge._sidecar_headers(cfg, env) == {
+        "Authorization": "Bearer gate-0123456789abcdef",
+        "X-Portainer-API-Key": "ptr_userkey123",
+        "X-Static": "plain-value",
+    }
+    # No headers configured -> {} (the existing happyfox/ebay templates).
+    assert mcp_bridge._sidecar_headers({"env": {"A": "1"}}, {"A": "1"}) == {}
+
+
+def test_sidecar_headers_missing_env_var_raises(monkeypatch):
+    from api import mcp_bridge
+
+    monkeypatch.setattr(mcp_bridge, "INSTANCE_BACKEND", "docker")
+    cfg = {"headers": {"Authorization": "Bearer {{NOT_SET_TOKEN}}"}}
+    try:
+        mcp_bridge._sidecar_headers(cfg, {})
+        raise AssertionError("expected BridgeError for an unresolvable placeholder")
+    except mcp_bridge.BridgeError as e:
+        assert "NOT_SET_TOKEN" in str(e), f"error must name the missing var: {e}"
+
+
+def test_docker_container_env_drops_host_allowlist_vars():
+    """Docker sidecars must NOT inherit the host's allowlist env (notably
+    PATH): the container env is the image's ENV plus the bridge's additions,
+    and a host PATH would override the image's ENV PATH, breaking entrypoints
+    in image-local locations (uv venv at /app/.venv/bin)."""
+    from api import mcp_bridge
+
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/Users/someone",
+        "LANG": "en_US.UTF-8",
+        "LC_ALL": "en_US.UTF-8",
+        "TZ": "UTC",
+        "PYTHONUNBUFFERED": "1",
+        "PORTAINER_MCP_TRANSPORT": "http",   # static template env
+        "EEPY_PORTAINER_API_KEY": "ptr_user_key_value",  # mapped credential
+        "PORTAINER_MCP_AUTH_TOKEN": "a" * 64,  # generated secret
+    }
+    out = mcp_bridge._docker_container_env(env)
+    for host_var in ("PATH", "HOME", "LANG", "LC_ALL", "TZ"):
+        assert host_var not in out, f"{host_var} must not cross into the container"
+    assert out["PORTAINER_MCP_TRANSPORT"] == "http"
+    assert out["EEPY_PORTAINER_API_KEY"] == "ptr_user_key_value"
+    assert out["PORTAINER_MCP_AUTH_TOKEN"] == "a" * 64
+    assert out["PYTHONUNBUFFERED"] == "1"
+
+
+def test_sidecar_headers_skipped_for_subprocess_backend(monkeypatch):
+    """Stdio has no HTTP request to carry headers on; the subprocess env may
+    legitimately lack the vars the header templates reference (the Portainer
+    docker env parks the key in EEPY_PORTAINER_API_KEY while stdio maps it to
+    PORTAINER_API_KEY)."""
+    from api import mcp_bridge
+
+    monkeypatch.setattr(mcp_bridge, "INSTANCE_BACKEND", "subprocess")
+    cfg = {"headers": {"Authorization": "Bearer {{GATE_TOKEN}}"}}
+    assert mcp_bridge._sidecar_headers(cfg, {}) == {}
+
+
+def test_http_sidecar_headers_reach_the_upstream_server():
+    """Full plumbing: Instance.headers -> pre-configured httpx client -> wire.
+
+    A real streamable-HTTP MCP server (mcp SDK, same 1.x line as the bridge)
+    runs on 127.0.0.1 behind a DNS-rebinding-style guard that 421-rejects
+    any Host outside an `eepy-sidecar:*` allowlist — the exact contract of
+    the Portainer MCP server (http_security.DNSRebindingMiddleware + the MCP
+    SDK's wildcard-port Host matching). If the bridge failed to send the
+    fixed Host / gate bearer / per-user key headers, the handshake would be
+    421-rejected (or the server would observe wrong values) and this test
+    fails.
+    """
+    import asyncio
+    import socket as socket_mod
+    import threading
+    import time as time_mod
+
+    import uvicorn
+    from mcp.server.fastmcp import FastMCP
+    from starlette.responses import Response
+
+    from api import mcp_bridge
+
+    seen: list[dict[str, str]] = []
+
+    server = FastMCP("fake-http-mcp")
+
+    @server.tool()
+    def ping() -> str:
+        return "pong"
+
+    # Mirror the Portainer build: its fastmcp 3.x does NOT plumb the MCP SDK's
+    # built-in Host/Origin validation through (it ships with the localhost
+    # defaults), and instead installs its OWN allowlist middleware fed by
+    # PORTAINER_MCP_ALLOWED_HOSTS — which the guard below emulates, including
+    # the SDK's wildcard-port (`base:*`) matching semantics.
+    from mcp.server.transport_security import TransportSecuritySettings
+    server.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=False)
+
+    app = server.streamable_http_app()
+
+    async def guard(scope, receive, send):
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
+        headers = {k.decode("latin-1"): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        seen.append(headers)
+        allowed_hosts = ["eepy-sidecar:*"]
+        host = headers.get("host", "")
+        allowed = (host in allowed_hosts
+                   or any(host.startswith(p[:-2] + ":") for p in allowed_hosts if p.endswith(":*")))
+        if not allowed:
+            await Response("Invalid Host header", status_code=421)(scope, receive, send)
+            return
+        await app(scope, receive, send)
+
+    probe = socket_mod.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    uv_srv = uvicorn.Server(uvicorn.Config(guard, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=uv_srv.run, daemon=True)
+    thread.start()
+    deadline = time_mod.time() + 10
+    while not uv_srv.started and time_mod.time() < deadline:
+        time_mod.sleep(0.05)
+    assert uv_srv.started, "fake HTTP MCP server did not start"
+
+    try:
+        gate_token = "a" * 64
+        inst = mcp_bridge.Instance(
+            key="header-e2e", kind="url",
+            url=f"http://127.0.0.1:{port}/mcp",
+            headers={
+                "Host": "eepy-sidecar:17717",
+                "Authorization": f"Bearer {gate_token}",
+                "X-Portainer-API-Key": "ptr_fake_user_key",
+            },
+        )
+
+        async def _drive():
+            sess = await mcp_bridge.open_session(inst)
+            try:
+                return await mcp_bridge.list_tools(sess.session)
+            finally:
+                await sess.close()
+
+        loop = asyncio.new_event_loop()
+        try:
+            tools = loop.run_until_complete(_drive())
+        finally:
+            loop.close()
+
+        assert any(t["name"] == "ping" for t in tools), f"tools/list failed: {tools}"
+        assert seen, "the guard observed no requests at all"
+        first = seen[0]
+        # The dial URL is 127.0.0.1:<port>; the explicit Host header must win.
+        assert first["host"] == "eepy-sidecar:17717", \
+            f"explicit Host header must override the dial URL, got {first['host']!r}"
+        assert first["authorization"] == f"Bearer {gate_token}"
+        assert first["x-portainer-api-key"] == "ptr_fake_user_key"
+    finally:
+        uv_srv.should_exit = True
+        thread.join(timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# Seeded Portainer template (template #3): the seed in main.py must carry a
+# valid mcp-server sidecar spec for BOTH instance backends, including the
+# header/gate-token contract the upstream HTTP mode requires.
+# ---------------------------------------------------------------------------
+def test_seeded_portainer_template_shape(client):
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    db = SessionLocal()
+    try:
+        t = db.query(MCPTemplate).filter(MCPTemplate.id == "portainer").first()
+    finally:
+        db.close()
+    assert t is not None, "portainer template was not seeded"
+    assert t.approved_by_admin and t.enabled_global
+    assert t.runtime == "mcp-server"
+    assert t.image_tag == "ghcr.io/kulik-labs-development/eepy-host-portainer"
+
+    cfg = t.runtime_config
+    # Subprocess backend (local dev): stdio entrypoint of the pinned submodule.
+    assert cfg["command"] == ["uv", "run", "mcp-portainer"]
+    assert cfg["cwd"] == "integrations/portainer-mcp"
+    assert cfg["subprocess_env"]["PORTAINER_MCP_TRANSPORT"] == "stdio"
+    # Docker backend (production): streamable-HTTP sidecar image on :17717 /mcp.
+    assert cfg["image"] == "ghcr.io/kulik-labs-development/eepy-host-portainer:latest"
+    assert cfg["port"] == "17717"
+    assert cfg["endpoint"] == "/mcp"
+    env = cfg["env"]
+    assert env["PORTAINER_MCP_DANGEROUSLY_ALLOW_PLAINTEXT_HTTP"] == "1", \
+        "sidecar is unreachable outside the internal eepy-sidecars network"
+    assert env["PORTAINER_MCP_ALLOWED_HOSTS"] == "eepy-sidecar:*"
+    # The in-band guidance gate must be off on BOTH backends: sidecars are
+    # idle-reaped at 300s but the gate's window is 1800s, so a respawned
+    # sidecar would bounce the user's first call after any 5-minute pause.
+    assert env["PORTAINER_MCP_DISABLE_GUIDANCE_GATE"] == "1"
+    assert cfg["subprocess_env"]["PORTAINER_MCP_DISABLE_GUIDANCE_GATE"] == "1"
+    # HTTP mode refuses to boot with PORTAINER_API_KEY set, so the docker
+    # mapping parks the user's key under an upstream-ignorable name for the
+    # header template; stdio mode reads the upstream var name directly.
+    assert cfg["env_mapping"]["PORTAINER_API_KEY"] == "EEPY_PORTAINER_API_KEY"
+    assert cfg["subprocess_env_mapping"]["PORTAINER_API_KEY"] == "PORTAINER_API_KEY"
+    # Per-sidecar gate token: minted by the bridge on every spawn, never
+    # stored in runtime_config or the DB.
+    assert cfg["generated_secrets"] == ["PORTAINER_MCP_AUTH_TOKEN"]
+    headers = cfg["headers"]
+    assert headers["Host"] == "eepy-sidecar:17717"
+    assert headers["Authorization"] == "Bearer {{PORTAINER_MCP_AUTH_TOKEN}}"
+    assert headers["X-Portainer-API-Key"] == "{{EEPY_PORTAINER_API_KEY}}"
+    # Read-only probe for the connection test + non-empty spec seed.
+    assert cfg["test_tool"] == {"name": "systemVersion", "arguments": {}}
+    assert cfg["tool_names"] and "systemVersion" in cfg["tool_names"]
+    # The wizard's required fields: URL + access token.
+    assert t.config_schema["required"] == ["PORTAINER_URL", "PORTAINER_API_KEY"]
+
+
+# ---------------------------------------------------------------------------
+# Real upstream server: pinned portainer-mcp submodule through the subprocess
+# bridge path, with the SAME runtime_config shape as the production seed
+# (stdio transport). Proves spawn + stdio handshake + tools/call + admin
+# discovery against the actual upstream code so the documented local-dev path
+# cannot silently rot. Needs `uv` on PATH (one-time dep sync in the submodule).
+# ---------------------------------------------------------------------------
+PORTAINER_SUBMODULE = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "integrations", "portainer-mcp"))
+
+
+@pytest.mark.skipif(
+    not os.path.isfile(os.path.join(PORTAINER_SUBMODULE, "pyproject.toml")),
+    reason="integrations/portainer-mcp submodule is not checked out")
+@pytest.mark.skipif(
+    not shutil.which("uv"),
+    reason="uv is required for the portainer subprocess dev path (uv run)")
+def test_real_portainer_submodule_subprocess_path(client, auth_user):
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    template_id = "portainer-submodule-test"
+    fake_upstream_creds = {
+        "PORTAINER_URL": "https://nonexistent-eepy-portainer.invalid",
+        "PORTAINER_API_KEY": "ptr_fake_key_for_bridge_test",
+    }
+    db = SessionLocal()
+    try:
+        existing = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
+        if existing:
+            db.delete(existing)
+            db.commit()
+        t = MCPTemplate(
+            id=template_id,
+            name="Portainer (submodule e2e test)",
+            description="Runs the pinned integrations/portainer-mcp submodule through the bridge.",
+            config_schema={
+                "category": "Test",
+                "type": "object",
+                "properties": {
+                    "PORTAINER_URL": {"type": "string", "label": "URL", "required": True},
+                    "PORTAINER_API_KEY": {"type": "password", "label": "API Key", "required": True},
+                },
+                "required": ["PORTAINER_URL", "PORTAINER_API_KEY"],
+            },
+            runtime="mcp-server",
+            runtime_config={
+                "command": ["uv", "run", "mcp-portainer"],
+                "cwd": "integrations/portainer-mcp",
+                "subprocess_env": {
+                    "PORTAINER_MCP_TRANSPORT": "stdio",
+                    "PORTAINER_MCP_DISABLE_GUIDANCE_GATE": "1",
+                },
+                "env_mapping": {
+                    "PORTAINER_URL": "PORTAINER_URL",
+                    "PORTAINER_API_KEY": "PORTAINER_API_KEY",
+                },
+                "test_tool": {"name": "systemVersion", "arguments": {}},
+            },
+            approved_by_admin=True,
+            enabled_global=True,
+        )
+        db.add(t)
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        r = client.post("/api/mcp/config/register", headers=_h(auth_user["token"]),
+                        json={"template_id": template_id, "credentials_json": fake_upstream_creds})
+        assert r.status_code == 200, r.text
+
+        # Local tool (serves the bundled guide, no upstream call): the sidecar
+        # must spawn in stdio mode and complete the MCP handshake + tools/call
+        # even with fake credentials.
+        r = client.post(f"/api/mcp/proxy/{template_id}/get_guidance",
+                        headers=_h(auth_user["token"]), json={})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["tool"] == "get_guidance"
+        assert body["is_error"] is False, f"get_guidance is local: {body['data'][:300]}"
+        assert isinstance(body["data"], str) and "Portainer" in body["data"]
+
+        # Upstream-bound tool with fake credentials: the failure must be
+        # relayed as upstream tool text (the sidecar's httpx call to the
+        # unreachable instance), NOT a bridge/handshake error.
+        r = client.post(f"/api/mcp/proxy/{template_id}/systemVersion",
+                        headers=_h(auth_user["token"]), json={})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["tool"] == "systemVersion"
+        assert body["is_error"] is True, "unreachable upstream must produce a tool error"
+
+        # Connection test endpoint (test_tool path) must report a clean
+        # credential failure, not a bridge/handshake failure.
+        r = client.post(f"/api/mcp/config/{template_id}/test", headers=_h(auth_user["token"]))
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "failed", r.json()
+
+        # Admin discovery against the real server: the pinned submodule commit
+        # (79ce50b, 2.44.0+1) advertises the full default-profile catalogue.
+        r = client.post(f"/superuser/mcp/templates/{template_id}/discover",
+                        headers=_h(auth_user["token"]))
+        assert r.status_code == 200, r.text
+        assert r.json()["tool_count"] == 211, r.json()
+        assert "systemVersion" in r.json()["tools"]
     finally:
         from api import mcp_bridge
         mcp_bridge.shutdown_all_instances()

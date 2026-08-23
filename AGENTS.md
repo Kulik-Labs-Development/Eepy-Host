@@ -20,7 +20,9 @@ credentials (encrypted at rest), and all proxy routing. Integration MCP
 server code lives in **separate upstream repos**, pulled into this project as
 git submodules under `integrations/` (HappyFox:
 `integrations/happyfox-mcp` → github.com/Glitch3dPenguin/happyfox-mcp;
-eBay: `integrations/ebay-mcp` → github.com/YosefHayim/ebay-mcp).
+eBay: `integrations/ebay-mcp` → github.com/YosefHayim/ebay-mcp;
+Portainer: `integrations/portainer-mcp` →
+github.com/portainer/portainer-mcp).
 CI builds each submodule's code into its own GHCR sidecar image on every
 push, so the deployed gateway always runs exactly the code this repo pins —
 updating an integration is "bump the submodule ref", never editing its code
@@ -45,6 +47,26 @@ docker container in production), short-lived and idle-reaped.
    the internal `eepy-sidecars` docker network, and the unified proxy IS the
    auth layer) and its stdio dev path needs a one-time
    `pnpm install --ignore-scripts && pnpm run build` in the submodule.
+- Portainer is Template #3, same modular pattern from the
+  `integrations/portainer-mcp` git submodule (github.com/portainer/
+  portainer-mcp — the OFFICIAL Portainer MCP server, Python/FastMCP, ~211
+  tools over the Portainer API: environments, Docker, Kubernetes, Helm,
+  stacks, GitOps + Docker/K8s proxy). First integration to use the bridge's
+  **per-request header** machinery, because its HTTP mode is per-user
+  passthrough: every request must carry a gate bearer
+  (`Authorization`) AND the user's own key (`X-Portainer-API-Key`), the
+  server refuses to boot with `PORTAINER_API_KEY` set under HTTP (stdio-only),
+  and it 421-rejects Hosts outside `PORTAINER_MCP_ALLOWED_HOSTS`. The bridge
+  therefore (a) mints a fresh per-sidecar gate token
+  (`runtime_config.generated_secrets`), (b) sends the resolved headers on
+  every MCP request, and (c) dials with a fixed `Host: eepy-sidecar:17717`
+  header the seed's allowlist accepts. The in-band guidance gate is disabled
+  in the sidecar env (`PORTAINER_MCP_DISABLE_GUIDANCE_GATE=1`) because
+  sidecars idle-reap at 300s while the gate's window is 1800s — a respawn
+  would bounce the user's first call after any 5-minute pause (see the
+  bridge section). Match the server's minor version to the user's Portainer
+  minor (2.44.x ↔ 2.44.x); the local-dev (subprocess) path needs `uv` on
+  PATH (one-time dep sync in the submodule on first run).
 - The unified proxy (`/api/mcp/proxy/{template_id}/{tool_name}`) routes by
   template `runtime`: `mcp-server` → generic bridge (`api/mcp_bridge.py`),
   `native` → hardcoded `TEMPLATE_REGISTRY` (HappyFox reference path, kept for
@@ -137,8 +159,10 @@ docker container in production), short-lived and idle-reaped.
 ├── integrations/
 │   ├── Dockerfile.happyfox   # builds the submodule into the sidecar image
 │   ├── Dockerfile.ebay       #   (build context = repo root; see .github/workflows/main.yml)
+│   ├── Dockerfile.portainer  #   (mirrors the upstream Dockerfile; repo-root context)
 │   ├── happyfox-mcp/         # GIT SUBMODULE → Glitch3dPenguin/happyfox-mcp
-│   └── ebay-mcp/             # GIT SUBMODULE → YosefHayim/ebay-mcp
+│   ├── ebay-mcp/             # GIT SUBMODULE → YosefHayim/ebay-mcp
+│   └── portainer-mcp/        # GIT SUBMODULE → portainer/portainer-mcp
 └── assets/
 ```
 
@@ -183,23 +207,46 @@ admin-discovery time from the upstream server's own `tools/list`.
    like HappyFox, or via the superuser runtime endpoint) with:
    - `runtime = "mcp-server"`
    - `config_schema` (JSON): the credential fields to collect from the user.
-   - `runtime_config` (JSON), e.g.:
-     ```json
-     {
-       "image": "ghcr.io/kulik-labs-development/eepy-host-happyfox:latest",
-       "command": ["python", "server.py"],
-       "cwd": "integrations/happyfox-mcp",
-       "env": {"MCP_TRANSPORT": "streamable-http", "PORT": "8000"},
-       "endpoint": "/",
-       "port": "8000",
-       "env_mapping": {"USER_FIELD_A": "UPSTREAM_ENV_A", "USER_FIELD_B": "UPSTREAM_ENV_B"},
-       "test_tool": {"name": "some_read_only_tool", "arguments": {}},
-       "tool_names": ["tool_a", "tool_b"]
-     }
-     ```
-     - `env_mapping` maps each **user credential field** (from
-       `config_schema`) to the **upstream env var** the sidecar reads.
-       Unmapped fields are never passed to the sidecar.
+    - `runtime_config` (JSON), e.g.:
+      ```json
+      {
+        "image": "ghcr.io/kulik-labs-development/eepy-host-happyfox:latest",
+        "command": ["python", "server.py"],
+        "cwd": "integrations/happyfox-mcp",
+        "env": {"MCP_TRANSPORT": "streamable-http", "PORT": "8000"},
+        "subprocess_env": {"MCP_TRANSPORT": "stdio"},
+        "endpoint": "/",
+        "port": "8000",
+        "env_mapping": {"USER_FIELD_A": "UPSTREAM_ENV_A", "USER_FIELD_B": "UPSTREAM_ENV_B"},
+        "subprocess_env_mapping": {"USER_FIELD_A": "UPSTREAM_STDIO_ENV_A"},
+        "generated_secrets": ["UPSTREAM_GATE_TOKEN"],
+        "headers": {
+          "Authorization": "Bearer {{UPSTREAM_GATE_TOKEN}}",
+          "X-User-Key": "{{UPSTREAM_ENV_A}}"
+        },
+        "test_tool": {"name": "some_read_only_tool", "arguments": {}},
+        "tool_names": ["tool_a", "tool_b"]
+      }
+      ```
+      - `env_mapping` maps each **user credential field** (from
+        `config_schema`) to the **upstream env var** the sidecar reads.
+        Unmapped fields are never passed to the sidecar.
+        `subprocess_env_mapping` (like `subprocess_env` for static env)
+        REPLACES `env_mapping` for the subprocess backend when present — for
+        upstreams that read the same credential from a different env var per
+        transport (Portainer: stdio reads `PORTAINER_API_KEY`, HTTP mode
+        refuses to boot with it set — the key rides a per-request header
+        instead).
+      - `generated_secrets`: env var names the bridge mints a FRESH random
+        value for on every sidecar spawn (e.g. a per-sidecar gate token).
+        Never stored in runtime_config or the DB.
+      - `headers`: per-request HTTP headers for an HTTP (docker/url)
+        sidecar; `{{ENV_VAR}}` placeholders resolve from the sidecar's final
+        env (static + mapped credentials + generated secrets), so credentials
+        can ride in headers without being stored anywhere (the Portainer
+        contract: gate bearer + the user's own `X-Portainer-API-Key` on every
+        request, plus a fixed `Host` its allowlist accepts). The subprocess
+        backend ignores `headers` (stdio has no HTTP).
      - `image` → docker backend (production: the image is built from the
        integration's git submodule by CI on every push — needs the Docker
        socket). `command` (+ optional relative `cwd`, resolved against the
@@ -290,14 +337,26 @@ image from that exact commit. Re-run discovery. No Eepy backend code changes
   matching the backend's own attached networks. Without the variable the
   bridge falls back to publishing on 127.0.0.1 and dialing via
   `EEPY_MCP_DOCKER_HOST` (default `127.0.0.1`; compose sets
-  `host.docker.internal` + `extra_hosts: host-gateway`) — that legacy path
-  is NOT reliable from a containerized backend on Linux (a port published
-  on 127.0.0.1 is not reachable via the host-gateway IP) and is kept only
-  for on-host dev. After the container reports "running" the bridge polls a
-  TCP connect to the sidecar port (`EEPY_MCP_SIDECAR_READY_TIMEOUT`,
-  default 30s) so the first MCP handshake never races the app binding.
-  The bridge speaks MCP over stdio (subprocess) or streamable-HTTP
-  (docker/url).
+   `host.docker.internal` + `extra_hosts: host-gateway`) — that legacy path
+   is NOT reliable from a containerized backend on Linux (a port published
+   on 127.0.0.1 is not reachable via the host-gateway IP) and is kept only
+   for on-host dev. After the container reports "running" the bridge polls
+   the sidecar port until the APP is serving (`EEPY_MCP_SIDECAR_READY_TIMEOUT`,
+   default 30s) so the first MCP handshake never races the app binding:
+   the network dial (production) polls a TCP connect to the container IP
+   (accurate — no forwarding layer), while the legacy port-publish dial
+   probes at HTTP level, because a forwarding layer (Docker Desktop's
+   Mac/Windows VM) accepts the TCP connection BEFORE the app inside the
+   container has bound its socket, and a bare TCP connect would declare
+   readiness too early (first handshake died with a ReadError; any HTTP
+   response — 200/404/405/421 — proves the app's HTTP stack is up).
+   NOTE for bare-host dev on Docker Desktop for Mac/Windows: the host
+   cannot route to container IPs on user-defined networks (VM isolation),
+   so a non-containerized backend there can only use the legacy dial; the
+   network dial requires the backend itself to be containerized on the
+   network (the production/compose topology).
+   The bridge speaks MCP over stdio (subprocess) or streamable-HTTP
+   (docker/url).
  - **Sidecar failure diagnostics:** spawn/handshake failures are logged to
   the `eepy-backend` logger (Debug Log console + docker logs) WITH the
   sidecar's own log output (docker: redacted `container.logs()` tail
@@ -329,16 +388,42 @@ image from that exact commit. Re-run discovery. No Eepy backend code changes
   This self-heals after OOM kills, `docker kill -9`, host reboots, daemon
   restarts, and Portainer removes that skip the graceful shutdown hook.
   Tracking is fail-soft: a DB hiccup must never break a tool call.
-  - **Per-backend env:** the two backends need different upstream transports
-  for the same server, so runtime_config may set `subprocess_env` (replaces
-  `env` for the subprocess backend; `env` stays the docker-backend value).
-  The HappyFox seed uses `env: {MCP_TRANSPORT: streamable-http, PORT: 8000}`
-  + `subprocess_env: {MCP_TRANSPORT: stdio}` — without the override the
-  subprocess sidecar would bind 0.0.0.0:8000 in HTTP mode and the stdio
-  handshake would fail (regression-tested; the fake test server refuses
-  stdio when an HTTP transport is selected, and an e2e test drives the real
-  pinned happyfox-mcp submodule through the subprocess path).
-  - **Config deletion tears down sidecars:** `DELETE /api/mcp/config/{id}`
+   - **Per-backend env:** the two backends need different upstream transports
+   for the same server, so runtime_config may set `subprocess_env` (replaces
+   `env` for the subprocess backend; `env` stays the docker-backend value).
+   The HappyFox seed uses `env: {MCP_TRANSPORT: streamable-http, PORT: 8000}`
+   + `subprocess_env: {MCP_TRANSPORT: stdio}` — without the override the
+   subprocess sidecar would bind 0.0.0.0:8000 in HTTP mode and the stdio
+   handshake would fail (regression-tested; the fake test server refuses
+   stdio when an HTTP transport is selected, and an e2e test drives the real
+   pinned happyfox-mcp submodule through the subprocess path).
+   - **Docker sidecar env = image ENV + bridge additions ONLY:** for a docker
+   spawn the container's baseline env is the IMAGE's own ENV — the bridge
+   overlays only its additions (static template env, mapped credentials,
+   generated secrets) and deliberately drops the host allowlist vars
+   (`_docker_container_env`), notably **PATH**: a host PATH would override
+   the image's ENV PATH and break entrypoints living in image-local
+   locations (the Portainer image's uv-venv `mcp-portainer` at
+   `/app/.venv/bin` died with "executable file not found in $PATH" until
+   this was fixed; happyfox/ebay only survived because `python`/`node` sit
+   on standard paths that happen to overlap the host PATH). The subprocess
+   backend is unchanged — the host allowlist IS its whole environment.
+   - **Per-request headers + generated secrets (Portainer contract):**
+   `runtime_config.headers` are sent on EVERY MCP request to an HTTP
+   sidecar, with `{{ENV_VAR}}` placeholders resolved from the sidecar's
+   final env; `runtime_config.generated_secrets` are fresh per-spawn random
+   values for vars that must never be stored. The mechanism is needed
+   because some upstreams (Portainer) authenticate PER REQUEST with a
+   bearer + per-user header, refuse to boot with the user key in env, and
+   421-reject Hosts outside their allowlist. The bridge sends the headers
+   via a pre-configured `httpx.AsyncClient` (the mcp SDK's `headers` kwarg
+   is deprecated/ignored), and an explicit `Host` header overrides the dial
+   URL's — that is how the fixed `Host: eepy-sidecar:17717` gets past the
+   upstream's `PORTAINER_MCP_ALLOWED_HOSTS=eepy-sidecar:*` without knowing
+   the container IP. The subprocess backend ignores `headers` (covered by
+   e2e tests, incl. a live HTTP MCP server behind a Portainer-style
+   host-guard).
+   - **Config deletion tears down sidecars:** `DELETE /api/mcp/config/{id}`
   also kills the user's live sidecars for that template immediately (they
   hold the user's decrypted creds in their env) instead of waiting for the
   idle reaper.
@@ -490,23 +575,25 @@ there is no vitest in the frontend.)
   (a plain clone leaves the submodule dir empty until
   `git submodule update --init`).
 - **Two CI workflows, both on push to main:** `CI` (ruff+pytest, eslint+tsc —
-  no image builds) and `Build and Push to GHCR`, which builds **four**
+  no image builds) and `Build and Push to GHCR`, which builds **five**
   images: `eepy-host-backend`, `eepy-host-frontend`, `eepy-host-happyfox`
-  (sidecar, built from the submodule via `integrations/Dockerfile.happyfox`)
-  and `eepy-host-ebay` (sidecar, via `integrations/Dockerfile.ebay`) — both
-  sidecars built with the repo root as build context. So every push to main
-  refreshes all deployed images.
+  (sidecar, built from the submodule via `integrations/Dockerfile.happyfox`),
+  `eepy-host-ebay` (sidecar, via `integrations/Dockerfile.ebay`) and
+  `eepy-host-portainer` (sidecar, via `integrations/Dockerfile.portainer`)
+  — all sidecars built with the repo root as build context. So every push to
+  main refreshes all deployed images.
 - **Seed roll-forward:** `seed_mcp_templates()` in `main.py` updates the
-  existing seeded rows' (HappyFox, eBay) `runtime`, `runtime_config`,
-  `config_schema`, `image_tag`, and approval flags on **every boot**
-  (idempotent). That is how spec changes reach the live DB — pushing a
-  backend change is enough; no manual DB edit needed.
+  existing seeded rows' (HappyFox, eBay, Portainer) `runtime`,
+  `runtime_config`, `config_schema`, `image_tag`, and approval flags on
+  **every boot** (idempotent). That is how spec changes reach the live DB —
+  pushing a backend change is enough; no manual DB edit needed.
 - **Portainer rollout (primary deploy path):** after a main push, pull the
   updated `eepy-host-backend:latest` / `eepy-host-frontend:latest` /
-  `eepy-host-happyfox:latest` / `eepy-host-ebay:latest` images and recreate
-  the containers (sidecar images are pulled lazily by the bridge, so just
-  make sure the backend has fresh access). `stack.env` values rarely change
-  — only when a new secret is introduced.
+  `eepy-host-happyfox:latest` / `eepy-host-ebay:latest` /
+  `eepy-host-portainer:latest` images and recreate the containers (sidecar
+  images are pulled lazily by the bridge, so just make sure the backend has
+  fresh access). `stack.env` values rarely change — only when a new secret
+  is introduced.
   - **The backend needs the Docker socket or sidecars can never spawn:** with
     `EEPY_MCP_INSTANCE_BACKEND=docker` (the compose default) the backend
     spawns per-user sidecar containers THROUGH the host Docker socket, which
@@ -530,13 +617,14 @@ there is no vitest in the frontend.)
     (check the daemon line above / the Debug Log console).
   - **Verify the docker sidecar path (production):** the dev machine has
    Docker, so the full compose stack CAN be exercised locally (build the
-   four images with the GHCR tags, `docker compose --env-file stack.env up -d`).
-   After a deploy: hit the dashboard's connection test, then a real proxy tool
-   call, and confirm in the backend logs (or the Debug Log console) that
-   `mcp-bridge: started sidecar container ... network=... dial=...` appears
-   and the call returns upstream data. Sidecars dial through the
-   `eepy-sidecars` network (container IP) — the legacy `EEPY_MCP_DOCKER_HOST`
-   loopback/host-gateway path is fallback-only and NOT reliable on Linux.
+   five app+sidecar images with the GHCR tags, `docker compose --env-file
+   stack.env up -d`). After a deploy: hit the dashboard's connection test,
+   then a real proxy tool call, and confirm in the backend logs (or the
+   Debug Log console) that `mcp-bridge: started sidecar container ...
+   network=... dial=...` appears and the call returns upstream data.
+   Sidecars dial through the `eepy-sidecars` network (container IP) — the
+   legacy `EEPY_MCP_DOCKER_HOST` loopback/host-gateway path is
+   fallback-only and NOT reliable on Linux.
    - **Sidecar images are pulled by the HOST daemon on demand — GHCR
     visibility matters:** the bridge pulls `ghcr.io/.../eepy-host-happyfox`
     etc. through the host Docker socket, with whatever credentials the HOST
@@ -554,8 +642,10 @@ there is no vitest in the frontend.)
    communicate"). `integrations/Dockerfile.happyfox` force-reinstalls
    `mcp[cli]>=1.0,<2` after the submodule's pip install, in OUR Dockerfile so
    the pin survives every CI rebuild without touching upstream submodule
-   code. If a future sidecar image is built from a submodule whose code
-   imports the 1.x API, keep such a pin in its Dockerfile.
+   code. The portainer sidecar is NOT affected: its image installs from
+   `uv.lock` (mcp pinned at 1.28.x by upstream). If a future sidecar image
+   is built from a submodule whose code imports the 1.x API, keep such a
+   pin in its Dockerfile.
 - **Dev-sandbox test tooling (ephemeral, rebuild if missing):** venv at
   `/tmp/eevenv` (`python3 -m venv /tmp/eevenv && /tmp/eevenv/bin/pip install
   -r requirements.txt pytest ruff`), and integration script

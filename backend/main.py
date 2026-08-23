@@ -413,8 +413,19 @@ def seed_mcp_templates():
                 "PORTAINER_MCP_DANGEROUSLY_ALLOW_PLAINTEXT_HTTP": "1",
                 # Accepts the bridge's fixed Host header (eepy-sidecar:17717).
                 "PORTAINER_MCP_ALLOWED_HOSTS": "eepy-sidecar:*",
+                # The upstream in-band guidance gate answers a caller's FIRST
+                # tool call (per 1800s idle window) with the guide instead of
+                # the tool result. Sidecars here are idle-reaped at 300s — a
+                # respawn resets the gate, so the user's first call after any
+                # 5-minute pause would return a ~30KB guide instead of their
+                # result. Disable the gate: get_guidance stays available on
+                # demand and the server's MCP instructions still point at it.
+                "PORTAINER_MCP_DISABLE_GUIDANCE_GATE": "1",
             },
-            "subprocess_env": {"PORTAINER_MCP_TRANSPORT": "stdio"},
+            "subprocess_env": {
+                "PORTAINER_MCP_TRANSPORT": "stdio",
+                "PORTAINER_MCP_DISABLE_GUIDANCE_GATE": "1",
+            },
             "endpoint": "/mcp",
             "port": "17717",
             # Docker backend: key parked under an upstream-ignorable name.
