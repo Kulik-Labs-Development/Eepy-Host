@@ -1154,3 +1154,264 @@ def test_real_portainer_submodule_subprocess_path(client, auth_user):
     finally:
         from api import mcp_bridge
         mcp_bridge.shutdown_all_instances()
+
+
+# ---------------------------------------------------------------------------
+# Seeded Warden template (template #4): the seed in main.py must carry a valid
+# mcp-server sidecar spec for BOTH instance backends, including the
+# per-request X-BW-* header contract the upstream HTTP mode requires.
+# ---------------------------------------------------------------------------
+def test_seeded_warden_template_shape(client):
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    db = SessionLocal()
+    try:
+        t = db.query(MCPTemplate).filter(MCPTemplate.id == "warden").first()
+    finally:
+        db.close()
+    assert t is not None, "warden template was not seeded"
+    assert t.approved_by_admin and t.enabled_global
+    assert t.runtime == "mcp-server"
+    assert t.image_tag == "ghcr.io/kulik-labs-development/eepy-host-warden"
+
+    cfg = t.runtime_config
+    # Subprocess backend (local dev): stdio entrypoint of the pinned submodule.
+    assert cfg["command"] == ["node", "bin/warden-mcp.js", "--stdio"]
+    assert cfg["cwd"] == "integrations/warden-mcp"
+    # Docker backend (production): streamable-HTTP sidecar image on :3005 /sse.
+    assert cfg["image"] == "ghcr.io/kulik-labs-development/eepy-host-warden:latest"
+    assert cfg["port"] == "3005"
+    assert cfg["endpoint"] == "/sse"
+    # The env-fallback escape hatch must stay OFF: a headerless request must
+    # never inherit the sidecar's vault identity.
+    assert cfg["env"].get("KEYCHAIN_ALLOW_ENV_FALLBACK") != "true"
+    assert cfg["subprocess_env"].get("KEYCHAIN_ALLOW_ENV_FALLBACK") != "true"
+    # Optional-login static defaults keep the header placeholders resolvable
+    # (the bridge hard-fails on a missing referenced env var); mapped
+    # credentials override these at spawn.
+    for backend_env in (cfg["env"], cfg["subprocess_env"]):
+        assert backend_env["BW_CLIENTID"] == ""
+        assert backend_env["BW_CLIENTSECRET"] == ""
+        assert backend_env["BW_USER"] == ""
+    # User fields ride the upstream env names the header templates resolve.
+    assert cfg["env_mapping"] == {
+        "VAULT_HOST": "BW_HOST",
+        "MASTER_PASSWORD": "BW_PASSWORD",
+        "API_CLIENT_ID": "BW_CLIENTID",
+        "API_CLIENT_SECRET": "BW_CLIENTSECRET",
+        "LOGIN_USERNAME": "BW_USER",
+    }
+    headers = cfg["headers"]
+    assert headers["X-BW-Host"] == "{{BW_HOST}}"
+    assert headers["X-BW-Password"] == "{{BW_PASSWORD}}"
+    assert headers["X-BW-ClientId"] == "{{BW_CLIENTID}}"
+    assert headers["X-BW-ClientSecret"] == "{{BW_CLIENTSECRET}}"
+    assert headers["X-BW-User"] == "{{BW_USER}}"
+    # The connection-test probe must FORCE the vault unlock (keychain_status
+    # is a lazy check that reports "not ready" without validating credentials).
+    assert cfg["test_tool"] == {"name": "keychain_list_folders", "arguments": {}}
+    assert cfg["tool_names"] and cfg["test_tool"]["name"] in cfg["tool_names"]
+    # The wizard's required fields: host + master password. The login method
+    # (API key pair vs email) is user choice, validated by the upstream.
+    assert t.config_schema["required"] == ["VAULT_HOST", "MASTER_PASSWORD"]
+
+
+def test_seeded_warden_header_resolution_with_optional_logins(client, monkeypatch):
+    """The dual-login contract: all five X-BW-* headers are sent on every
+    request; upstream treats empty values as absent, so the user's chosen
+    login method wins. The seed's static empty defaults keep every
+    placeholder resolvable regardless of which optional fields the user left
+    blank (untouched wizard fields are ABSENT from the stored credentials)."""
+    import api.mcp_bridge as mcp_bridge
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    db = SessionLocal()
+    try:
+        t = db.query(MCPTemplate).filter(MCPTemplate.id == "warden").first()
+    finally:
+        db.close()
+    assert t is not None, "warden template was not seeded"
+    cfg = t.runtime_config
+    monkeypatch.setattr(mcp_bridge, "INSTANCE_BACKEND", "docker")
+
+    def resolve(creds: dict) -> dict:
+        env = mcp_bridge._sidecar_env(cfg, mcp_bridge.map_env(cfg, creds))
+        return mcp_bridge._sidecar_headers(cfg, env)
+
+    # API key login: the pair is carried, the email header is empty (absent).
+    h = resolve({
+        "VAULT_HOST": "https://vault.example.com",
+        "MASTER_PASSWORD": "mp-123",
+        "API_CLIENT_ID": "user.abc123",
+        "API_CLIENT_SECRET": "s3cret",
+    })
+    assert h["X-BW-Host"] == "https://vault.example.com"
+    assert h["X-BW-Password"] == "mp-123"
+    assert h["X-BW-ClientId"] == "user.abc123"
+    assert h["X-BW-ClientSecret"] == "s3cret"
+    assert h["X-BW-User"] == ""
+
+    # Email login: the pair headers are empty (absent), the email is carried.
+    h = resolve({
+        "VAULT_HOST": "https://vault.example.com",
+        "MASTER_PASSWORD": "mp-123",
+        "LOGIN_USERNAME": "alice@example.com",
+    })
+    assert h["X-BW-ClientId"] == ""
+    assert h["X-BW-ClientSecret"] == ""
+    assert h["X-BW-User"] == "alice@example.com"
+
+
+# ---------------------------------------------------------------------------
+# Real upstream server: pinned warden-mcp submodule through the subprocess
+# bridge path, with the SAME runtime_config shape as the production seed
+# (stdio transport). The upstream stdio transport authenticates LAZILY: the
+# MCP handshake succeeds with fake credentials, keychain_status reports
+# "not ready" without unlocking, and the first vault tool (keychain_list_folders)
+# triggers the real bw login + unlock and fails against the fake host. So
+# with fake credentials this test proves: spawn + stdio handshake + tools/call
+# against the actual upstream code, upstream error relay as a tool error (not
+# a bridge failure), a clean credential failure from the connection-test
+# route, and admin discovery of the full tool catalogue.
+# Needs Node 24+ on PATH; performs the runbook's one-time
+# `npm install && npm run build` inside the submodule if dist/ is missing.
+# ---------------------------------------------------------------------------
+WARDEN_SUBMODULE = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "integrations", "warden-mcp"))
+
+
+def _node_major() -> int | None:
+    """Major version of the host `node`, or None when missing (the upstream
+    requires Node 24+; an older host node would fail opaquely at runtime)."""
+    if not shutil.which("node"):
+        return None
+    import subprocess as sp
+    try:
+        out = sp.run(["node", "--version"], capture_output=True, text=True,
+                     timeout=10).stdout.strip()  # e.g. v26.7.0
+        return int(out.lstrip("v").split(".")[0])
+    except (ValueError, IndexError, OSError):
+        return None
+
+
+_NODE_MAJOR = _node_major()
+
+
+@pytest.mark.skipif(
+    not os.path.isfile(os.path.join(WARDEN_SUBMODULE, "package.json")),
+    reason="integrations/warden-mcp submodule is not checked out")
+@pytest.mark.skipif(
+    _NODE_MAJOR is None or _NODE_MAJOR < 24,
+    reason=f"node 24+ is required for the warden subprocess dev path (found: {_NODE_MAJOR or 'none'})")
+def test_real_warden_submodule_subprocess_path(client, auth_user):
+    import subprocess as sp
+
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    # One-time build (cached: dist/server.js existing means already built).
+    if not os.path.isfile(os.path.join(WARDEN_SUBMODULE, "dist", "server.js")):
+        sp.run(["npm", "install"], cwd=WARDEN_SUBMODULE, check=True,
+               stdout=sp.PIPE, stderr=sp.STDOUT, timeout=600)
+        sp.run(["npm", "run", "build"], cwd=WARDEN_SUBMODULE, check=True,
+               stdout=sp.PIPE, stderr=sp.STDOUT, timeout=300)
+
+    template_id = "warden-submodule-test"
+    fake_creds = {
+        "VAULT_HOST": "https://nonexistent-eepy-warden.invalid",
+        "MASTER_PASSWORD": "fake-master-password",
+        "API_CLIENT_ID": "user.fake",
+        "API_CLIENT_SECRET": "fake-secret",
+    }
+    db = SessionLocal()
+    try:
+        existing = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
+        if existing:
+            db.delete(existing)
+            db.commit()
+        t = MCPTemplate(
+            id=template_id,
+            name="Warden (submodule e2e test)",
+            description="Runs the pinned integrations/warden-mcp submodule through the bridge.",
+            config_schema={
+                "category": "Test",
+                "type": "object",
+                "properties": {
+                    "VAULT_HOST": {"type": "string", "label": "Vault Host", "required": True},
+                    "MASTER_PASSWORD": {"type": "password", "label": "Master Password", "required": True},
+                },
+                "required": ["VAULT_HOST", "MASTER_PASSWORD"],
+            },
+            runtime="mcp-server",
+            runtime_config={
+                "command": ["node", "bin/warden-mcp.js", "--stdio"],
+                "cwd": "integrations/warden-mcp",
+                "subprocess_env": {
+                    "BW_CLIENTID": "",
+                    "BW_CLIENTSECRET": "",
+                    "BW_USER": "",
+                },
+                "env_mapping": {
+                    "VAULT_HOST": "BW_HOST",
+                    "MASTER_PASSWORD": "BW_PASSWORD",
+                    "API_CLIENT_ID": "BW_CLIENTID",
+                    "API_CLIENT_SECRET": "BW_CLIENTSECRET",
+                    "LOGIN_USERNAME": "BW_USER",
+                },
+                "test_tool": {"name": "keychain_list_folders", "arguments": {}},
+            },
+            approved_by_admin=True,
+            enabled_global=True,
+        )
+        db.add(t)
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        r = client.post("/api/mcp/config/register", headers=_h(auth_user["token"]),
+                        json={"template_id": template_id, "credentials_json": fake_creds})
+        assert r.status_code == 200, r.text
+
+        # Lazy tool: the sidecar must spawn with the env-mapped credentials
+        # and complete the MCP handshake + tools/call even with fake
+        # credentials (keychain_status reports "not ready" without unlocking).
+        r = client.post(f"/api/mcp/proxy/{template_id}/keychain_status",
+                        headers=_h(auth_user["token"]), json={})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["tool"] == "keychain_status"
+        assert body["is_error"] is False, f"keychain_status is lazy: {body['data'][:300]}"
+
+        # Vault tool with fake credentials: the sidecar triggers the real bw
+        # login + unlock against the unreachable host, and the failure must be
+        # relayed as an upstream TOOL error (is_error), NOT a bridge/handshake
+        # error — proving the env-mapped credentials reached the subprocess.
+        r = client.post(f"/api/mcp/proxy/{template_id}/keychain_list_folders",
+                        headers=_h(auth_user["token"]), json={})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["tool"] == "keychain_list_folders"
+        assert body["is_error"] is True, \
+            f"unreachable vault must produce a tool error, got: {body['data'][:300]}"
+
+        # Connection test endpoint (test_tool path) must report a clean
+        # credential failure, not a bridge/handshake failure.
+        r = client.post(f"/api/mcp/config/{template_id}/test", headers=_h(auth_user["token"]))
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "failed", r.json()
+
+        # Admin discovery against the real server: the pinned submodule
+        # advertises its full default tool catalogue (no vault access needed).
+        r = client.post(f"/superuser/mcp/templates/{template_id}/discover",
+                        headers=_h(auth_user["token"]))
+        assert r.status_code == 200, r.text
+        disc = r.json()
+        assert disc["tool_count"] > 0, disc
+        assert "keychain_status" in disc["tools"]
+        assert "keychain_list_folders" in disc["tools"]
+    finally:
+        from api import mcp_bridge
+        mcp_bridge.shutdown_all_instances()

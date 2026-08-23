@@ -81,6 +81,17 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-portainer:latest
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Build and push Warden MCP sidecar image
+        # Built from the integrations/warden-mcp submodule so the deployed
+        # sidecar always matches the exact upstream commit this repo pins.
+        uses: docker/build-push-action@v5
+        with:
+          context: ./
+          file: ./integrations/Dockerfile.warden
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-warden:latest
+          labels: ${{ steps.meta.outputs.labels }}
+
       - name: Build and push Frontend image
         uses: docker/build-push-action@v5
         with:

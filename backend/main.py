@@ -114,14 +114,15 @@ def bootstrap_superuser() -> None:
         db.close()
 
 def seed_mcp_templates():
-    """Seed the admin-approved templates (HappyFox #1, eBay #2, Portainer #3)
-    into the library.
+    """Seed the admin-approved templates (HappyFox #1, eBay #2, Portainer #3,
+    Warden #4) into the library.
 
     Each integration's MCP server code lives OUTSIDE this backend, in its own
     git submodule under integrations/ (happyfox-mcp →
     github.com/Glitch3dPenguin/happyfox-mcp, ebay-mcp →
     github.com/YosefHayim/ebay-mcp, portainer-mcp →
-    github.com/portainer/portainer-mcp). These rows only register *how to
+    github.com/portainer/portainer-mcp, warden-mcp →
+    github.com/icoretech/warden-mcp). These rows only register *how to
     run* them:
 
     - docker backend (production/Portainer): CI builds each submodule into its
@@ -467,9 +468,157 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
+    warden = MCPTemplate(
+        id="warden",
+        name="Warden (Vaultwarden / Bitwarden)",
+        description=(
+            "Read and manage your Vaultwarden / Bitwarden vault across ~60 tools: "
+            "search items, fetch usernames, passwords, and TOTP codes (secret fields "
+            "redacted unless a tool is asked to reveal), and create, update, move, or "
+            "delete items, folders, organizations, collections, attachments, and "
+            "Sends. Built for agents that must log in to real systems without secrets "
+            "in prompts. Works with an API key pair OR email login; credentials stay "
+            "encrypted at rest and are proxied through the Eepy unified proxy."
+        ),
+        config_schema={
+            "category": "Security / Password Management",
+            "type": "object",
+            "properties": {
+                "VAULT_HOST": {
+                    "type": "string",
+                    "label": "Vault Host",
+                    "placeholder": "https://vaultwarden.example.com",
+                    "help": "HTTPS origin of your Vaultwarden/Bitwarden server (https only, no path or credentials).",
+                    "required": True,
+                },
+                "MASTER_PASSWORD": {
+                    "type": "password",
+                    "label": "Master Password",
+                    "help": "Your vault's master password (unlocks the vault for every session).",
+                    "required": True,
+                },
+                "API_CLIENT_ID": {
+                    "type": "string",
+                    "label": "API Key Client ID",
+                    "placeholder": "user.xxxxx",
+                    "help": "Option A: Bitwarden API key pair (My Account > Security > API key). Leave both blank if you log in with your email instead.",
+                    "required": False,
+                },
+                "API_CLIENT_SECRET": {
+                    "type": "password",
+                    "label": "API Key Client Secret",
+                    "help": "Option A (continued): the secret shown once when the API key was generated.",
+                    "required": False,
+                },
+                "LOGIN_USERNAME": {
+                    "type": "string",
+                    "label": "Login Email / Username",
+                    "placeholder": "you@example.com",
+                    "help": "Option B: log in with your account email instead of an API key pair. Fill either Option A or Option B, not both.",
+                    "required": False,
+                },
+            },
+            "required": ["VAULT_HOST", "MASTER_PASSWORD"],
+        },
+        image_tag="ghcr.io/kulik-labs-development/eepy-host-warden",
+        runtime="mcp-server",
+        # Modular sidecar spec (same contract as the Portainer reference) with
+        # the per-request header machinery, because the upstream HTTP mode is
+        # per-user passthrough: every /sse request (initialize AND tools/call)
+        # must carry X-BW-Host + X-BW-Password + (X-BW-ClientId +
+        # X-BW-ClientSecret) or X-BW-User. KEYCHAIN_ALLOW_ENV_FALLBACK stays
+        # at its default false, so a headerless request can NEVER inherit the
+        # sidecar's env identity — the headers ARE the auth layer.
+        #
+        # Upstream treats EMPTY header values as absent (trim → length 0),
+        # which is what makes the dual login method work: the bridge always
+        # sends all five headers, and the user's choice (API key pair vs email)
+        # decides which ones carry values. For the placeholders to resolve,
+        # every referenced env var must exist on the sidecar — so env /
+        # subprocess_env carry STATIC EMPTY defaults for the three optional
+        # login vars; mapped user credentials override them at spawn.
+        #
+        # State: bw profile state under /data/bw-profiles (KEYCHAIN_BW_HOME_ROOT)
+        # is a warm cache only — sidecars are ephemeral (idle-reaped), so a
+        # respawn re-authenticates from the per-request credentials (first call
+        # after a reap costs a few extra seconds for bw login + unlock).
+        #
+        # Local (subprocess backend): stdio transport reads the BW_* env vars
+        # and LOGS IN AT STARTUP (before the MCP handshake), so a misconfigured
+        # sidecar fails loudly at spawn. Needs Node 24+ on the host PATH and a
+        # one-time `npm install && npm run build` inside integrations/warden-mcp
+        # (the postinstall applies the Vaultwarden compat patch to the bundled
+        # @bitwarden/cli — do not use --ignore-scripts).
+        runtime_config={
+            "image": "ghcr.io/kulik-labs-development/eepy-host-warden:latest",
+            "command": ["node", "bin/warden-mcp.js", "--stdio"],
+            "cwd": "integrations/warden-mcp",
+            # Docker backend (production): streamable-HTTP on :3005 at /sse.
+            # Express binds all interfaces when WARDEN_MCP_HOST is unset, which
+            # is exactly what the eepy-sidecars docker network dial needs.
+            "env": {
+                "PORT": "3005",
+                "KEYCHAIN_BW_HOME_ROOT": "/data/bw-profiles",
+                "BW_CLIENTID": "",
+                "BW_CLIENTSECRET": "",
+                "BW_USER": "",
+            },
+            # Subprocess backend (local dev): stdio mode; same static empty
+            # defaults (readBwEnv treats empty values as absent too).
+            "subprocess_env": {
+                "BW_CLIENTID": "",
+                "BW_CLIENTSECRET": "",
+                "BW_USER": "",
+            },
+            "endpoint": "/sse",
+            "port": "3005",
+            "env_mapping": {
+                "VAULT_HOST": "BW_HOST",
+                "MASTER_PASSWORD": "BW_PASSWORD",
+                "API_CLIENT_ID": "BW_CLIENTID",
+                "API_CLIENT_SECRET": "BW_CLIENTSECRET",
+                "LOGIN_USERNAME": "BW_USER",
+            },
+            # Per-request vault credentials (see header comment above).
+            "headers": {
+                "X-BW-Host": "{{BW_HOST}}",
+                "X-BW-Password": "{{BW_PASSWORD}}",
+                "X-BW-ClientId": "{{BW_CLIENTID}}",
+                "X-BW-ClientSecret": "{{BW_CLIENTSECRET}}",
+                "X-BW-User": "{{BW_USER}}",
+            },
+            # Read-only probe for POST /config/{id}/test: keychain_status is a
+            # LAZY check (it reports "not ready" without unlocking), so the
+            # test uses keychain_list_folders instead — it forces the full bw
+            # login + unlock + list with the user's real credentials, so a bad
+            # host / master password / login method fails the test loudly.
+            # (A very large vault makes the first call do a full sync; the
+            # EEPY_MCP_INSTANCE_CALL_TIMEOUT dial covers that.)
+            "test_tool": {"name": "keychain_list_folders", "arguments": {}},
+            # Representative subset of the upstream tool catalogue (prefix
+            # keychain_) so the OpenAPI spec has entries before admin
+            # discovery stores the authoritative tools/list.
+            "tool_names": [
+                "keychain_status", "keychain_sync", "keychain_search_items",
+                "keychain_get_item", "keychain_get_username",
+                "keychain_get_password", "keychain_get_totp",
+                "keychain_create_login", "keychain_create_note",
+                "keychain_create_card", "keychain_update_item",
+                "keychain_move_item_to_organization", "keychain_delete_item",
+                "keychain_restore_item", "keychain_list_folders",
+                "keychain_create_folder", "keychain_list_organizations",
+                "keychain_list_collections", "keychain_create_attachment",
+                "keychain_get_attachment", "keychain_send_list",
+                "keychain_generate", "keychain_sdk_version",
+            ],
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
     db = SessionLocal()
     try:
-        for spec in (happyfox, ebay, portainer):
+        for spec in (happyfox, ebay, portainer, warden):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
                 existing.approved_by_admin = True

@@ -1,0 +1,81 @@
+# Warden MCP server sidecar image (Vaultwarden / Bitwarden).
+#
+# SOURCE OF TRUTH: integrations/warden-mcp (git submodule →
+# github.com/icoretech/warden-mcp). This Dockerfile only builds that code into
+# an image; it is NOT where the server code lives.
+#
+# Build context must be the REPO ROOT (CI sets context: ./), so the
+# integrations/warden-mcp/ paths below resolve to exactly the submodule commit
+# this repo pins.
+#
+# Transport: Streamable-HTTP on :3005 at /sse (stateful sessions via
+# mcp-session-id; GET /healthz is the liveness probe). The Eepy backend spawns
+# this image per user via the mcp-server sidecar runtime (api/mcp_bridge.py).
+# Vault credentials ride PER-REQUEST X-BW-* headers (the bridge's headers
+# machinery resolves them from the sidecar env); KEYCHAIN_ALLOW_ENV_FALLBACK
+# stays at its default false, so a headerless request can never inherit the
+# sidecar's env identity.
+#
+# Mirrors the upstream repo's own Dockerfile (multi-stage
+# node:24-bookworm-slim, non-root `node` user uid/gid 1000, HOME=/data).
+# Differences:
+#  - COPY paths from the repo-root build context.
+#  - The final stage carries bin/ and runs the package's official entry
+#    (node bin/warden-mcp.js): prepareBwStartup() resolves the bundled
+#    @bitwarden/cli into BW_BIN before the server starts.
+#  - Eepy-specific env defaults below.
+#
+# DO NOT add --ignore-scripts to the npm ci step: the package's postinstall
+# (bin/patch-bitwarden-cli.js) applies the Vaultwarden compatibility patch to
+# the bundled @bitwarden/cli (accountKeysResponseModel fallback). Without it,
+# `bw` auth against Vaultwarden servers fails. The patch is idempotent and
+# touches only the installed package tree — no network, no host paths.
+FROM node:24-bookworm-slim AS builder
+
+WORKDIR /app
+
+# Install dependencies FIRST (layer cache): the postinstall Vaultwarden patch
+# runs here against the exact @bitwarden/cli version the lockfile pins.
+COPY integrations/warden-mcp/package.json integrations/warden-mcp/package-lock.json* integrations/warden-mcp/tsconfig.json integrations/warden-mcp/biome.json ./
+COPY integrations/warden-mcp/bin ./bin
+RUN npm ci
+
+# Copy source and build
+COPY integrations/warden-mcp/src ./src
+RUN npm run build
+
+# Drop devDependencies (biome, tsx, typescript, playwright) from the runtime
+# tree; @bitwarden/cli (the bundled, patched bw) is a regular dependency and
+# survives.
+RUN npm prune --omit=dev
+
+# Production stage.
+FROM node:24-bookworm-slim
+
+# Use the `node` user that already exists in the base image (uid/gid 1000).
+RUN mkdir -p /app /data \
+  && chown -R node:node /app /data
+USER node
+WORKDIR /app
+
+# HOME=/data: bw profile state (KEYCHAIN_BW_HOME_ROOT) lives under it. The
+# sidecar container is ephemeral (idle-reaped), so that state is a warm cache
+# only — a respawn re-authenticates from the per-request credentials.
+ENV HOME=/data
+ENV NODE_ENV=production
+# Eepy sidecar transport config: HTTP mode (no --stdio), Streamable-HTTP at
+# /sse on :3005. Express binds all interfaces when WARDEN_MCP_HOST is unset,
+# which is exactly what the eepy-sidecars docker network dial needs.
+ENV PORT=3005
+ENV KEYCHAIN_BW_HOME_ROOT=/data/bw-profiles
+
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/bin ./bin
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+
+EXPOSE 3005
+
+# Official package entry (resolves bundled bw via BW_BIN, then runs the
+# compiled server).
+CMD ["node", "bin/warden-mcp.js"]

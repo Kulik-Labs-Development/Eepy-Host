@@ -10,12 +10,15 @@ frontend
 integrations/happyfox-mcp/.git
 integrations/ebay-mcp/.git
 integrations/portainer-mcp/.git
+integrations/warden-mcp/.git
 # portainer-mcp dev-only trees (not copied by Dockerfile.portainer, but
 # never sent in the build context either)
 integrations/portainer-mcp/docs
 integrations/portainer-mcp/tests
 integrations/portainer-mcp/spec
 integrations/portainer-mcp/.claude
+# warden-mcp dev-only trees (Dockerfile.warden builds dist/ from src in-image)
+integrations/warden-mcp/dist
 __pycache__
 *.pyc
 .venv
