@@ -172,9 +172,9 @@ export default function ServersPage() {
     refresh();
   }, [refresh]);
 
-  const runTest = useCallback(async (templateName: string, configId: number) => {
+  const runTest = useCallback(async (templateName: string, configId: number, displayName?: string) => {
     setTestingId(configId);
-    setTestResults((prev) => ({ ...prev, [configId]: { status: 'testing', detail: 'Contacting HappyFox...' } }));
+    setTestResults((prev) => ({ ...prev, [configId]: { status: 'testing', detail: `Contacting ${displayName || templateName}...` } }));
     try {
       const res = await fetch(`${getApiUrl()}/api/mcp/config/${templateName}/test`, {
         method: 'POST',
@@ -293,7 +293,7 @@ export default function ServersPage() {
                         </div>
                         <div className="flex items-center gap-2 shrink-0 self-end lg:self-auto">
                           <button
-                            onClick={() => runTest(config.template_name, config.id)}
+                            onClick={() => runTest(config.template_name, config.id, isTemplate?.name || config.name_display || config.template_name)}
                             disabled={testingId === config.id}
                             className="btn btn-ghost px-3 py-2 text-xs flex items-center gap-1.5"
                           >
