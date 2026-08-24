@@ -12,7 +12,11 @@ SaaS MCP gateway. Users connect integrations (HappyFox today; Google Calendar,
 Slack Workspaces, Notion Databases, etc. on the roadmap); Eepy handles the API
 plumbing, credential management (encrypted at rest), and unified proxy routing
 (`/api/mcp/proxy/{template_id}/{tool_name}`) so their agent can use external
-tools without operational overhead.
+tools without operational overhead. Agents reach Eepy through TWO connectors,
+both unlocked by one per-user Tool API Key: the **OpenAPI REST proxy** (for
+Open WebUI-style tool-server imports) and a **native MCP endpoint**
+(`POST /api/mcp/mcp`, streamable-HTTP — for MCP clients like opencode, Claude
+Desktop, Cursor; see "Native MCP endpoint" below).
 
 **Core architecture principle:** this is NOT a container orchestration
 platform for the *control plane*. One unified FastAPI backend owns auth,
@@ -29,7 +33,7 @@ updating an integration is "bump the submodule ref", never editing its code
 here. The backend spawns those sidecars per user (subprocess locally,
 docker container in production), short-lived and idle-reaped.
 
-## Current State (Phase 5 complete: modular MCP sidecar runtime)
+## Current State (Phase 5 complete: modular MCP sidecar runtime + native MCP endpoint)
 
 - Unified auth portal + dashboard hub (account, debug console, organization
   admin tools for superusers, servers).
@@ -123,9 +127,23 @@ docker container in production), short-lived and idle-reaped.
   API from **its browser origin** (spec fetch AND proxy calls), so CORS is
   wildcard by default (`CORS_ORIGINS` env pins an exact list; safe because
   auth is Bearer-token only, no cookie sessions). Open WebUI also **appends
-  `/openapi.json`** to the pasted URL, so users paste the base URL
-  (`https://<host>/api/mcp`) and the backend serves the spec at BOTH
-  `/api/mcp/openapi.json` and `/api/mcp/openapi.json/openapi.json`.
+   `/openapi.json`** to the pasted URL, so users paste the base URL
+   (`https://<host>/api/mcp`) and the backend serves the spec at BOTH
+   `/api/mcp/openapi.json` and `/api/mcp/openapi.json/openapi.json`.
+- **AI Platform connector (native MCP):** `POST /api/mcp/mcp` is a real
+  Model Context Protocol endpoint (mcp SDK `StreamableHTTPSessionManager`,
+  **stateless** + JSON responses — multi-replica safe, no SSE buffering
+  issues) implemented in `api/mcp_stream.py`. Same one-key contract as the
+  proxy: a Tool API Key (or session JWT) + URL is the whole setup for
+  opencode / Claude Desktop / Cursor / any streamable-HTTP MCP client.
+  `tools/list` is PER-USER (only the caller's ACTIVE connections, names
+  `{template}__{tool}`); `tools/call` routes exactly like the REST proxy
+  (bridge for mcp-server, registry for native) with the same per-call
+  credential checks; built-in `eepy__status` tool shows what is connected.
+  The dashboard's "AI Platforms (MCP)" section
+  (`AIPlatformConnectorPanel`) creates keys and offers copy-paste configs
+  per client. Eepy-side tools surface upstream errors as `isError` MCP
+  results (never transport errors) so the agent can read and react to them.
 
 ## Key Architecture Decisions
 
@@ -174,14 +192,19 @@ docker container in production), short-lived and idle-reaped.
 │   │                         #   python-jose — jose is unmaintained, CVE-2024-29370)
 │   ├── database.py           # engine/session (DATABASE_URL from env)
 │   ├── run_migrations.py     # idempotent schema bootstrap
-│   ├── api/
-│   │   ├── mcp_endpoints.py  # ALL MCP routes: tool keys, template list,
-│   │   │                     #   config register/list/delete/test/mcp-url,
-│   │   │                     #   unified proxy (routes by runtime), unified
-│   │   │                     #   OpenAPI spec (from DB + registry)
-│   │   └── mcp_bridge.py     # modular sidecar bridge: spawn/reuse per-user
-│   │                         #   MCP sidecars (subprocess or docker), speak
-│   │                         #   MCP (tools/list, tools/call), idle reaper
+ │   ├── api/
+ │   │   ├── mcp_endpoints.py  # ALL MCP routes: tool keys, template list,
+ │   │   │                     #   config register/list/delete/test/mcp-url,
+ │   │   │                     #   unified proxy (routes by runtime), unified
+ │   │   │                     #   OpenAPI spec (from DB + registry),
+ │   │   │                     #   MCP_STREAM_PATH + the eekey scope check
+ │   │   ├── mcp_stream.py     # native MCP endpoint (AI Platform connector):
+ │   │   │                     #   streamable-HTTP at /api/mcp/mcp (stateless),
+ │   │   │                     #   ASGI auth middleware, per-user tools/list,
+ │   │   │                     #   tools/call → bridge/registry routing
+ │   │   └── mcp_bridge.py     # modular sidecar bridge: spawn/reuse per-user
+ │   │                         #   MCP sidecars (subprocess or docker), speak
+ │   │                         #   MCP (tools/list, tools/call), idle reaper
 │   ├── models/
 │   │   └── mcp_models.py     # MCPTemplate, UserMCPConfig, MCPUserToolKey,
 │   │                         #   MCPSidecar (durable sidecar tracking),
@@ -195,12 +218,18 @@ docker container in production), short-lived and idle-reaped.
 │   ├── app/                  # App Router pages: /auth, /dashboard/*
 │   ├── context/AuthContext.tsx
 │   ├── lib/api.ts
-│   └── src/components/       # MCPConnectionWizard, OpenWebUIExportPanel
+ │   └── src/components/       # MCPConnectionWizard, OpenWebUIExportPanel,
+ │                             #   AIPlatformConnectorPanel
 ├── deploy/
 │   ├── docker-compose.yml    # db + backend + frontend (no secrets in file)
 │   └── stack.env.example     # secret reference — copy to stack.env and fill in
 │                             #   (named stack.env, not .env, because the stack
 │                             #   is normally deployed via Portainer)
+├── tools/
+│   ├── eepy_mcp_shim.py    # stdio MCP bridge for local agents (opencode):
+│   │                       #   spec-driven tools over the unified proxy —
+│   │                       #   see "opencode MCP bridge" under Testing
+│   └── .eepy_env           # git-ignored: EEPY_BASE_URL / EEPY_TOOL_KEY
 ├── integrations/
 │   ├── Dockerfile.happyfox   # builds the submodule into the sidecar image
 │   ├── Dockerfile.ebay       #   (build context = repo root; see .github/workflows/main.yml)
@@ -234,13 +263,18 @@ All under `/api/mcp` (router prefix in `api/mcp_endpoints.py`):
 | `GET /api/mcp/config/{template_id}/mcp-url` | Per-template MCP URL | USER |
 | `POST /api/mcp/config/{template_id}/test` | Test stored credentials live | USER / Tool Key |
 | `GET/POST/PUT /api/mcp/proxy/{template_id}/{tool_name}` | The core proxy: decrypt in memory → call upstream → stream back. ALSO bound at `/api/mcp/{template_id}/{tool_name}` (no `proxy` segment) via `mcp_proxy_alias` so pre-fix Open WebUI spec imports (which call the base-URL + path shape) keep working | USER / Tool Key |
+| `POST /api/mcp/mcp` | The native MCP endpoint (AI Platform connector): streamable-HTTP JSON-RPC (`initialize`, `tools/list`, `tools/call`) served by `api/mcp_stream.py` — per-user tool list, proxy-equivalent calls, `eepy__status` built-in. NOT a FastAPI route (ASGI middleware + SDK session manager); see "Native MCP endpoint" below | USER / Tool Key |
 | `POST /superuser/mcp/templates/{template_id}/discover` | Run `tools/list` against the template's sidecar (superuser's own creds) and store the tool schemas | SUPERUSER |
 | `PATCH /superuser/mcp/templates/{template_id}/runtime` | Register/update a template's sidecar spec (`runtime`, `runtime_config`, approval flags) | SUPERUSER |
 | `GET /api/mcp/openapi.json` | Unified OpenAPI spec of ALL connected tools (Open WebUI import). Paths are `/proxy/{template_id}/{tool_name}` and `servers[0].url` is the base URL `.../api/mcp` — because Open WebUI appends spec paths to the PASTED base URL and ignores `servers[].url`, both compositions must yield the same route. Also served at `/api/mcp/openapi.json/openapi.json` because Open WebUI auto-appends `/openapi.json` to the pasted URL (users paste the base URL `.../api/mcp`) | public |
 
 **Tool API Keys** are stored hashed (`mcp_user_tool_keys`) and accepted ONLY
-on the proxy and config-test routes. On any other route an `eekey_` bearer is
-rejected — session JWTs and tool keys have strictly different scopes.
+on the proxy, the native MCP stream endpoint (`/api/mcp/mcp`), and the
+config-test routes. On any other route an `eekey_` bearer is rejected —
+session JWTs and tool keys have strictly different scopes. The scope list
+lives in ONE place: the `key_allowed` check in `_resolve_scoped_user`
+(`api/mcp_endpoints.py`), with `MCP_STREAM_PATH` defined there as the single
+source of truth.
 
 ## Adding a New Integration (runbook)
 
@@ -321,9 +355,11 @@ admin-discovery time from the upstream server's own `tools/list`.
    tears the sidecar down. The unified OpenAPI spec and dashboard now show the
    upstream author's real tool schemas. **Re-run discovery after the upstream
    image changes** so the spec stays current.
-3. **Done.** It appears in the library; the connect wizard renders from
-   `config_schema`; proxy + test route through the generic bridge; its tools
-   appear in every user's single Open WebUI connection automatically.
+ 3. **Done.** It appears in the library; the connect wizard renders from
+    `config_schema`; proxy + test route through the generic bridge; its tools
+    appear in every user's Open WebUI connection AND in their native MCP
+    client (opencode / Claude Desktop / Cursor via `/api/mcp/mcp`)
+    automatically.
 
 **Maintenance when the upstream repo changes:** the upstream repo is a git
 submodule under `integrations/` — update its ref
@@ -343,6 +379,60 @@ image from that exact commit. Re-run discovery. No Eepy backend code changes
 > This path requires writing and maintaining per-integration Python. Use it
 > only for the original HappyFox reference; everything new should be
 > `mcp-server`.
+
+## Native MCP endpoint (AI Platform connector, `backend/api/mcp_stream.py`)
+
+`POST /api/mcp/mcp` speaks real Model Context Protocol (streamable-HTTP,
+JSON-RPC) so MCP-native clients connect without any OpenAPI import. This is
+the "AI Platform connector" in the dashboard — the pair to the Open WebUI
+tool-server connector, with the identical one-key contract.
+
+- **Transport:** mcp SDK `StreamableHTTPSessionManager` with `stateless=True`
+  + `json_response=True`. Every request is a self-contained exchange — no
+  server-side session store (any backend replica on the host can serve any
+  request, like the proxy) and plain JSON responses (no SSE) so Portainer /
+  reverse-proxy SSE buffering can't wedge a call. The SDK's cookie-oriented
+  DNS-rebinding Host/Origin checks are DISABLED
+  (`TransportSecuritySettings(enable_dns_rebinding_protection=False)`)
+  because auth is Bearer-token only and clients dial through container
+  IPs/proxies.
+- **Wiring (`main.py`):** `session_manager.run()` is entered in the app
+  lifespan (its task group must be live for the whole process); an ASGI
+  middleware (`MCPStreamAuthMiddleware`) is added BEFORE the CORS middleware
+  (Starlette: last-added is outermost, so CORS stays outermost and MCP
+  responses carry normal CORS headers). The middleware intercepts
+  `/api/mcp/mcp` (POST/GET/DELETE) before routing.
+- **Auth:** the middleware resolves the caller with the SAME
+  `_resolve_scoped_user` the proxy uses (session JWT OR `eekey_` Tool API
+  Key — eekey scope includes `MCP_STREAM_PATH`), answers 401 JSON otherwise,
+  and hands the `User` to the handlers through a **ContextVar**
+  (`_current_mcp_user`) — the SDK's low-level `Server` handlers have no
+  access to the HTTP request. The eekey path COMMITs (last_used_at bump)
+  which expires the SQLAlchemy instance, so the middleware `db.refresh()` +
+  `db.expunge()`s the user before closing the session (detached lazy access
+  would raise "not bound to a Session").
+- **tools/list is PER-USER:** only templates the caller has an ACTIVE
+  `UserMCPConfig` for are listed — a tool you cannot call is not offered.
+  Schemas come from `discovered_tools` (admin discovery); undiscovered
+  mcp-server templates fall back to `runtime_config.tool_names`, then
+  `TEMPLATE_REGISTRY` (native), else an untyped `{"type":"object"}` —
+  arguments are forwarded verbatim upstream. Tool names are
+  `{template}__{tool}` (sanitized to `[a-zA-Z0-9_-]`, max 64).
+- **tools/call routes exactly like the REST proxy:** name is split on the
+  first `__`; the template must be approved+enabled and the caller must have
+  an active connection (same `_load_active_creds` as the proxy);
+  `mcp-server` → `mcp_bridge.bridge_call`, `native` → `_proxy_native`
+  (wrapped with a standalone session). Unknown template / unknown tool /
+  missing connection / bridge failure / upstream HTTP error all come back as
+  `isError=True` MCP results with a human-readable message — never transport
+  errors — so the agent can read and react. A built-in `eepy__status` tool
+  (no upstream call) reports the caller's connected integrations + tool
+  counts.
+- **Tests:** `backend/tests/test_mcp_stream.py` speaks raw JSON-RPC over the
+  test client (auth 401s, JWT + eekey accept, stateless list-without-init,
+  per-user listing, bridge-routed call with decrypted creds, error
+  surfacing, `eepy__status`). The test client is a CONTEXT MANAGER in
+  `conftest.py` (runs the lifespan → session manager task group + reaper).
 
 ## How the MCP sidecar bridge works (`backend/api/mcp_bridge.py`)
 
@@ -550,6 +640,30 @@ cd frontend && npm run lint && npx tsc --noEmit
 (CI mirrors this: ruff+pytest for the backend, eslint+tsc for the frontend —
 there is no vitest in the frontend.)
 
+### opencode MCP bridge (local dev tooling)
+
+`tools/eepy_mcp_shim.py` is a small stdio MCP server (registered in the root
+`opencode.json` as local server `eepy`) that lets opencode call Eepy Host tools
+from inside a session for dev testing: it fetches the unified
+`/api/mcp/openapi.json` spec, registers each tool as `{template}__{tool}`, and
+proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}` with the
+user's Tool API Key. It is a CLIENT-SIDE dev shim: for real MCP clients the
+production path is the native endpoint (`POST /api/mcp/mcp`, see "Native MCP
+endpoint") — point the client there with a URL + Bearer Tool Key instead.
+- Config: env vars, or `tools/.eepy_env` (git-ignored, chmod 600, `KEY=VALUE`
+  lines): `EEPY_BASE_URL` (e.g. `https://<host>`), `EEPY_TOOL_KEY`
+  (`eekey_...` created in the dashboard, Open WebUI section — one key unlocks
+  every integration you have connected).
+- `EEPY_TEMPLATES` (comma list) restricts which integrations are exposed.
+  Set it when testing one integration (e.g. `EEPY_TEMPLATES=happyfox`) — the
+  full catalog is ~600 tools and would blow the agent's context window.
+- One-time venv (recreate if missing):
+  `uv venv --python 3.12 tools/.venv && uv pip install --python
+  tools/.venv/bin/python "mcp==1.29.0" "httpx==0.28.1"` (same pins as the
+  backend). Debug: `tools/.venv/bin/python tools/eepy_mcp_shim.py --list`.
+- Config is loaded at opencode startup: quit + restart opencode after changing
+  `opencode.json` or `tools/.eepy_env`.
+
 ## Critical Developer Nuances (learn the hard way)
 
 1. **Absolute import rule — CRITICAL.** Never use relative imports in
@@ -582,8 +696,17 @@ there is no vitest in the frontend.)
    - In `api/mcp_bridge.py`, blocking work (spawns, image pulls, kills,
      liveness) is ALWAYS wrapped in `asyncio.to_thread` from the async entry
      points. `_spawn_docker`/`_spawn_subprocess` are sync on purpose.
-   - Sidecar spawn locks are PER-KEY (`_KEY_LOCKS`), never global: one user's
-     first-call docker pull must not serialize every other user's request.
+    - Sidecar spawn locks are PER-KEY (`_KEY_LOCKS`), never global: one user's
+      first-call docker pull must not serialize every other user's request.
+ 6. **Never let a test install uvloop.** `uvicorn.Config(...)` with the
+    default `loop="auto"` runs `uvloop.install()` — which replaces the
+    PROCESS-WIDE asyncio event-loop policy and never restores it. uvloop's
+    policy has no child watcher, so any LATER subprocess spawn on a
+    plain-asyncio loop (the test suite's persistent TestClient portal, which
+    predates the install) dies with a bare `NotImplementedError` deep in
+    `anyio.open_process` (surfaced as "MCP handshake with sidecar failed
+    (NotImplementedError)"). Pass `loop="asyncio"` to every test uvicorn
+    Config (see `test_http_sidecar_headers_reach_the_upstream_server`).
 
 ## Code Style Guidelines
 

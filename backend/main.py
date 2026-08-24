@@ -860,7 +860,7 @@ except Exception as e:
 
 # MCP endpoints (Phase 5: HappyFox template #1). Absolute import (never relative):
 # Uvicorn runs this module top-level.
-from api import mcp_bridge  # noqa: E402
+from api import mcp_bridge, mcp_stream  # noqa: E402  (mcp_stream: native MCP endpoint /api/mcp/mcp)
 from api.mcp_endpoints import router as mcp_router  # noqa: E402
 
 app = FastAPI(title="Eepy Host API")
@@ -886,16 +886,19 @@ async def _lifespan(app: FastAPI):
         )
 
     # Boot reconciliation: every mcp_sidecars row is a leftover sidecar still
-    # holding a user's decrypted credentials in its env (OOM kill, kill -9,
+    # holding a user's decrypted credentials in their env (OOM kill, kill -9,
     # host reboot, Portainer remove). Remove it; the next request re-spawns.
     await asyncio.to_thread(mcp_bridge.sweep_orphan_sidecars)
     mcp_bridge.ensure_reaper_started()
-    try:
-        yield
-    finally:
-        # Blocking Docker/proc teardown must not stall the event loop even at
-        # shutdown time.
-        await asyncio.to_thread(mcp_bridge.shutdown_all_instances)
+    # The MCP streamable-HTTP session manager must be running for the duration
+    # of the app (its task group handles /api/mcp/mcp requests).
+    async with mcp_stream.session_manager.run():
+        try:
+            yield
+        finally:
+            # Blocking Docker/proc teardown must not stall the event loop even
+            # at shutdown time.
+            await asyncio.to_thread(mcp_bridge.shutdown_all_instances)
 
 
 app.router.lifespan_context = _lifespan
@@ -909,6 +912,12 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Mount the MCP integration router (Phase 5: HappyFox template #1).
 app.include_router(mcp_router)
+
+# Native MCP endpoint (AI Platform connector): an ASGI middleware intercepts
+# /api/mcp/mcp BEFORE routing (the MCP streamable-HTTP manager is not a
+# FastAPI route). Added before the CORS middleware below so CORS stays
+# OUTERMOST and MCP responses carry the normal CORS headers.
+app.add_middleware(mcp_stream.MCPStreamAuthMiddleware, manager=mcp_stream.session_manager)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):

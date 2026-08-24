@@ -1,0 +1,12 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "eepy": {
+      "type": "local",
+      "command": ["tools/.venv/bin/python", "tools/eepy_mcp_shim.py"],
+      "cwd": ".",
+      "timeout": 300000,
+      "enabled": true
+    }
+  }
+}

@@ -8,14 +8,16 @@ Security model:
   never written to disk.
 - Every endpoint requires a valid JWT (get_current_user). The backend is the source of
   truth for authorization; the frontend is never trusted for access control.
-- Proxy + connection-test endpoints additionally accept a user-scoped, revocable
-  Tool API Key (Bearer `eekey_...`). ONE key per user unlocks EVERY integration
-  they have connected — this is what makes Open WebUI a single Tool Server
-  connection. The key is accepted ONLY on /api/mcp/proxy/* and /api/mcp/config/*
-  — never on /user/*, /auth/*, billing, or superuser routes — and each proxy call
-  still requires the user to have an active connection to the requested template.
-  Only a SHA-256 hash is stored; the plaintext key is returned once at creation
-  and is never persisted.
+- Proxy + connection-test endpoints (and the native MCP stream endpoint,
+  POST /api/mcp/mcp) additionally accept a user-scoped, revocable Tool API Key
+  (Bearer `eekey_...`). ONE key per user unlocks EVERY integration they have
+  connected — this is what makes Open WebUI a single Tool Server connection and
+  MCP clients (opencode, Claude Desktop, ...) a single MCP server connection.
+  The key is accepted ONLY on /api/mcp/proxy/*, /api/mcp/mcp, and
+  /api/mcp/config/* — never on /user/*, /auth/*, billing, or superuser routes —
+  and each tool call still requires the user to have an active connection to
+  the requested template. Only a SHA-256 hash is stored; the plaintext key is
+  returned once at creation and is never persisted.
 """
 
 import asyncio
@@ -40,6 +42,12 @@ from utils.crypto import decrypt_credentials, encrypt_credentials
 from utils.logging_setup import logger
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp-integrations"])
+
+# The native MCP (streamable-HTTP) endpoint served by api/mcp_stream.py — the
+# "AI Platform connector" for MCP clients (opencode, Claude Desktop, ...).
+# The constant lives here because the eekey scope check below is the single
+# source of truth for which paths a Tool API Key may be used on.
+MCP_STREAM_PATH = "/api/mcp/mcp"
 
 
 # ---------------------------------------------------------------------------
@@ -175,8 +183,9 @@ def _resolve_scoped_user(request: Request, db: Session) -> User:
     user-scoped Tool API Key.
 
     The key is ONLY honored on the proxy routes (canonical
-    /api/mcp/proxy/{template}/{tool} and the alias /api/mcp/{template}/{tool})
-    and /api/mcp/config/{template}/test. On any other route an eekey_ token is
+    /api/mcp/proxy/{template}/{tool} and the alias /api/mcp/{template}/{tool}),
+    the native MCP stream endpoint (MCP_STREAM_PATH), and
+    /api/mcp/config/{template}/test. On any other route an eekey_ token is
     treated as a (invalid) JWT and rejected - so the key can never touch
     /user/*, /auth/*, /superuser/*, billing, or even other MCP management
     endpoints (keys, template list, config register/delete). Per-call, the
@@ -189,14 +198,17 @@ def _resolve_scoped_user(request: Request, db: Session) -> User:
     token = auth_header.split(" ", 1)[1].strip()
 
     # Proxy shapes: the canonical /api/mcp/proxy/{template}/{tool} and the
-    # backwards-compatible alias /api/mcp/{template}/{tool} (mcp_proxy_alias).
-    # The alias regex must exclude the first segments of every static
-    # two-segment MCP route so a tool key can never be honored on management
-    # endpoints (config register/list, template list).
+    # backwards-compatible alias /api/mcp/{template}/{tool} (mcp_proxy_alias),
+    # the native MCP stream endpoint (api/mcp_stream.py — proxy-equivalent:
+    # tools/call routes through the same bridge + credential checks), and the
+    # connection test. The alias regex must exclude the first segments of
+    # every static two-segment MCP route so a tool key can never be honored
+    # on management endpoints (config register/list, template list).
     key_allowed = bool(
         re.match(r"^/api/mcp/proxy/[\w-]+/", request.url.path)
         or re.match(r"^/api/mcp/(?!config/|templates/|api-keys/)[\w-]+/[\w-]+$", request.url.path)
         or re.match(r"^/api/mcp/config/[\w-]+/test$", request.url.path)
+        or request.url.path == MCP_STREAM_PATH
     )
 
     if token.startswith("eekey_"):

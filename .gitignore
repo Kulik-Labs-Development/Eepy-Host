@@ -9,6 +9,7 @@ __pycache__/
 *$py.class
 .env
 stack.env
+tools/.eepy_env
 .venv
 env/
 venv/

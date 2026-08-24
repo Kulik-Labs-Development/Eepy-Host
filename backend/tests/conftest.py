@@ -20,12 +20,19 @@ import pytest  # noqa: E402
 
 @pytest.fixture(scope="session")
 def client():
-    """FastAPI test client for the full application (SQLite-backed)."""
+    """FastAPI test client for the full application (SQLite-backed).
+
+    Used as a context manager on purpose: that runs the app lifespan (the MCP
+    stream session manager's run() context must be active for /api/mcp/mcp,
+    and the sidecar reaper gets its startup hook), with ONE portal/loop for
+    the whole session.
+    """
     from fastapi.testclient import TestClient
 
     import main
 
-    return TestClient(main.app)
+    with TestClient(main.app) as test_client:
+        yield test_client
 
 
 # ---------------------------------------------------------------------------

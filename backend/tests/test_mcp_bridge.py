@@ -943,7 +943,13 @@ def test_http_sidecar_headers_reach_the_upstream_server():
     port = probe.getsockname()[1]
     probe.close()
 
-    uv_srv = uvicorn.Server(uvicorn.Config(guard, host="127.0.0.1", port=port, log_level="error"))
+    # loop="asyncio" on purpose: the default "auto" installs uvloop GLOBALLY
+    # (uvloop.install() replaces the process-wide asyncio event loop policy,
+    # never restoring it). uvloop's policy has no child watcher, so any LATER
+    # subprocess spawn on a plain-asyncio loop (the suite's persistent test
+    # portal) dies with NotImplementedError deep in anyio.open_process.
+    uv_srv = uvicorn.Server(uvicorn.Config(
+        guard, host="127.0.0.1", port=port, log_level="error", loop="asyncio"))
     thread = threading.Thread(target=uv_srv.run, daemon=True)
     thread.start()
     deadline = time_mod.time() + 10

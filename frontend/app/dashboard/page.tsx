@@ -2,9 +2,10 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { Plug, PlugZap, Loader2, Wifi } from 'lucide-react';
+import { Plug, PlugZap, Loader2, Wifi, Bot, Cpu } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
 import OpenWebUIExportPanel from '@/src/components/OpenWebUIExportPanel';
+import AIPlatformConnectorPanel from '@/src/components/AIPlatformConnectorPanel';
 import PixelMoon from '@/src/components/PixelMoon';
 
 interface ToolKey {
@@ -35,6 +36,7 @@ export default function OverviewPage() {
   const [activeConfigs, setActiveConfigs] = useState<MyConfig[]>([]);
   const [owStatus, setOwStatus] = useState<'loading' | 'ready'>('loading');
   const [panelOpen, setPanelOpen] = useState(false);
+  const [mcpPanelOpen, setMcpPanelOpen] = useState(false);
 
   const hasActiveKey = activeKeys.some((k) => k.is_active);
   // "Connected" = the user has an active Eepy API key AND at least one active
@@ -175,6 +177,36 @@ export default function OverviewPage() {
         </div>
       </section>
 
+      {/* AI Platforms - native MCP endpoint for coding agents */}
+      <section className="panel pixel-caps p-4 sm:p-6 md:p-8 [--cap:theme('colors.eepy.sage')]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-4">
+            <div className={`well p-3 shrink-0 ${owState === 'connected' ? 'text-eepy-sage' : 'text-eepy-blush'}`}>
+              {owState === 'connected' ? <Cpu size={22} /> : <Bot size={22} />}
+            </div>
+            <div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <h3 className="font-pixel font-bold text-xl text-ink">AI Platforms (MCP)</h3>
+                {statusBadge}
+              </div>
+              <p className="text-ink-faint font-body text-sm mt-2 max-w-xl leading-relaxed">
+                Native Model Context Protocol endpoint - coding agents like opencode, Claude Desktop, and Cursor
+                connect directly to every Eepy tool you have connected. No OpenAPI import, no translation layer.
+                {owState === 'not-connected' && ' Create a key below and point your agent at the endpoint.'}
+                {owState === 'key-only' && ' Connect at least one integration and your tools go live in your agent automatically.'}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => { setMcpPanelOpen(true); loadOwStatus(); }}
+            className="btn btn-sage px-5 py-2.5 text-sm self-start sm:self-auto w-full sm:w-auto"
+          >
+            <Bot size={15} />
+            {owState === 'connected' ? 'Manage MCP Connection' : 'Set Up MCP Connection'}
+          </button>
+        </div>
+      </section>
+
       {/* Dashboard Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Main Stat Card */}
@@ -228,6 +260,15 @@ export default function OverviewPage() {
         <OpenWebUIExportPanel
           onClose={() => {
             setPanelOpen(false);
+            loadOwStatus();
+          }}
+        />
+      )}
+
+      {mcpPanelOpen && (
+        <AIPlatformConnectorPanel
+          onClose={() => {
+            setMcpPanelOpen(false);
             loadOwStatus();
           }}
         />
