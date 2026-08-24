@@ -45,6 +45,7 @@ def test_mcp_endpoints_and_deps_are_sync():
     _assert_sync(mcp_endpoints, [
         "get_current_user", "get_current_user_or_key", "get_proxy_context",
         "create_tool_api_key", "list_tool_api_keys", "revoke_tool_api_key",
+        "reveal_tool_api_key",
         "list_templates", "register_mcp_config", "list_my_configs",
         "delete_mcp_config", "mcp_proxy_url", "unified_openapi_spec",
     ])

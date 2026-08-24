@@ -253,9 +253,10 @@ All under `/api/mcp` (router prefix in `api/mcp_endpoints.py`):
 
 | Method & Path | Purpose | Auth |
 |---------------|---------|------|
-| `POST /api/mcp/api-keys` | Create a Tool API Key (`eekey_...`, shown once) | USER |
-| `GET /api/mcp/api-keys` | List keys (prefix only, never plaintext) | USER |
-| `DELETE /api/mcp/api-keys/{key_id}` | Revoke a key | USER |
+| `POST /api/mcp/api-keys` | Create (ADD) a Tool API Key (`eekey_...`) — never replaces existing keys; a user may hold several active keys | USER |
+| `GET /api/mcp/api-keys` | List keys (prefix only, never plaintext; `can_reveal` says whether re-view is possible) | USER |
+| `DELETE /api/mcp/api-keys/{key_id}` | Revoke a key (soft — the entry stays listed). `?hard=true` physically deletes the row (the UI "remove entry" action for revoked keys) | USER (owner) |
+| `POST /api/mcp/api-keys/{key_id}/reveal` | Re-view a key's plaintext after re-entering the account password (body `{"password": ...}`) — decrypts the Fernet copy stored at creation; 401 wrong password, 410 legacy key without a stored copy | USER |
 | `GET /api/mcp/templates/list` | Approved+enabled templates with config schemas | USER |
 | `POST /api/mcp/config/register` | Save credentials for a template (encrypted on write) | USER |
 | `GET /api/mcp/config/list` | User's active configs (no plaintext creds) | USER |
@@ -268,7 +269,11 @@ All under `/api/mcp` (router prefix in `api/mcp_endpoints.py`):
 | `PATCH /superuser/mcp/templates/{template_id}/runtime` | Register/update a template's sidecar spec (`runtime`, `runtime_config`, approval flags) | SUPERUSER |
 | `GET /api/mcp/openapi.json` | Unified OpenAPI spec of ALL connected tools (Open WebUI import). Paths are `/proxy/{template_id}/{tool_name}` and `servers[0].url` is the base URL `.../api/mcp` — because Open WebUI appends spec paths to the PASTED base URL and ignores `servers[].url`, both compositions must yield the same route. Also served at `/api/mcp/openapi.json/openapi.json` because Open WebUI auto-appends `/openapi.json` to the pasted URL (users paste the base URL `.../api/mcp`) | public |
 
-**Tool API Keys** are stored hashed (`mcp_user_tool_keys`) and accepted ONLY
+**Tool API Keys** are stored as a SHA-256 hash plus a Fernet-encrypted
+plaintext copy (`mcp_user_tool_keys` — the copy exists so the owner can
+re-view the key later in the UI via the password-gated reveal route; legacy
+rows pre-dating it have `key_encrypted = NULL` and report `can_reveal:
+false`). The hash is what authenticates, and keys are accepted ONLY
 on the proxy, the native MCP stream endpoint (`/api/mcp/mcp`), and the
 config-test routes. On any other route an `eekey_` bearer is rejected —
 session JWTs and tool keys have strictly different scopes. The scope list

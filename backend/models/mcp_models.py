@@ -83,8 +83,13 @@ class MCPUserToolKey(Base):
       - Per-call the proxy still requires the user to have an active connection to
         the requested template, so a key can only ever reach integrations the
         owner has actually connected.
-      - Stored only as a SHA-256 hash; plaintext shown ONCE at creation.
-      - Revocable from the Eepy UI; a revoked key is rejected on the next call.
+      - Authentication uses the SHA-256 hash. A Fernet-encrypted copy of the
+        plaintext is ALSO stored so the owner can re-view the key later in the
+        UI — but only after re-entering their account password (POST
+        /api/mcp/api-keys/{id}/reveal). Legacy rows created before that
+        feature have key_encrypted = NULL and cannot be re-viewed.
+      - Revocable from the Eepy UI (soft revoke keeps the row for audit /
+        re-view); revoked rows can be removed entirely (DELETE ?hard=true).
     """
 
     __tablename__ = 'mcp_user_tool_keys'
@@ -94,8 +99,9 @@ class MCPUserToolKey(Base):
 
     name = Column(String, nullable=False, default='Open WebUI')  # Label shown in the Eepy UI
 
-    key_hash = Column(String, unique=True, index=True, nullable=False)  # sha256 of the plaintext key
+    key_hash = Column(String, unique=True, index=True, nullable=False)  # sha256 of the plaintext key (used for auth)
     key_prefix = Column(String, nullable=False)  # First 8 chars of plaintext, for UI display (not secret)
+    key_encrypted = Column(Text, nullable=True)  # Fernet token of the plaintext, for password-gated re-view. NULL on legacy rows.
 
     is_active = Column(Boolean, default=True, nullable=False)
     last_used_at = Column(DateTime, nullable=True)

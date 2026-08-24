@@ -68,3 +68,15 @@ def decrypt_credentials(encrypted_token: str) -> dict[str, Any]:
     fernet = _get_fernet()
     plaintext = fernet.decrypt(encrypted_token.encode("utf-8"))
     return json.loads(plaintext.decode("utf-8"))
+
+
+def encrypt_secret(value: str) -> str:
+    """Encrypt a single plaintext secret (e.g. a tool key) into a Fernet token."""
+    fernet = _get_fernet()
+    return fernet.encrypt(value.encode("utf-8")).decode("utf-8")
+
+
+def decrypt_secret(encrypted_token: str) -> str:
+    """Decrypt a Fernet token produced by encrypt_secret (in memory only)."""
+    fernet = _get_fernet()
+    return fernet.decrypt(encrypted_token.encode("utf-8")).decode("utf-8")

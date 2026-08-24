@@ -13,12 +13,14 @@ import {
   X,
   Copy,
   Check,
-  KeyRound,
   Loader2,
   Bot,
   Trash2,
   ShieldAlert,
-  RefreshCw,
+  MoreHorizontal,
+  Eye,
+  Lock,
+  Plus,
 } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
 
@@ -31,6 +33,7 @@ interface ToolKey {
   name: string;
   key_prefix: string;
   is_active: boolean;
+  can_reveal?: boolean;
   created_at: string | null;
   last_used_at: string | null;
   key?: string; // only present on the just-created key
@@ -49,6 +52,12 @@ export default function AIPlatformConnectorPanel({ onClose }: Props) {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
   const [keyName, setKeyName] = useState('AI Platform');
+  const [menuFor, setMenuFor] = useState<number | null>(null);
+  const [revealFor, setRevealFor] = useState<ToolKey | null>(null);
+  const [revealPassword, setRevealPassword] = useState('');
+  const [revealBusy, setRevealBusy] = useState(false);
+  const [revealError, setRevealError] = useState('');
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
 
   const mcpUrl = `${getApiUrl()}/api/mcp/mcp`;
 
@@ -73,13 +82,9 @@ export default function AIPlatformConnectorPanel({ onClose }: Props) {
 
   const activeKeys = keys.filter((k) => k.is_active);
 
-  const generate = async (replace: boolean) => {
-    if (replace && activeKeys.length > 0) {
-      const ok = window.confirm(
-        `Replace your current Eepy API key?\n\nThe active key (${activeKeys[0].key_prefix}...) stops working immediately - update the key in your AI platform's MCP config.`,
-      );
-      if (!ok) return;
-    }
+  // ADDS a key - never replaces or revokes existing ones, so one key can live
+  // per device/client and each is revoked or removed independently.
+  const generate = async () => {
     setGenerating(true);
     setError('');
     try {
@@ -90,11 +95,7 @@ export default function AIPlatformConnectorPanel({ onClose }: Props) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || `Backend returned ${res.status}`);
-      const stale = replace ? keys.filter((k) => k.is_active).map((k) => k.id) : [];
-      setKeys((prev) => [data, ...prev.map((k) => (stale.includes(k.id) ? { ...k, is_active: false } : k))]);
-      for (const id of stale) {
-        await fetch(`${getApiUrl()}/api/mcp/api-keys/${id}`, { method: 'DELETE', headers: authHeaders() });
-      }
+      setKeys((prev) => [data, ...prev]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -111,6 +112,45 @@ export default function AIPlatformConnectorPanel({ onClose }: Props) {
       setKeys((prev) => prev.map((k) => (k.id === keyId ? { ...k, is_active: false } : k)));
     } else {
       setError('Failed to revoke the key.');
+    }
+  };
+
+  const removeKey = async (keyId: number) => {
+    const res = await fetch(`${getApiUrl()}/api/mcp/api-keys/${keyId}?hard=true`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    });
+    if (res.ok) {
+      setKeys((prev) => prev.filter((k) => k.id !== keyId));
+    } else {
+      setError('Failed to remove the key.');
+    }
+  };
+
+  const closeReveal = () => {
+    setRevealFor(null);
+    setRevealPassword('');
+    setRevealError('');
+    setRevealedKey(null);
+  };
+
+  const submitReveal = async () => {
+    if (!revealFor) return;
+    setRevealBusy(true);
+    setRevealError('');
+    try {
+      const res = await fetch(`${getApiUrl()}/api/mcp/api-keys/${revealFor.id}/reveal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ password: revealPassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Backend returned ${res.status}`);
+      setRevealedKey(data.key);
+    } catch (err) {
+      setRevealError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRevealBusy(false);
     }
   };
 
@@ -218,7 +258,7 @@ export default function AIPlatformConnectorPanel({ onClose }: Props) {
           {newestKey && (
             <div className="mb-4">
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <span className="text-[13px] font-console text-ink-dim shrink-0 sm:w-auto">Shown once:</span>
+                <span className="text-[13px] font-console text-ink-dim shrink-0 sm:w-auto">New key:</span>
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <code className="well flex-1 min-w-0 text-[15px] px-3 py-2 text-eepy-sage break-all font-console leading-snug">
                     {newestKey.key}
@@ -239,27 +279,28 @@ export default function AIPlatformConnectorPanel({ onClose }: Props) {
           )}
 
           <button
-            onClick={() => generate(activeKeys.length > 0)}
+            onClick={() => generate()}
             disabled={generating || (loading && keys.length > 0)}
             className="btn btn-sage w-full py-2.5 text-xs flex items-center justify-center gap-2"
           >
             {generating ? (
               <>
-                <Loader2 size={16} className="animate-spin" /> {activeKeys.length > 0 ? 'Replacing key...' : 'Creating key...'}
-              </>
-            ) : activeKeys.length > 0 ? (
-              <>
-                <RefreshCw size={16} /> Replace Eepy API Key
+                <Loader2 size={16} className="animate-spin" /> Adding key...
               </>
             ) : (
               <>
-                <KeyRound size={16} /> Create Eepy API Key
+                <Plus size={16} /> Add Eepy API Key
               </>
             )}
           </button>
-          {activeKeys.length > 0 && (
+          {activeKeys.length > 0 ? (
             <p className="text-[11px] text-ink-dim mt-2 font-body">
-              No key yet in the snippets below? Create one here - it is embedded in the configs automatically.
+              Adding a key never replaces your existing ones - each works independently, so you can keep one per
+              device or client. Use the ... menu on any key to view, revoke, or remove it.
+            </p>
+          ) : (
+            <p className="text-[11px] text-ink-dim mt-2 font-body">
+              Your key is embedded in the config snippets below automatically.
             </p>
           )}
 
@@ -275,18 +316,48 @@ export default function AIPlatformConnectorPanel({ onClose }: Props) {
                       <span className="text-ink-dim">…</span>
                     </code>
                     <span className="text-[11px] font-body text-ink-dim">{k.name}</span>
+                    {!k.is_active && <span className="text-[11px] font-body text-ink-dim">revoked</span>}
                   </div>
-                  {k.is_active ? (
+                  <div className="relative shrink-0">
                     <button
-                      onClick={() => revoke(k.id)}
-                      className="text-[11px] font-body font-semibold text-ink-dim hover:text-eepy-ember transition-colors flex items-center gap-1 shrink-0"
-                      title="Revoke key"
+                      onClick={() => setMenuFor(menuFor === k.id ? null : k.id)}
+                      className="btn-icon"
+                      title="Key options"
+                      aria-label={`Options for key ${k.key_prefix}`}
                     >
-                      <Trash2 size={13} /> Revoke
+                      <MoreHorizontal size={15} />
                     </button>
-                  ) : (
-                    <span className="text-[11px] font-body text-ink-dim shrink-0">revoked</span>
-                  )}
+                    {menuFor === k.id && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setMenuFor(null)} />
+                        <div className="absolute right-0 top-8 z-50 w-44 card p-1 shadow-pixel">
+                          {k.can_reveal && (
+                            <button
+                              onClick={() => { setMenuFor(null); setRevealFor(k); }}
+                              className="w-full text-left text-[11px] font-body font-semibold text-ink-soft hover:bg-night-raise hover:text-ink px-2.5 py-1.5 flex items-center gap-1.5 transition-colors"
+                            >
+                              <Eye size={13} /> View key
+                            </button>
+                          )}
+                          {k.is_active ? (
+                            <button
+                              onClick={() => { setMenuFor(null); revoke(k.id); }}
+                              className="w-full text-left text-[11px] font-body font-semibold text-eepy-ember hover:bg-eepy-ember/10 px-2.5 py-1.5 flex items-center gap-1.5 transition-colors"
+                            >
+                              <Trash2 size={13} /> Revoke
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => { setMenuFor(null); removeKey(k.id); }}
+                              className="w-full text-left text-[11px] font-body font-semibold text-eepy-ember hover:bg-eepy-ember/10 px-2.5 py-1.5 flex items-center gap-1.5 transition-colors"
+                            >
+                              <Trash2 size={13} /> Remove entry
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -351,6 +422,78 @@ export default function AIPlatformConnectorPanel({ onClose }: Props) {
           <code className="font-console text-eepy-lilac">Authorization: Bearer eekey_…</code>.
         </p>
       </div>
+
+      {revealFor && (
+        <div className="fixed inset-0 bg-night-deep/80 flex items-center justify-center p-4 z-[1000]">
+          <div className="panel pixel-caps border-eepy-blush/60 p-4 sm:p-5 max-w-sm w-full shadow-pixel-lg [--cap:theme('colors.eepy.blush')]">
+            <header className="flex items-center justify-between gap-3 mb-4 pb-3 border-b-2 border-night-line">
+              <h3 className="font-pixel font-bold text-sm flex items-center gap-2 text-ink">
+                <Lock className="text-eepy-blush" size={15} /> Re-enter your password
+              </h3>
+              <button onClick={closeReveal} className="btn-icon shrink-0" aria-label="Close">
+                <X size={16} />
+              </button>
+            </header>
+            <p className="text-xs text-ink-faint mb-3 font-body leading-relaxed">
+              Required to view the <span className="text-ink-soft font-semibold">{revealFor.name}</span> key
+              ({revealFor.key_prefix}…).
+            </p>
+            {revealedKey ? (
+              <div>
+                <div className="flex items-center gap-2">
+                  <code className="well flex-1 min-w-0 text-[14px] px-3 py-2 text-eepy-sage break-all font-console leading-snug">
+                    {revealedKey}
+                  </code>
+                  <button
+                    onClick={() => copy(revealedKey, 'revealed')}
+                    className="btn-icon shrink-0"
+                    title="Copy key"
+                  >
+                    {copied === 'revealed' ? <Check size={15} className="text-eepy-sage" /> : <Copy size={15} />}
+                  </button>
+                </div>
+                <p className="text-[11px] text-ink-dim mt-3 font-body leading-relaxed">
+                  Stored encrypted on the server - you can re-view it any time with your password.
+                </p>
+              </div>
+            ) : (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitReveal();
+                }}
+              >
+                <input
+                  type="password"
+                  value={revealPassword}
+                  onChange={(e) => setRevealPassword(e.target.value)}
+                  autoFocus
+                  placeholder="Account password"
+                  className="input-pixel w-full"
+                />
+                {revealError && (
+                  <p className="text-xs text-eepy-ember mt-2 font-body">{revealError}</p>
+                )}
+                <button
+                  type="submit"
+                  disabled={revealBusy || !revealPassword}
+                  className="btn btn-blush w-full py-2.5 text-xs flex items-center justify-center gap-2 mt-3"
+                >
+                  {revealBusy ? (
+                    <>
+                      <Loader2 size={15} className="animate-spin" /> Revealing...
+                    </>
+                  ) : (
+                    <>
+                      <Eye size={15} /> View key
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

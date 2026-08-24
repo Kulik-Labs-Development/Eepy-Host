@@ -1,9 +1,10 @@
 'use client';
 
 // Open WebUI setup panel - ONE connection for the entire Eepy tool surface.
-// Generates a user-scoped, revocable Eepy Tool API Key (plaintext shown ONCE;
-// only a SHA-256 hash is stored) and walks the user through importing the
-// single OpenAPI spec URL into Open WebUI's external "Tool Server" connector.
+// Manages the user-scoped, revocable Eepy Tool API Keys (auth uses a SHA-256
+// hash; a Fernet-encrypted copy lets the owner re-view a key later, with
+// password re-entry) and walks the user through importing the single OpenAPI
+// spec URL into Open WebUI's external "Tool Server" connector.
 // Every integration the user has connected - now and in the future - is exposed
 // through this one connection; no per-server imports, ever.
 
@@ -12,12 +13,14 @@ import {
   X,
   Copy,
   Check,
-  KeyRound,
   Loader2,
   Plug,
   Trash2,
   ShieldAlert,
-  RefreshCw,
+  MoreHorizontal,
+  Eye,
+  Lock,
+  Plus,
 } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
 
@@ -30,6 +33,7 @@ interface ToolKey {
   name: string;
   key_prefix: string;
   is_active: boolean;
+  can_reveal?: boolean;
   created_at: string | null;
   last_used_at: string | null;
   key?: string; // only present on the just-created key
@@ -48,6 +52,12 @@ export default function OpenWebUIPanel({ onClose }: Props) {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
   const [keyName, setKeyName] = useState('Open WebUI');
+  const [menuFor, setMenuFor] = useState<number | null>(null);
+  const [revealFor, setRevealFor] = useState<ToolKey | null>(null);
+  const [revealPassword, setRevealPassword] = useState('');
+  const [revealBusy, setRevealBusy] = useState(false);
+  const [revealError, setRevealError] = useState('');
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
 
   // The URL the user pastes into Open WebUI - covers ALL of Eepy. This is the
   // BASE url (without /openapi.json): Open WebUI appends "/openapi.json" to
@@ -77,16 +87,9 @@ export default function OpenWebUIPanel({ onClose }: Props) {
 
   const activeKeys = keys.filter((k) => k.is_active);
 
-  // Create a key. With `replace` = true the previously-active keys are revoked
-  // in the same action, so rotating a key no longer requires a separate
-  // Revoke + Create dance ("clear your settings and re-make it").
-  const generate = async (replace: boolean) => {
-    if (replace && activeKeys.length > 0) {
-      const ok = window.confirm(
-        `Replace your current Eepy API key?\n\nThe active key (${activeKeys[0].key_prefix}...) stops working immediately - you will need to paste the new key into Open WebUI.`,
-      );
-      if (!ok) return;
-    }
+  // ADDS a key - never replaces or revokes existing ones, so one key can live
+  // per device/client and each is revoked or removed independently.
+  const generate = async () => {
     setGenerating(true);
     setError('');
     try {
@@ -97,11 +100,7 @@ export default function OpenWebUIPanel({ onClose }: Props) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || `Backend returned ${res.status}`);
-      const stale = replace ? keys.filter((k) => k.is_active).map((k) => k.id) : [];
-      setKeys((prev) => [data, ...prev.map((k) => (stale.includes(k.id) ? { ...k, is_active: false } : k))]);
-      for (const id of stale) {
-        await fetch(`${getApiUrl()}/api/mcp/api-keys/${id}`, { method: 'DELETE', headers: authHeaders() });
-      }
+      setKeys((prev) => [data, ...prev]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -118,6 +117,45 @@ export default function OpenWebUIPanel({ onClose }: Props) {
       setKeys((prev) => prev.map((k) => (k.id === keyId ? { ...k, is_active: false } : k)));
     } else {
       setError('Failed to revoke the key.');
+    }
+  };
+
+  const removeKey = async (keyId: number) => {
+    const res = await fetch(`${getApiUrl()}/api/mcp/api-keys/${keyId}?hard=true`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    });
+    if (res.ok) {
+      setKeys((prev) => prev.filter((k) => k.id !== keyId));
+    } else {
+      setError('Failed to remove the key.');
+    }
+  };
+
+  const closeReveal = () => {
+    setRevealFor(null);
+    setRevealPassword('');
+    setRevealError('');
+    setRevealedKey(null);
+  };
+
+  const submitReveal = async () => {
+    if (!revealFor) return;
+    setRevealBusy(true);
+    setRevealError('');
+    try {
+      const res = await fetch(`${getApiUrl()}/api/mcp/api-keys/${revealFor.id}/reveal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ password: revealPassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Backend returned ${res.status}`);
+      setRevealedKey(data.key);
+    } catch (err) {
+      setRevealError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRevealBusy(false);
     }
   };
 
@@ -159,7 +197,7 @@ export default function OpenWebUIPanel({ onClose }: Props) {
           <p className="text-xs text-ink-faint mb-3 leading-relaxed font-body">
             This key covers <span className="text-eepy-sage font-semibold">every integration you have connected</span> - and every
             one you connect later. It only works on Eepy&apos;s MCP routes (never on your account or billing), and
-            you can replace or revoke it here at any time.
+            you can view, revoke, or remove it here at any time.
           </p>
 
           <label className="label-pixel mb-1.5 block">Key label</label>
@@ -175,7 +213,7 @@ export default function OpenWebUIPanel({ onClose }: Props) {
           {newestKey && (
             <div className="mb-4">
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <span className="text-[13px] font-console text-ink-dim shrink-0 sm:w-auto">Shown once:</span>
+                <span className="text-[13px] font-console text-ink-dim shrink-0 sm:w-auto">New key:</span>
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <code className="well flex-1 min-w-0 text-[15px] px-3 py-2 text-eepy-sage break-all font-console leading-snug">
                     {newestKey.key}
@@ -190,34 +228,34 @@ export default function OpenWebUIPanel({ onClose }: Props) {
                 </div>
               </div>
               <p className="text-xs text-eepy-amber flex items-center gap-1.5 mt-2 font-body">
-                <ShieldAlert size={13} /> Copy it now - it is not stored in plain text and cannot be retrieved again.
+                <ShieldAlert size={13} /> Paste it into Open WebUI now - you can also re-view it any time from the list below (password required).
               </p>
             </div>
           )}
 
           <button
-            onClick={() => generate(activeKeys.length > 0)}
+            onClick={() => generate()}
             disabled={generating || (loading && keys.length > 0)}
             className="btn btn-blush w-full py-2.5 text-xs flex items-center justify-center gap-2"
           >
             {generating ? (
               <>
-                <Loader2 size={16} className="animate-spin" /> {activeKeys.length > 0 ? 'Replacing key...' : 'Creating key...'}
-              </>
-            ) : activeKeys.length > 0 ? (
-              <>
-                <RefreshCw size={16} /> Replace Eepy API Key
+                <Loader2 size={16} className="animate-spin" /> Adding key...
               </>
             ) : (
               <>
-                <KeyRound size={16} /> Create Eepy API Key
+                <Plus size={16} /> Add Eepy API Key
               </>
             )}
           </button>
-          {activeKeys.length > 0 && (
+          {activeKeys.length > 0 ? (
             <p className="text-[11px] text-ink-dim mt-2 font-body">
-              Replacing revokes the current key immediately and shows the new one once - then paste it into
-              Open WebUI (Settings &rarr; Tools &rarr; your Tool Server entry).
+              Adding a key never replaces your existing ones - each works independently, so you can keep one per
+              device or client. Use the ... menu on any key to view, revoke, or remove it.
+            </p>
+          ) : (
+            <p className="text-[11px] text-ink-dim mt-2 font-body">
+              Then paste the key into Open WebUI (Settings &rarr; Tools &rarr; your Tool Server entry).
             </p>
           )}
 
@@ -240,18 +278,48 @@ export default function OpenWebUIPanel({ onClose }: Props) {
                       <span className="text-ink-dim">…</span>
                     </code>
                     <span className="text-[11px] font-body text-ink-dim">{k.name}</span>
+                    {!k.is_active && <span className="text-[11px] font-body text-ink-dim">revoked</span>}
                   </div>
-                  {k.is_active ? (
+                  <div className="relative shrink-0">
                     <button
-                      onClick={() => revoke(k.id)}
-                      className="text-[11px] font-body font-semibold text-ink-dim hover:text-eepy-ember transition-colors flex items-center gap-1 shrink-0"
-                      title="Revoke key"
+                      onClick={() => setMenuFor(menuFor === k.id ? null : k.id)}
+                      className="btn-icon"
+                      title="Key options"
+                      aria-label={`Options for key ${k.key_prefix}`}
                     >
-                      <Trash2 size={13} /> Revoke
+                      <MoreHorizontal size={15} />
                     </button>
-                  ) : (
-                    <span className="text-[11px] font-body text-ink-dim shrink-0">revoked</span>
-                  )}
+                    {menuFor === k.id && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setMenuFor(null)} />
+                        <div className="absolute right-0 top-8 z-50 w-44 card p-1 shadow-pixel">
+                          {k.can_reveal && (
+                            <button
+                              onClick={() => { setMenuFor(null); setRevealFor(k); }}
+                              className="w-full text-left text-[11px] font-body font-semibold text-ink-soft hover:bg-night-raise hover:text-ink px-2.5 py-1.5 flex items-center gap-1.5 transition-colors"
+                            >
+                              <Eye size={13} /> View key
+                            </button>
+                          )}
+                          {k.is_active ? (
+                            <button
+                              onClick={() => { setMenuFor(null); revoke(k.id); }}
+                              className="w-full text-left text-[11px] font-body font-semibold text-eepy-ember hover:bg-eepy-ember/10 px-2.5 py-1.5 flex items-center gap-1.5 transition-colors"
+                            >
+                              <Trash2 size={13} /> Revoke
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => { setMenuFor(null); removeKey(k.id); }}
+                              className="w-full text-left text-[11px] font-body font-semibold text-eepy-ember hover:bg-eepy-ember/10 px-2.5 py-1.5 flex items-center gap-1.5 transition-colors"
+                            >
+                              <Trash2 size={13} /> Remove entry
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -305,6 +373,78 @@ export default function OpenWebUIPanel({ onClose }: Props) {
           </p>
         </Step>
       </div>
+
+      {revealFor && (
+        <div className="fixed inset-0 bg-night-deep/80 flex items-center justify-center p-4 z-[1000]">
+          <div className="panel pixel-caps border-eepy-blush/60 p-4 sm:p-5 max-w-sm w-full shadow-pixel-lg [--cap:theme('colors.eepy.blush')]">
+            <header className="flex items-center justify-between gap-3 mb-4 pb-3 border-b-2 border-night-line">
+              <h3 className="font-pixel font-bold text-sm flex items-center gap-2 text-ink">
+                <Lock className="text-eepy-blush" size={15} /> Re-enter your password
+              </h3>
+              <button onClick={closeReveal} className="btn-icon shrink-0" aria-label="Close">
+                <X size={16} />
+              </button>
+            </header>
+            <p className="text-xs text-ink-faint mb-3 font-body leading-relaxed">
+              Required to view the <span className="text-ink-soft font-semibold">{revealFor.name}</span> key
+              ({revealFor.key_prefix}…).
+            </p>
+            {revealedKey ? (
+              <div>
+                <div className="flex items-center gap-2">
+                  <code className="well flex-1 min-w-0 text-[14px] px-3 py-2 text-eepy-sage break-all font-console leading-snug">
+                    {revealedKey}
+                  </code>
+                  <button
+                    onClick={() => copy(revealedKey, 'revealed')}
+                    className="btn-icon shrink-0"
+                    title="Copy key"
+                  >
+                    {copied === 'revealed' ? <Check size={15} className="text-eepy-sage" /> : <Copy size={15} />}
+                  </button>
+                </div>
+                <p className="text-[11px] text-ink-dim mt-3 font-body leading-relaxed">
+                  Stored encrypted on the server - you can re-view it any time with your password.
+                </p>
+              </div>
+            ) : (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitReveal();
+                }}
+              >
+                <input
+                  type="password"
+                  value={revealPassword}
+                  onChange={(e) => setRevealPassword(e.target.value)}
+                  autoFocus
+                  placeholder="Account password"
+                  className="input-pixel w-full"
+                />
+                {revealError && (
+                  <p className="text-xs text-eepy-ember mt-2 font-body">{revealError}</p>
+                )}
+                <button
+                  type="submit"
+                  disabled={revealBusy || !revealPassword}
+                  className="btn btn-blush w-full py-2.5 text-xs flex items-center justify-center gap-2 mt-3"
+                >
+                  {revealBusy ? (
+                    <>
+                      <Loader2 size={15} className="animate-spin" /> Revealing...
+                    </>
+                  ) : (
+                    <>
+                      <Eye size={15} /> View key
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

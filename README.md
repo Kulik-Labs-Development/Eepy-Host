@@ -254,16 +254,17 @@ All endpoints live under a single FastAPI app. Interactive docs at `/docs` when 
 | `POST /superuser/mcp/templates/{id}/discover` | Capture the template's upstream `tools/list` schemas | SUPERUSER |
 | `PATCH /superuser/mcp/templates/{id}/runtime` | Set a template's sidecar spec + approval flags | SUPERUSER |
 | `GET /api/mcp/openapi.json` | Unified OpenAPI spec for Open WebUI (also served at `/api/mcp/openapi.json/openapi.json` for Open WebUI's URL auto-append) | public |
-| `POST /api/mcp/api-keys` | Create a user-scoped, revocable tool key | JWT |
+| `POST /api/mcp/api-keys` | Add a user-scoped, revocable tool key (existing keys are never replaced) | JWT |
 | `GET /api/mcp/api-keys` | List keys (hash-only; prefixes only) | JWT |
-| `DELETE /api/mcp/api-keys/{id}` | Revoke a key | JWT |
+| `DELETE /api/mcp/api-keys/{id}` | Revoke a key; `?hard=true` deletes the entry entirely | JWT |
+| `POST /api/mcp/api-keys/{id}/reveal` | Re-view a key's plaintext after re-entering the account password | JWT |
 
 ## Security Model
 
 - **Encryption at rest.** Integration credentials are encrypted with Fernet (single master key from `MCP_ENCRYPTION_KEY`) before being written to PostgreSQL. Only ciphertext is ever persisted.
 - **Memory-only decryption.** Credentials are decrypted inside the request handler and dropped at the end of the request. Plaintext never reaches logs, disk, or API responses.
 - **Backend-enforced RBAC.** Every privileged route checks the JWT role server-side; client-side role checks are presentation only.
-- **Scoped, revocable tool keys.** External integrations (Open WebUI) authenticate with narrow `eekey_` keys that work on proxy routes only, resolve to a single user, and can be killed instantly.
+- **Scoped, revocable tool keys.** External integrations (Open WebUI) authenticate with narrow `eekey_` keys that work on proxy routes only, resolve to a single user, and can be killed instantly. Keys are stored as a hash plus a Fernet-encrypted copy, so the owner can re-view one in the dashboard only after re-entering their account password.
 - **Admin-gated integrations.** No template is usable until a superuser approves it — the library is curated, not open.
 
 ## Project Structure

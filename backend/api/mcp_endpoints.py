@@ -16,8 +16,10 @@ Security model:
   The key is accepted ONLY on /api/mcp/proxy/*, /api/mcp/mcp, and
   /api/mcp/config/* — never on /user/*, /auth/*, billing, or superuser routes —
   and each tool call still requires the user to have an active connection to
-  the requested template. Only a SHA-256 hash is stored; the plaintext key is
-  returned once at creation and is never persisted.
+  the requested template. Auth uses a SHA-256 hash; a Fernet-encrypted copy of
+  the plaintext is also stored so the owner can re-view the key later in the
+  UI, but ONLY after re-entering their account password (POST
+  /api/mcp/api-keys/{id}/reveal). The list endpoint never returns plaintext.
 """
 
 import asyncio
@@ -29,16 +31,16 @@ from typing import Any
 
 import httpx
 from cryptography.fernet import InvalidToken
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from api import mcp_bridge  # absolute import: Uvicorn runs main.py top-level
-from auth import decode_access_token
+from auth import decode_access_token, verify_password
 from database import User, get_db
 from models.mcp_models import MCPTemplate, MCPUserToolKey, UserMCPConfig
-from utils.crypto import decrypt_credentials, encrypt_credentials
+from utils.crypto import decrypt_credentials, decrypt_secret, encrypt_credentials, encrypt_secret
 from utils.logging_setup import logger
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp-integrations"])
@@ -275,12 +277,15 @@ def _tool_key_out(row: MCPUserToolKey, show_plaintext: str | None = None) -> dic
         "name": row.name,
         "key_prefix": row.key_prefix,
         "is_active": row.is_active,
+        # False for legacy rows created before the re-view feature: the UI
+        # hides the "View key" option for those (reveal would 410).
+        "can_reveal": bool(row.key_encrypted),
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
         "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
     }
     if show_plaintext is not None:
-        # Returned exactly once, at creation time. Never persisted.
+        # Returned at creation time (the list endpoint never sets this).
         out["key"] = show_plaintext
     return out
 
@@ -298,13 +303,16 @@ def create_tool_api_key(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Create a user-scoped, revocable Tool API Key.
+    """Create a user-scoped, revocable Tool API Key (ADDs a key — never
+    replaces existing ones; the user may hold several active keys at once).
 
-    ONE key per user covers EVERY integration they have connected — this is what
-    makes Open WebUI a single Tool Server connection. The plaintext key is
-    returned ONCE; only a SHA-256 hash is stored. The key works only on
-    /api/mcp/proxy/* and /api/mcp/config/*, and each call still requires an
-    active connection to the requested template.
+    ONE key per user covers EVERY integration they have connected — this is
+    what makes Open WebUI a single Tool Server connection. The plaintext key
+    is returned at creation; auth uses a SHA-256 hash and a Fernet-encrypted
+    copy is stored so the owner can re-view the key later (password
+    re-entry). The key works only on /api/mcp/proxy/* and /api/mcp/config/*,
+    and each call still requires an active connection to the requested
+    template.
     """
     has_active = (
         db.query(UserMCPConfig)
@@ -320,6 +328,7 @@ def create_tool_api_key(
         name=body.name or "Open WebUI",
         key_hash=hashlib.sha256(plaintext.encode("utf-8")).hexdigest(),
         key_prefix=plaintext[:8],
+        key_encrypted=encrypt_secret(plaintext),
         is_active=True,
     )
     db.add(row)
@@ -348,10 +357,16 @@ def list_tool_api_keys(
 @router.delete("/api-keys/{key_id}")
 def revoke_tool_api_key(
     key_id: int,
+    hard: bool = Query(False, description="Physically delete the key row (default: soft revoke, the entry stays listed)."),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Revoke a tool API key. The next call using it will 401."""
+    """Revoke a tool API key. The next call using it will 401.
+
+    With ?hard=true the row is deleted entirely instead of soft-revoked —
+    this is the "remove entry" action for revoked keys in the UI. Only the
+    owner can delete their own key.
+    """
     row = (
         db.query(MCPUserToolKey)
         .filter(MCPUserToolKey.id == key_id, MCPUserToolKey.owner_id == current_user.id)
@@ -359,11 +374,67 @@ def revoke_tool_api_key(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Not found")
+    if hard:
+        db.delete(row)
+        db.commit()
+        logger.info(f"User {current_user.username} deleted tool API key id={row.id}")
+        return {"status": "deleted", "id": key_id}
     row.is_active = False
     row.revoked_at = datetime.now(UTC)
     db.commit()
     logger.info(f"User {current_user.username} revoked tool API key id={row.id}")
     return {"status": "revoked", "id": row.id}
+
+
+class ToolKeyRevealIn(BaseModel):
+    password: str = Field(..., description="The account password, re-entered to re-view the key.")
+
+
+@router.post("/api-keys/{key_id}/reveal")
+def reveal_tool_api_key(
+    key_id: int,
+    body: ToolKeyRevealIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Re-view a tool key's plaintext after re-entering the account password.
+
+    Session JWT only (Tool API Keys are scoped away from /api/mcp/api-keys/*).
+    The plaintext comes from the Fernet-encrypted copy stored at creation —
+    the value is returned in memory for the response and never logged.
+    """
+    if not verify_password(body.password[:72], current_user.hashed_password):
+        logger.info(f"User {current_user.username} failed tool-key reveal (wrong password) for key id={key_id}")
+        raise HTTPException(status_code=401, detail="Invalid password.")
+    row = (
+        db.query(MCPUserToolKey)
+        .filter(MCPUserToolKey.id == key_id, MCPUserToolKey.owner_id == current_user.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not row.key_encrypted:
+        raise HTTPException(
+            status_code=410,
+            detail="This key was created before re-viewing was available and cannot be recovered. Add a new key to get one you can re-view.",
+        )
+    try:
+        plaintext = decrypt_secret(row.key_encrypted)
+    except InvalidToken as err:
+        logger.warning(
+            f"mcp: stored tool key id={row.id} for user {current_user.username} could not be "
+            "decrypted (InvalidToken) - the server encryption key (MCP_ENCRYPTION_KEY/SECRET_KEY) "
+            "likely changed since it was created."
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This key can no longer be decrypted: the server's encryption key changed since "
+                "you created it. Add a new key to replace it."
+            ),
+        ) from err
+    logger.info(f"User {current_user.username} re-viewed tool API key id={row.id}")
+    return {"id": row.id, "name": row.name, "key": plaintext}
 
 
 # ---------------------------------------------------------------------------

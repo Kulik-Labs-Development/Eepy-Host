@@ -77,6 +77,15 @@ def sync_database_schema():
                 logger.info("Adding missing column node_id to mcp_sidecars table...")
                 conn.execute(text("ALTER TABLE mcp_sidecars ADD COLUMN node_id VARCHAR(64)"))
 
+            # mcp_user_tool_keys.key_encrypted holds the Fernet token of the
+            # plaintext tool key so the owner can re-view it later (password
+            # re-entry required). Legacy rows keep NULL (not re-viewable).
+            result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='mcp_user_tool_keys'"))
+            toolkey_cols = {row[0] for row in result}
+            if toolkey_cols and "key_encrypted" not in toolkey_cols:
+                logger.info("Adding missing column key_encrypted to mcp_user_tool_keys table...")
+                conn.execute(text("ALTER TABLE mcp_user_tool_keys ADD COLUMN key_encrypted TEXT"))
+
             conn.commit()
             logger.info("Database columns synchronized.")
     except Exception as e:
