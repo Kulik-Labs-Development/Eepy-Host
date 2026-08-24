@@ -193,7 +193,7 @@ export default function OverviewPage() {
             ) : (
               <>
                 Your MCP infrastructure is currently in <span className="text-ink font-bold underline decoration-eepy-sage decoration-2 underline-offset-4">Deep Sleep</span>.
-                Connect an integration from the MCP Servers page to wake it up.
+                Connect an integration from the MCP Library to wake it up.
               </>
             )}
           </p>
@@ -207,7 +207,7 @@ export default function OverviewPage() {
           <h3 className="font-pixel font-bold text-xl text-eepy-amber">Quick Actions</h3>
           <div className="space-y-3">
             {[
-              { label: 'Connect an Integration', href: '/dashboard/servers', led: 'bg-eepy-blush' },
+              { label: 'Connect an Integration', href: '/dashboard/servers/library', led: 'bg-eepy-blush' },
               { label: 'Manage Account', href: '/dashboard/account', led: 'bg-eepy-sage' },
               { label: 'View Debug Log', href: '/dashboard/debug', led: 'bg-eepy-amber' },
             ].map((action) => (

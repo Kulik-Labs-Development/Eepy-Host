@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { usePathname } from 'next/navigation';
-import { LogOut, LayoutDashboard, Server, UserCircle, Settings, Building2, Terminal, Menu, X } from 'lucide-react';
+import { LogOut, LayoutDashboard, Server, Library, UserCircle, Settings, Building2, Terminal, Menu, X } from 'lucide-react';
 import Link from 'next/link';
 import PixelMoon from '@/src/components/PixelMoon';
 
@@ -35,7 +35,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const navItems = [
     { icon: <LayoutDashboard size={18} />, label: 'Overview', path: '/dashboard' },
-    { icon: <Server size={18} />, label: 'MCP Servers', path: '/dashboard/servers' },
+    { icon: <Library size={18} />, label: 'MCP Library', path: '/dashboard/servers/library' },
+    { icon: <Server size={18} />, label: 'My MCP Servers', path: '/dashboard/servers' },
     { icon: <UserCircle size={18} />, label: 'Account', path: '/dashboard/account' },
     { icon: <Settings size={18} />, label: 'System Settings', path: '/dashboard/settings' },
     { icon: <Terminal size={18} />, label: 'Debug Log', path: '/dashboard/debug' },
