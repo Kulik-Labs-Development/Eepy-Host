@@ -1,0 +1,57 @@
+# Proxmox VE MCP server sidecar image (ProxmoxMCP-Plus).
+#
+# SOURCE OF TRUTH: integrations/proxmox-mcp (git submodule →
+# github.com/RekklesNA/ProxmoxMCP-Plus, MIT). This Dockerfile only builds that
+# code into an image; it is NOT where the server code lives.
+#
+# Build context must be the REPO ROOT (CI sets context: ./), so the
+# integrations/proxmox-mcp/ paths below resolve to exactly the submodule
+# commit this repo pins.
+#
+# Transport: Streamable-HTTP on :8000 at /mcp (upstream normalizes
+# MCP_TRANSPORT=STREAMABLE_HTTP to the SDK's "STREAMABLE" mode). The
+# per-sidecar MCP_API_KEY bearer gate (generated_secrets) and the matching
+# Authorization header come from the template runtime_config at spawn time —
+# see seed_mcp_templates() in backend/main.py. With MCP_HOST=0.0.0.0 the mcp
+# SDK leaves DNS-rebinding protection disabled, so the bridge can dial the
+# sidecar's container IP on the eepy-sidecars network without a Host
+# allowlist (verified against mcp 1.29).
+#
+# The upstream pyproject already pins mcp>=1.8.0,<2.0.0 (the 2.0 line removed
+# mcp.server.fastmcp), so unlike Dockerfile.happyfox no extra mcp 1.x
+# force-reinstall is needed here.
+#
+# No openssh-client: the SSH-backed container command tools are not
+# registered in env-var config mode (they need an [ssh] config section), and
+# the in-VM command tool talks to the QEMU Guest Agent over the Proxmox API,
+# not SSH.
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Package + metadata first (layer cache: deps reinstall only when pyproject
+# changes). README.md is required at build time (hatchling embeds it in the
+# wheel metadata).
+COPY integrations/proxmox-mcp/pyproject.toml integrations/proxmox-mcp/setup.py integrations/proxmox-mcp/README.md integrations/proxmox-mcp/LICENSE ./
+COPY integrations/proxmox-mcp/src ./src
+RUN pip install --no-cache-dir .
+
+# Non-root runtime user (mirrors the upstream Dockerfile).
+RUN useradd --create-home --shell /usr/sbin/nologin proxmoxmcp \
+ && chown -R proxmoxmcp:proxmoxmcp /app
+USER proxmoxmcp
+
+# Streamable-HTTP defaults for container deployments; the template
+# runtime_config env repeats these so the seed is the single readable source
+# of the sidecar contract.
+ENV MCP_TRANSPORT=STREAMABLE_HTTP \
+    MCP_HOST=0.0.0.0 \
+    MCP_PORT=8000 \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8000)); s.close()"
+
+CMD ["python", "-m", "proxmox_mcp.server"]

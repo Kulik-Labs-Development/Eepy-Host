@@ -10,3 +10,6 @@
 [submodule "integrations/warden-mcp"]
 	path = integrations/warden-mcp
 	url = https://github.com/icoretech/warden-mcp
+[submodule "integrations/proxmox-mcp"]
+	path = integrations/proxmox-mcp
+	url = https://github.com/RekklesNA/ProxmoxMCP-Plus

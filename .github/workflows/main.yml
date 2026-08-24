@@ -92,6 +92,18 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-warden:latest
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Build and push Proxmox MCP sidecar image
+        # Built from the integrations/proxmox-mcp submodule (upstream
+        # RekklesNA/ProxmoxMCP-Plus) so the deployed sidecar always matches
+        # the exact upstream commit this repo pins.
+        uses: docker/build-push-action@v5
+        with:
+          context: ./
+          file: ./integrations/Dockerfile.proxmox
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-proxmox:latest
+          labels: ${{ steps.meta.outputs.labels }}
+
       - name: Build and push Frontend image
         uses: docker/build-push-action@v5
         with:

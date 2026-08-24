@@ -89,6 +89,29 @@ docker container in production), short-lived and idle-reaped.
   `@bitwarden/cli` (never `--ignore-scripts` here). Local-dev (subprocess)
   path needs Node 24+ on PATH and a one-time `npm install && npm run build`
   in the submodule.
+- Proxmox VE is Template #5, same modular pattern from the
+  `integrations/proxmox-mcp` git submodule (github.com/RekklesNA/
+  ProxmoxMCP-Plus — MIT, Python/FastMCP, ~45 tools: full VM/LXC lifecycle,
+  snapshots with rollback, VZDump backup/restore, ISO download/cleanup,
+  storage/cluster inspection, node/task/guest-firewall logs, and persistent
+  job tracking with poll/retry/cancel). Third integration on the bridge's
+  **per-request header** machinery, in its simplest form: the upstream HTTP
+  mode (Streamable-HTTP on :8000 at `/mcp`) wraps the app in a Bearer
+  middleware whenever `MCP_API_KEY` is set, so the bridge mints a fresh
+  per-sidecar `MCP_API_KEY` (`generated_secrets`) and sends it as the
+  per-request `Authorization` header — one generated secret, no user
+  credentials in headers. Unlike Portainer, NO fixed Host override is
+  needed: with `MCP_HOST=0.0.0.0` the mcp SDK (verified on 1.29) leaves its
+  DNS-rebinding Host validation disabled, so the bridge's direct container-IP
+  dial passes as-is. Credentials ride `PROXMOX_*` env vars (upstream env-var
+  config mode, no config-file mount); upstream safety defaults are kept —
+  TLS verification ON (user opt-out via `PROXMOX_VERIFY_SSL=false` for
+  self-signed certs) and command policy `deny_all`, which locks the in-guest
+  command-execution tools unless an operator opts in; the user's least-
+  privilege Proxmox API token is the real authorization boundary. The
+  upstream pyproject already pins `mcp>=1.8,<2`, so the image needs no extra
+  mcp pin (unlike happyfox). Local-dev (subprocess) path: one-time
+  `pip install -e integrations/proxmox-mcp` in the backend's interpreter.
 - The unified proxy (`/api/mcp/proxy/{template_id}/{tool_name}`) routes by
   template `runtime`: `mcp-server` → generic bridge (`api/mcp_bridge.py`),
   `native` → hardcoded `TEMPLATE_REGISTRY` (HappyFox reference path, kept for
@@ -185,10 +208,13 @@ docker container in production), short-lived and idle-reaped.
 │   ├── Dockerfile.warden     #   (mirrors the upstream Dockerfile; npm ci runs
 │   │                         #    the postinstall Vaultwarden patch — no
 │   │                         #    --ignore-scripts)
+│   ├── Dockerfile.proxmox    #   (pip-installs the submodule; upstream pyproject
+│   │                         #    already pins mcp<2, no extra pin needed)
 │   ├── happyfox-mcp/         # GIT SUBMODULE → Glitch3dPenguin/happyfox-mcp
 │   ├── ebay-mcp/             # GIT SUBMODULE → YosefHayim/ebay-mcp
 │   ├── portainer-mcp/        # GIT SUBMODULE → portainer/portainer-mcp
-│   └── warden-mcp/           # GIT SUBMODULE → icoretech/warden-mcp
+│   ├── warden-mcp/           # GIT SUBMODULE → icoretech/warden-mcp
+│   └── proxmox-mcp/          # GIT SUBMODULE → RekklesNA/ProxmoxMCP-Plus
 └── assets/
 ```
 
@@ -601,24 +627,25 @@ there is no vitest in the frontend.)
   (a plain clone leaves the submodule dir empty until
   `git submodule update --init`).
 - **Two CI workflows, both on push to main:** `CI` (ruff+pytest, eslint+tsc —
-  no image builds) and `Build and Push to GHCR`, which builds **six**
+  no image builds) and `Build and Push to GHCR`, which builds **seven**
   images: `eepy-host-backend`, `eepy-host-frontend`, `eepy-host-happyfox`
   (sidecar, built from the submodule via `integrations/Dockerfile.happyfox`),
   `eepy-host-ebay` (sidecar, via `integrations/Dockerfile.ebay`),
-  `eepy-host-portainer` (sidecar, via `integrations/Dockerfile.portainer`)
-  and `eepy-host-warden` (sidecar, via `integrations/Dockerfile.warden`)
+  `eepy-host-portainer` (sidecar, via `integrations/Dockerfile.portainer`),
+  `eepy-host-warden` (sidecar, via `integrations/Dockerfile.warden`) and
+  `eepy-host-proxmox` (sidecar, via `integrations/Dockerfile.proxmox`)
   — all sidecars built with the repo root as build context. So every push to
   main refreshes all deployed images.
 - **Seed roll-forward:** `seed_mcp_templates()` in `main.py` updates the
-  existing seeded rows' (HappyFox, eBay, Portainer, Warden) `runtime`,
+  existing seeded rows' (HappyFox, eBay, Portainer, Warden, Proxmox) `runtime`,
   `runtime_config`, `config_schema`, `image_tag`, and approval flags on
   **every boot** (idempotent). That is how spec changes reach the live DB —
   pushing a backend change is enough; no manual DB edit needed.
 - **Portainer rollout (primary deploy path):** after a main push, pull the
   updated `eepy-host-backend:latest` / `eepy-host-frontend:latest` /
   `eepy-host-happyfox:latest` / `eepy-host-ebay:latest` /
-  `eepy-host-portainer:latest` / `eepy-host-warden:latest` images and
-  recreate the containers (sidecar images are pulled lazily by the bridge, so
+  `eepy-host-portainer:latest` / `eepy-host-warden:latest` /
+  `eepy-host-proxmox:latest` images and recreate the containers (sidecar images are pulled lazily by the bridge, so
   just make sure the backend has fresh access). `stack.env` values rarely
   change — only when a new secret is introduced.
   - **The backend needs the Docker socket or sidecars can never spawn:** with
@@ -643,8 +670,8 @@ there is no vitest in the frontend.)
     call. If none EVER appears when a tool is called, spawning is failing
     (check the daemon line above / the Debug Log console).
   - **Verify the docker sidecar path (production):** the dev machine has
-    Docker, so the full compose stack CAN be exercised locally (build the
-    six app+sidecar images with the GHCR tags, `docker compose --env-file
+     Docker, so the full compose stack CAN be exercised locally (build the
+     seven app+sidecar images with the GHCR tags, `docker compose --env-file
     stack.env up -d`). After a deploy: hit the dashboard's connection test,
    then a real proxy tool call, and confirm in the backend logs (or the
    Debug Log console) that `mcp-bridge: started sidecar container ...

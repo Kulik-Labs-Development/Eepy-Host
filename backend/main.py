@@ -115,14 +115,15 @@ def bootstrap_superuser() -> None:
 
 def seed_mcp_templates():
     """Seed the admin-approved templates (HappyFox #1, eBay #2, Portainer #3,
-    Warden #4) into the library.
+    Warden #4, Proxmox VE #5) into the library.
 
     Each integration's MCP server code lives OUTSIDE this backend, in its own
     git submodule under integrations/ (happyfox-mcp →
     github.com/Glitch3dPenguin/happyfox-mcp, ebay-mcp →
     github.com/YosefHayim/ebay-mcp, portainer-mcp →
     github.com/portainer/portainer-mcp, warden-mcp →
-    github.com/icoretech/warden-mcp). These rows only register *how to
+    github.com/icoretech/warden-mcp, proxmox-mcp →
+    github.com/RekklesNA/ProxmoxMCP-Plus). These rows only register *how to
     run* them:
 
     - docker backend (production/Portainer): CI builds each submodule into its
@@ -608,8 +609,165 @@ def seed_mcp_templates():
                 "keychain_restore_item", "keychain_list_folders",
                 "keychain_create_folder", "keychain_list_organizations",
                 "keychain_list_collections", "keychain_create_attachment",
-                "keychain_get_attachment", "keychain_send_list",
+                "keychain_get_attachment",                 "keychain_send_list",
                 "keychain_generate", "keychain_sdk_version",
+            ],
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
+    proxmox = MCPTemplate(
+        id="proxmox",
+        name="Proxmox VE",
+        description=(
+            "Manage your Proxmox VE cluster across ~45 tools: full VM and LXC "
+            "lifecycle (create, clone, start, stop, delete), snapshots with "
+            "rollback, VZDump backups and restores, ISO download and cleanup, "
+            "storage and cluster inspection, node, task, and guest firewall "
+            "logs, plus persistent job tracking (poll, retry, cancel) for "
+            "long-running Proxmox tasks. Runs against YOUR Proxmox with your "
+            "own API token (create one with the least privileges your workflow "
+            "needs); credentials stay encrypted at rest and are proxied through "
+            "the Eepy unified proxy."
+        ),
+        config_schema={
+            "category": "Infrastructure / Virtualization",
+            "type": "object",
+            "properties": {
+                "PROXMOX_HOST": {
+                    "type": "string",
+                    "label": "Proxmox Host",
+                    "placeholder": "192.168.1.10",
+                    "help": "Hostname or IP of your Proxmox VE API server.",
+                    "required": True,
+                },
+                "PROXMOX_USER": {
+                    "type": "string",
+                    "label": "API User",
+                    "placeholder": "root@pam",
+                    "help": "Proxmox user the API token belongs to (e.g. root@pam, mcp@pve).",
+                    "required": True,
+                },
+                "PROXMOX_TOKEN_NAME": {
+                    "type": "string",
+                    "label": "API Token Name",
+                    "placeholder": "eepy",
+                    "help": "Datacenter > Permissions > API Tokens: the token name you created.",
+                    "required": True,
+                },
+                "PROXMOX_TOKEN_VALUE": {
+                    "type": "password",
+                    "label": "API Token Value",
+                    "help": "The token secret, shown once when the token is created.",
+                    "required": True,
+                },
+                "PROXMOX_PORT": {
+                    "type": "string",
+                    "label": "API Port",
+                    "placeholder": "8006",
+                    "help": "Optional. Proxmox API port (default: 8006).",
+                    "required": False,
+                },
+                "PROXMOX_VERIFY_SSL": {
+                    "type": "string",
+                    "label": "Verify TLS Certificates",
+                    "placeholder": "true",
+                    "help": "Optional. Set false if your Proxmox uses a self-signed certificate (default: true).",
+                    "required": False,
+                },
+            },
+            "required": ["PROXMOX_HOST", "PROXMOX_USER", "PROXMOX_TOKEN_NAME", "PROXMOX_TOKEN_VALUE"],
+        },
+        image_tag="ghcr.io/kulik-labs-development/eepy-host-proxmox",
+        runtime="mcp-server",
+        # Modular sidecar spec (same contract as the HappyFox reference) with
+        # the per-sidecar bearer gate from the bridge's generated_secrets +
+        # headers machinery:
+        #
+        #  - The upstream HTTP mode wraps its Streamable-HTTP app in a Bearer
+        #    middleware whenever MCP_API_KEY is set (constant-time compare;
+        #    every request, including initialize, must carry
+        #    `Authorization: Bearer <key>`). The bridge mints a FRESH random
+        #    MCP_API_KEY into the sidecar env on every spawn and resolves the
+        #    same value into the per-request Authorization header, so a
+        #    headerless client on the sidecar network gets 401 and the key is
+        #    never stored.
+        #  - No Host header override is needed (unlike Portainer): with
+        #    MCP_HOST=0.0.0.0 the mcp SDK (verified on 1.29) leaves its
+        #    DNS-rebinding Host validation disabled, so the bridge's direct
+        #    container-IP dial on the eepy-sidecars network passes as-is.
+        #  - Credentials ride env vars: upstream reads PROXMOX_* from the
+        #    environment whenever PROXMOX_MCP_CONFIG is unset (no config file
+        #    mount needed). Upstream safety defaults are kept: TLS verification
+        #    ON (opt-out per user via PROXMOX_VERIFY_SSL) and command policy
+        #    deny_all, which locks the in-guest command-execution tools unless
+        #    an operator opts in — the user's Proxmox API token (least
+        #    privilege) is the real authorization boundary either way.
+        #
+        # Production (docker backend): the image serves streamable-HTTP on
+        # :8000 at /mcp, reachable only on the internal eepy-sidecars docker
+        # network. Local (subprocess backend): stdio transport via
+        # subprocess_env; needs a one-time `pip install -e
+        # integrations/proxmox-mcp` in the backend's own interpreter (the
+        # bridge puts it first on PATH; the package itself imports from the
+        # submodule cwd).
+        runtime_config={
+            "image": "ghcr.io/kulik-labs-development/eepy-host-proxmox:latest",
+            "command": ["python", "-m", "proxmox_mcp.server"],
+            "cwd": "integrations/proxmox-mcp",
+            # Docker backend env: streamable-HTTP on :8000 (upstream
+            # normalizes STREAMABLE_HTTP to the SDK's STREAMABLE mode).
+            "env": {
+                "MCP_TRANSPORT": "STREAMABLE_HTTP",
+                "MCP_HOST": "0.0.0.0",
+                "MCP_PORT": "8000",
+            },
+            # Subprocess backend env (local dev): stdio handshake, no HTTP
+            # transport vars.
+            "subprocess_env": {"MCP_TRANSPORT": "stdio"},
+            "endpoint": "/mcp",
+            "port": "8000",
+            "env_mapping": {
+                "PROXMOX_HOST": "PROXMOX_HOST",
+                "PROXMOX_USER": "PROXMOX_USER",
+                "PROXMOX_TOKEN_NAME": "PROXMOX_TOKEN_NAME",
+                "PROXMOX_TOKEN_VALUE": "PROXMOX_TOKEN_VALUE",
+                "PROXMOX_PORT": "PROXMOX_PORT",
+                "PROXMOX_VERIFY_SSL": "PROXMOX_VERIFY_SSL",
+            },
+            # Fresh per-spawn Bearer gate (see comment above).
+            "generated_secrets": ["MCP_API_KEY"],
+            "headers": {
+                "Authorization": "Bearer {{MCP_API_KEY}}",
+            },
+            # Read-only probe for POST /config/{id}/test: lists cluster nodes,
+            # so a bad token, unreachable host, or TLS mismatch fails the
+            # test loudly without touching any resource.
+            "test_tool": {"name": "get_nodes", "arguments": {}},
+            # The full tool set the upstream registers without an [ssh]
+            # config section (the two SSH-backed container-command tools are
+            # not registered in env-var mode). Admin discovery overwrites
+            # this with the authoritative tools/list.
+            "tool_names": [
+                "get_nodes", "get_node_status", "get_storage",
+                "get_cluster_status",
+                "list_jobs", "get_job", "poll_job", "cancel_job", "retry_job",
+                "get_vms", "get_vm_config", "set_vm_description", "create_vm",
+                "clone_vm", "execute_vm_command", "start_vm", "stop_vm",
+                "shutdown_vm", "reset_vm", "delete_vm",
+                "get_containers", "get_container_config",
+                "set_container_description", "get_container_ip",
+                "create_container", "start_container", "stop_container",
+                "restart_container", "update_container_resources",
+                "delete_container",
+                "list_snapshots", "create_snapshot", "delete_snapshot",
+                "rollback_snapshot",
+                "list_isos", "list_templates", "download_iso", "delete_iso",
+                "list_backups", "create_backup", "restore_backup",
+                "delete_backup",
+                "get_node_syslog", "get_task_log", "get_cluster_log",
+                "get_node_firewall_log", "get_guest_firewall_log",
             ],
         },
         approved_by_admin=True,
@@ -618,7 +776,7 @@ def seed_mcp_templates():
 
     db = SessionLocal()
     try:
-        for spec in (happyfox, ebay, portainer, warden):
+        for spec in (happyfox, ebay, portainer, warden, proxmox):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
                 existing.approved_by_admin = True
