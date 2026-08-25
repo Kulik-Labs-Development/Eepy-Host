@@ -230,6 +230,10 @@ docker container in production), short-lived and idle-reaped.
 │   │                       #   spec-driven tools over the unified proxy —
 │   │                       #   see "opencode MCP bridge" under Testing
 │   └── .eepy_env           # git-ignored: EEPY_BASE_URL / EEPY_TOOL_KEY
+├── opencode.json           # opencode dev config: eepy-local shim (disabled
+│                           #   by default). The production eepy connection
+│                           #   (native endpoint + key) lives in the USER-
+│                           #   level opencode config — never committed
 ├── integrations/
 │   ├── Dockerfile.happyfox   # builds the submodule into the sidecar image
 │   ├── Dockerfile.ebay       #   (build context = repo root; see .github/workflows/main.yml)
@@ -645,29 +649,38 @@ cd frontend && npm run lint && npx tsc --noEmit
 (CI mirrors this: ruff+pytest for the backend, eslint+tsc for the frontend —
 there is no vitest in the frontend.)
 
-### opencode MCP bridge (local dev tooling)
+### opencode MCP connection (production) + local shim
 
-`tools/eepy_mcp_shim.py` is a small stdio MCP server (registered in the root
-`opencode.json` as local server `eepy`) that lets opencode call Eepy Host tools
-from inside a session for dev testing: it fetches the unified
+The production path is the NATIVE endpoint (`POST /api/mcp/mcp`, see "Native
+MCP endpoint"): point the MCP client at the URL + a Bearer Tool API Key.
+Deployed: `https://api.eepy.host/api/mcp/mcp` (frontend is `dev.eepy.host`;
+`getApiUrl()` in `frontend/lib/api.ts` maps any `*.eepy.host` to the API
+host). In opencode the connection lives in the USER-LEVEL config
+(`~/.config/opencode/opencode.jsonc`, `mcp.eepy`: `type: "remote"`,
+`oauth: false` — required so the 401 path never starts a browser OAuth flow —
+plus the key in `headers.Authorization`). The key lives there on purpose:
+that file is never committed, and the project config has HIGHER precedence
+than the global one, so a committed `mcp.eepy` entry would shadow it.
+
+`tools/eepy_mcp_shim.py` remains a small stdio MCP server for LOCAL dev
+against a local backend (registered in the root `opencode.json` as
+`eepy-local`, `enabled: false` — opt-in: it fetches the unified
 `/api/mcp/openapi.json` spec, registers each tool as `{template}__{tool}`, and
-proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}` with the
-user's Tool API Key. It is a CLIENT-SIDE dev shim: for real MCP clients the
-production path is the native endpoint (`POST /api/mcp/mcp`, see "Native MCP
-endpoint") — point the client there with a URL + Bearer Tool Key instead.
+proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
 - Config: env vars, or `tools/.eepy_env` (git-ignored, chmod 600, `KEY=VALUE`
-  lines): `EEPY_BASE_URL` (e.g. `https://<host>`), `EEPY_TOOL_KEY`
-  (`eekey_...` created in the dashboard, Open WebUI section — one key unlocks
-  every integration you have connected).
+  lines): `EEPY_BASE_URL` (e.g. `http://localhost:8000`), `EEPY_TOOL_KEY`
+  (`eekey_...` created in the dashboard — one key unlocks every integration
+  you have connected).
 - `EEPY_TEMPLATES` (comma list) restricts which integrations are exposed.
-  Set it when testing one integration (e.g. `EEPY_TEMPLATES=happyfox`) — the
-  full catalog is ~600 tools and would blow the agent's context window.
+  Set it when testing one integration (e.g. `EEPY_TEMPLATES=happyfox`) — a
+  large catalog blows the agent's context window (opencode loads every MCP
+  tool it lists).
 - One-time venv (recreate if missing):
   `uv venv --python 3.12 tools/.venv && uv pip install --python
   tools/.venv/bin/python "mcp==1.29.0" "httpx==0.28.1"` (same pins as the
   backend). Debug: `tools/.venv/bin/python tools/eepy_mcp_shim.py --list`.
 - Config is loaded at opencode startup: quit + restart opencode after changing
-  `opencode.json` or `tools/.eepy_env`.
+  any opencode config or `tools/.eepy_env`.
 
 ## Critical Developer Nuances (learn the hard way)
 
