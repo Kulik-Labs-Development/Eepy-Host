@@ -16,3 +16,6 @@
 [submodule "integrations/trmm-mcp"]
 	path = integrations/trmm-mcp
 	url = https://github.com/shin2344234/trmm-mcp
+[submodule "integrations/clarity-mcp"]
+	path = integrations/clarity-mcp
+	url = https://github.com/microsoft/clarity-mcp-server.git

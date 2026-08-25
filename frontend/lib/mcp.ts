@@ -26,6 +26,7 @@ export const APP_ICONS: Record<string, string> = {
   proxmox: '/app-icons/proxmox.png',
   trmm: '/app-icons/trmm.png',
   'trmm-exec': '/app-icons/trmm.png',
+  clarity: '/app-icons/clarity.png',
 };
 
 export function templateIcon(templateId: string): string | null {

@@ -1,0 +1,66 @@
+# Microsoft Clarity MCP server sidecar image.
+#
+# SOURCE OF TRUTH: integrations/clarity-mcp (git submodule →
+# github.com/microsoft/clarity-mcp-server). This Dockerfile only builds that
+# code into an image; it is NOT where the server code lives.
+#
+# Build context must be the REPO ROOT (CI sets context: ./), so the
+# integrations/clarity-mcp/ paths below resolve to exactly the submodule
+# commit this repo pins.
+#
+# Transport: the upstream server is stdio-only. The Eepy bridge's docker
+# backend always dials streamable-HTTP, so the runtime stage wraps it with
+# supergateway (stdio→streamable-HTTP adapter, pinned) on :3000 at /mcp.
+# Supergateway runs STATELESS (its default): a fresh upstream child per POST
+# with built-in auto-initialize — exactly matching the bridge's one
+# initialize + one call per proxy request.
+#
+# Build notes:
+#  - The upstream repo ships NO lockfile, so npm resolves its semver ranges
+#    at build time (verified working on @modelcontextprotocol/sdk 1.20.2
+#    AND 1.30.0).
+#  - The upstream source does not pass its own `tsc` typecheck (two
+#    type-level-only errors: a `capabilities` key on the server-info arg
+#    that newer SDK typings reject, and noUncheckedIndexedAccess on CLI arg
+#    parsing in src/utils.ts). The emitted JS is what npm publishes and
+#    runs, so we build with `tsc --noCheck` (emit, skip typecheck) rather
+#    than touch the submodule's code.
+#  - The credential (CLARITY_API_TOKEN) rides the sidecar env at spawn
+#    (env_mapping); the upstream reads it from process.env (src/utils.ts).
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Install dependencies first (layer cache). No lockfile upstream.
+COPY integrations/clarity-mcp/package.json ./
+RUN npm install --no-audit --no-fund
+
+# Copy source + tsconfig and emit JS (skip typecheck — see header).
+COPY integrations/clarity-mcp/src ./src
+COPY integrations/clarity-mcp/tsconfig.json ./
+RUN npx tsc --noCheck
+
+# Drop devDependencies (typescript, @types) from the runtime tree.
+RUN npm prune --omit=dev
+
+# Production stage.
+FROM node:22-alpine
+
+# Pinned stdio→streamable-HTTP adapter (see header). Installed as root
+# before dropping privileges (the global prefix is root-owned).
+RUN npm install -g --no-audit --no-fund supergateway@3.4.3
+
+# Use the `node` user that already exists in the base image (uid 1000).
+RUN mkdir -p /app && chown -R node:node /app
+USER node
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+
+EXPOSE 3000
+
+# Stateless adapter: one upstream child per POST, auto-initialized.
+CMD ["supergateway", "--stdio", "node dist/index.js", "--outputTransport", "streamableHttp", "--port", "3000"]

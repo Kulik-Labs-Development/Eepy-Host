@@ -144,6 +144,33 @@ docker container in production), short-lived and idle-reaped.
   submodule from its OWN venv (`./venv/bin/python -m trmm_mcp.server`,
   one-time `python3 -m venv integrations/trmm-mcp/venv && venv/bin/pip
   install -r requirements.txt`), not the backend interpreter.
+- Microsoft Clarity is Template #8, same modular pattern from the
+  `integrations/clarity-mcp` git submodule (github.com/microsoft/
+  clarity-mcp-server — MIT, TypeScript/Node, 3 tools over the Clarity Data
+  Export API: `query-analytics-dashboard` (natural-language analytics
+  queries), `list-session-recordings` (filtered recording samples: rage
+  clicks, JS errors, dead clicks, geography, devices), and
+  `query-documentation-resources`). First integration whose upstream is
+  **stdio-only**: the bridge's docker backend always dials streamable-HTTP,
+  so the sidecar image wraps the built server with a PINNED
+  `supergateway@3.4.3` adapter (stdio→streamable-HTTP, stateless — a fresh
+  upstream child per POST with auto-initialize, matching the bridge's one
+  initialize + one call per request) serving :3000 at /mcp (see
+  `integrations/Dockerfile.clarity`). The Data Export API token rides the
+  sidecar env at spawn (`CLARITY_API_TOKEN`, read from `process.env` by the
+  upstream) — no per-request headers needed. NOTE: the upstream source does
+  NOT pass its own `tsc` typecheck (two type-level-only errors against its
+  tsconfig strictness / newer SDK typings), so both the image and the
+  subprocess dev path build with `npx tsc --noCheck` (emit-only) — and the
+  repo ships no lockfile, so npm resolves its semver ranges at build time
+  (verified on the SDK 1.20.x AND 1.30.x lines). The upstream swallows
+  HTTP failures into a fixed sentence with `isError` still false, so the
+  seed declares `runtime_config.test_error_markers`
+  (`["An error occurred while fetching the data."]`) — the connection-test
+  route inspects those markers in addition to its generic heuristics, which
+  is what makes a bad token fail the dashboard test. Local-dev (subprocess)
+  path: Node 18+ on PATH + one-time `npm install && npx tsc --noCheck` in
+  the submodule (e2e-tested).
 - The unified proxy (`/api/mcp/proxy/{template_id}/{tool_name}`) routes by
   template `runtime`: `mcp-server` → generic bridge (`api/mcp_bridge.py`),
   `native` → hardcoded `TEMPLATE_REGISTRY` (HappyFox reference path, kept for
@@ -294,12 +321,17 @@ docker container in production), short-lived and idle-reaped.
 │   ├── Dockerfile.trmm       #   (pip-installs the submodule; upstream pins
 │   │                         #    mcp==2.0.0 exactly — its own SDK line,
 │   │                         #    so the subprocess dev path uses its own venv)
+│   ├── Dockerfile.clarity    #   (tsc-builds the submodule with --noCheck —
+│   │                         #    upstream has type-level errors; wraps the
+│   │                         #    stdio-only server with pinned supergateway
+│   │                         #    stdio→streamable-HTTP on :3000)
 │   ├── happyfox-mcp/         # GIT SUBMODULE → Glitch3dPenguin/happyfox-mcp
 │   ├── ebay-mcp/             # GIT SUBMODULE → YosefHayim/ebay-mcp
 │   ├── portainer-mcp/        # GIT SUBMODULE → portainer/portainer-mcp
 │   ├── warden-mcp/           # GIT SUBMODULE → icoretech/warden-mcp
 │   ├── proxmox-mcp/          # GIT SUBMODULE → RekklesNA/ProxmoxMCP-Plus
-│   └── trmm-mcp/             # GIT SUBMODULE → shin2344234/trmm-mcp
+│   ├── trmm-mcp/             # GIT SUBMODULE → shin2344234/trmm-mcp
+│   └── clarity-mcp/          # GIT SUBMODULE → microsoft/clarity-mcp-server
 └── assets/
 ```
 
@@ -867,20 +899,21 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   (a plain clone leaves the submodule dir empty until
   `git submodule update --init`).
 - **Two CI workflows, both on push to main:** `CI` (ruff+pytest, eslint+tsc —
-  no image builds) and   `Build and Push to GHCR`, which builds **eight**
+  no image builds) and   `Build and Push to GHCR`, which builds **nine**
   images: `eepy-host-backend`, `eepy-host-frontend`, `eepy-host-happyfox`
   (sidecar, built from the submodule via `integrations/Dockerfile.happyfox`),
   `eepy-host-ebay` (sidecar, via `integrations/Dockerfile.ebay`),
   `eepy-host-portainer` (sidecar, via `integrations/Dockerfile.portainer`),
   `eepy-host-warden` (sidecar, via `integrations/Dockerfile.warden`),
-  `eepy-host-proxmox` (sidecar, via `integrations/Dockerfile.proxmox`) and
+  `eepy-host-proxmox` (sidecar, via `integrations/Dockerfile.proxmox`),
   `eepy-host-trmm` (sidecar, via `integrations/Dockerfile.trmm` — serves
-  BOTH the trmm and trmm-exec templates; the mode is per-template env)
+  BOTH the trmm and trmm-exec templates; the mode is per-template env) and
+  `eepy-host-clarity` (sidecar, via `integrations/Dockerfile.clarity`)
   — all sidecars built with the repo root as build context. So every push to
   main refreshes all deployed images.
   - **Seed roll-forward:** `seed_mcp_templates()` in `main.py` updates the
   existing seeded rows' (HappyFox, eBay, Portainer, Warden, Proxmox, Tactical
-  RMM read-only + command) `runtime`,
+  RMM read-only + command, Clarity) `runtime`,
   `runtime_config`, `config_schema`, `image_tag`, and approval flags on
   **every boot** (idempotent). That is how spec changes reach the live DB —
   pushing a backend change is enough; no manual DB edit needed.
@@ -888,9 +921,10 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   updated `eepy-host-backend:latest` / `eepy-host-frontend:latest` /
   `eepy-host-happyfox:latest` / `eepy-host-ebay:latest` /
   `eepy-host-portainer:latest` / `eepy-host-warden:latest` /
-  `eepy-host-proxmox:latest` / `eepy-host-trmm:latest` images and recreate
-  the containers (sidecar images are pulled lazily by the bridge, so just
-  make sure the backend has fresh access). `stack.env` values rarely change
+  `eepy-host-proxmox:latest` / `eepy-host-trmm:latest` /
+  `eepy-host-clarity:latest` images and recreate the containers (sidecar
+  images are pulled lazily by the bridge, so just make sure the backend has
+  fresh access). `stack.env` values rarely change
   — only when a new secret is introduced.
   - **The backend needs the Docker socket or sidecars can never spawn:** with
     `EEPY_MCP_INSTANCE_BACKEND=docker` (the compose default) the backend
@@ -915,7 +949,7 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
     (check the daemon line above / the Debug Log console).
   -    **Verify the docker sidecar path (production):** the dev machine has
      Docker, so the full compose stack CAN be exercised locally (build the
-     eight app+sidecar images with the GHCR tags, `docker compose --env-file
+     nine app+sidecar images with the GHCR tags, `docker compose --env-file
     stack.env up -d`). After a deploy: hit the dashboard's connection test,
    then a real proxy tool call, and confirm in the backend logs (or the
    Debug Log console) that `mcp-bridge: started sidecar container ...

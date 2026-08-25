@@ -118,6 +118,20 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-trmm:latest
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Build and push Microsoft Clarity MCP sidecar image
+        # Built from the integrations/clarity-mcp submodule (upstream
+        # microsoft/clarity-mcp-server) so the deployed sidecar always
+        # matches the exact upstream commit this repo pins. The image wraps
+        # the stdio-only upstream with a pinned supergateway
+        # stdio→streamable-HTTP adapter (see Dockerfile.clarity).
+        uses: docker/build-push-action@v5
+        with:
+          context: ./
+          file: ./integrations/Dockerfile.clarity
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-clarity:latest
+          labels: ${{ steps.meta.outputs.labels }}
+
       - name: Build and push Frontend image
         uses: docker/build-push-action@v5
         with:

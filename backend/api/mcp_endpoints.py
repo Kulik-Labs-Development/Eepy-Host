@@ -657,7 +657,12 @@ async def test_mcp_connection(
         except mcp_bridge.BridgeError as exc:
             raise HTTPException(status_code=502, detail=f"Connection test failed: {exc}") from exc
         text = (data or "") if isinstance(data, str) else str(data)
-        if is_error or re.search(r"^\s*Error\b", text) or "401" in text[:200] or "403" in text[:200]:
+        # Upstreams that swallow HTTP failures into fixed text (isError stays
+        # false) declare the failure sentence(s) in runtime_config
+        # `test_error_markers` so a bad credential still fails the test.
+        markers = [str(m) for m in (rctx.get("test_error_markers") or []) if str(m)]
+        if (is_error or re.search(r"^\s*Error\b", text) or "401" in text[:200]
+                or "403" in text[:200] or any(m in text for m in markers)):
             return {"status": "failed",
                     "detail": "Authentication or upstream failure. "
                               + (text[:200] if text else "(no response body)")}

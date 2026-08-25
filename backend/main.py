@@ -1065,9 +1065,81 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
+    clarity = MCPTemplate(
+        id="clarity",
+        name="Microsoft Clarity",
+        repo_url="https://github.com/microsoft/clarity-mcp-server",
+        description=(
+            "Analyze your website's behavior with Microsoft Clarity across 3 tools: "
+            "query your analytics dashboard in natural language (traffic, devices, "
+            "browsers, geography, engagement), list and filter session recordings "
+            "(rage clicks, dead clicks, JavaScript errors, scroll depth, slow pages), "
+            "and search the Clarity documentation. Strictly read-only, backed by the "
+            "Clarity Data Export API; the API token stays encrypted at rest and is "
+            "proxied through the Eepy unified proxy."
+        ),
+        config_schema={
+            "category": "Analytics / Web Insights",
+            "type": "object",
+            "properties": {
+                "CLARITY_API_TOKEN": {
+                    "type": "password",
+                    "label": "Data Export API Token",
+                    "help": "Clarity project: Settings > Data Export > Generate new API token. The token is scoped to that project.",
+                    "required": True,
+                },
+            },
+            "required": ["CLARITY_API_TOKEN"],
+        },
+        image_tag="ghcr.io/kulik-labs-development/eepy-host-clarity",
+        runtime="mcp-server",
+        # Modular sidecar spec (same contract as the eBay reference). The
+        # upstream server is stdio-only, so the sidecar image wraps it with a
+        # pinned supergateway adapter (stdio→streamable-HTTP, stateless) —
+        # see integrations/Dockerfile.clarity. The credential rides the
+        # sidecar env at spawn (the upstream reads CLARITY_API_TOKEN from
+        # process.env, src/utils.ts); no per-request headers needed.
+        # Local (subprocess backend): stdio directly; needs Node on the host
+        # PATH and a one-time `npm install && npx tsc --noCheck` inside
+        # integrations/clarity-mcp (the upstream source does not pass its
+        # own typecheck — emit-only build, see the Dockerfile header).
+        runtime_config={
+            "image": "ghcr.io/kulik-labs-development/eepy-host-clarity:latest",
+            "command": ["node", "dist/index.js"],
+            "cwd": "integrations/clarity-mcp",
+            "env": {},
+            "subprocess_env": {},
+            "endpoint": "/mcp",
+            "port": "3000",
+            "env_mapping": {
+                "CLARITY_API_TOKEN": "CLARITY_API_TOKEN",
+            },
+            # Read-only probe for POST /config/{id}/test: a documentation
+            # query hits the Data Export API with the user's token, so a bad
+            # token fails the call. The upstream swallows HTTP failures into
+            # a fixed sentence (isError stays false), so the marker below is
+            # what the test route inspects.
+            "test_tool": {
+                "name": "query-documentation-resources",
+                "arguments": {"query": "What is Microsoft Clarity?"},
+            },
+            "test_error_markers": ["An error occurred while fetching the data."],
+            # The full tool set (3 tools — small catalog, complete list).
+            # Admin discovery overwrites this with the authoritative
+            # tools/list.
+            "tool_names": [
+                "query-analytics-dashboard",
+                "list-session-recordings",
+                "query-documentation-resources",
+            ],
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
     db = SessionLocal()
     try:
-        for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec):
+        for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec, clarity):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
                 existing.approved_by_admin = True

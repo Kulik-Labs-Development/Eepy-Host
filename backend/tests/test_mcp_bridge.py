@@ -1752,3 +1752,160 @@ def test_real_trmm_submodule_subprocess_path(client, auth_user):
         from api import mcp_bridge
         mcp_bridge.shutdown_all_instances()
         srv.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Seeded Microsoft Clarity template (#8): the seed in main.py must carry a
+# valid mcp-server sidecar spec for BOTH instance backends. The upstream is
+# stdio-only, so the docker image wraps it with a supergateway
+# stdio→streamable-HTTP adapter (integrations/Dockerfile.clarity); the
+# subprocess backend runs the built submodule directly.
+# ---------------------------------------------------------------------------
+CLARITY_SUBMODULE = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "integrations", "clarity-mcp"))
+
+
+def test_seeded_clarity_template_shape(client):
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    db = SessionLocal()
+    try:
+        t = db.query(MCPTemplate).filter(MCPTemplate.id == "clarity").first()
+    finally:
+        db.close()
+    assert t is not None, "clarity template was not seeded"
+    assert t.approved_by_admin and t.enabled_global
+    assert t.runtime == "mcp-server"
+    assert t.image_tag == "ghcr.io/kulik-labs-development/eepy-host-clarity"
+
+    cfg = t.runtime_config
+    # Subprocess backend (local dev): stdio entrypoint of the pinned submodule.
+    assert cfg["command"] == ["node", "dist/index.js"]
+    assert cfg["cwd"] == "integrations/clarity-mcp"
+    # Docker backend (production): supergateway adapter serving
+    # streamable-HTTP on :3000 at /mcp.
+    assert cfg["image"] == "ghcr.io/kulik-labs-development/eepy-host-clarity:latest"
+    assert cfg["port"] == "3000"
+    assert cfg["endpoint"] == "/mcp"
+    # The Data Export API token rides the sidecar env at spawn; the upstream
+    # reads CLARITY_API_TOKEN from process.env (src/utils.ts).
+    assert cfg["env_mapping"] == {"CLARITY_API_TOKEN": "CLARITY_API_TOKEN"}
+    # No per-request headers or generated secrets: the token is a sidecar
+    # env credential (the unified proxy is the auth layer, same posture as
+    # the eBay sidecar).
+    assert "headers" not in cfg
+    assert "generated_secrets" not in cfg
+    # The connection-test probe hits the Data Export API with the user's
+    # token; the upstream swallows HTTP failures into a fixed sentence
+    # (isError stays false), so the seed declares the marker the test route
+    # inspects.
+    assert cfg["test_tool"] == {
+        "name": "query-documentation-resources",
+        "arguments": {"query": "What is Microsoft Clarity?"},
+    }
+    assert cfg["test_error_markers"] == ["An error occurred while fetching the data."]
+    assert cfg["tool_names"] and cfg["test_tool"]["name"] in cfg["tool_names"]
+    # The wizard's single required field.
+    assert t.config_schema["required"] == ["CLARITY_API_TOKEN"]
+
+
+@pytest.mark.skipif(
+    not os.path.isfile(os.path.join(CLARITY_SUBMODULE, "package.json")),
+    reason="integrations/clarity-mcp submodule is not checked out")
+@pytest.mark.skipif(
+    _NODE_MAJOR is None or _NODE_MAJOR < 18,
+    reason=f"node 18+ is required for the clarity subprocess dev path (found: {_NODE_MAJOR or 'none'})")
+def test_real_clarity_submodule_subprocess_path(client, auth_user):
+    import subprocess as sp
+
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    # One-time build (cached: dist/index.js existing means already built).
+    # `--noCheck`: the upstream source does not pass its own typecheck
+    # (see integrations/Dockerfile.clarity header) — emit-only build.
+    if not os.path.isfile(os.path.join(CLARITY_SUBMODULE, "dist", "index.js")):
+        sp.run(["npm", "install", "--no-audit", "--no-fund"], cwd=CLARITY_SUBMODULE,
+               check=True, stdout=sp.PIPE, stderr=sp.STDOUT, timeout=600)
+        sp.run(["npx", "tsc", "--noCheck"], cwd=CLARITY_SUBMODULE,
+               check=True, stdout=sp.PIPE, stderr=sp.STDOUT, timeout=300)
+
+    template_id = "clarity-submodule-test"
+    fake_creds = {"CLARITY_API_TOKEN": "fake-clarity-token"}
+    db = SessionLocal()
+    try:
+        existing = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
+        if existing:
+            db.delete(existing)
+            db.commit()
+        t = MCPTemplate(
+            id=template_id,
+            name="Microsoft Clarity (submodule e2e test)",
+            description="Runs the pinned integrations/clarity-mcp submodule through the bridge.",
+            config_schema={
+                "category": "Test",
+                "type": "object",
+                "properties": {
+                    "CLARITY_API_TOKEN": {"type": "password", "label": "Token", "required": True},
+                },
+                "required": ["CLARITY_API_TOKEN"],
+            },
+            runtime="mcp-server",
+            runtime_config={
+                "command": ["node", "dist/index.js"],
+                "cwd": "integrations/clarity-mcp",
+                "env_mapping": {"CLARITY_API_TOKEN": "CLARITY_API_TOKEN"},
+                "test_tool": {
+                    "name": "query-documentation-resources",
+                    "arguments": {"query": "What is Microsoft Clarity?"},
+                },
+                "test_error_markers": ["An error occurred while fetching the data."],
+            },
+            approved_by_admin=True,
+            enabled_global=True,
+        )
+        db.add(t)
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        r = client.post("/api/mcp/config/register", headers=_h(auth_user["token"]),
+                        json={"template_id": template_id, "credentials_json": fake_creds})
+        assert r.status_code == 200, r.text
+
+        # Tool call with a fake token: the sidecar must spawn, complete the
+        # MCP handshake, send the token to the real Clarity API (Bearer), and
+        # relay the upstream failure as TOOL text (isError stays false — the
+        # upstream swallows HTTP errors into a fixed sentence). This proves
+        # the env-mapped credential reached the subprocess.
+        r = client.post(f"/api/mcp/proxy/{template_id}/query-documentation-resources",
+                        headers=_h(auth_user["token"]),
+                        json={"query": "What is Microsoft Clarity?"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["tool"] == "query-documentation-resources"
+        assert body["is_error"] is False, body["data"][:300]
+        assert "An error occurred while fetching the data." in body["data"], \
+            f"expected the upstream's swallowed-failure sentence: {body['data'][:300]}"
+
+        # Connection test endpoint: the same sentence must FAIL the test via
+        # the seed's test_error_markers (a bad token must not report ok).
+        r = client.post(f"/api/mcp/config/{template_id}/test", headers=_h(auth_user["token"]))
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "failed", r.json()
+
+        # Admin discovery against the real server: the pinned submodule
+        # exposes exactly the 3 tools listed in the production seed.
+        r = client.post(f"/superuser/mcp/templates/{template_id}/discover",
+                        headers=_h(auth_user["token"]))
+        assert r.status_code == 200, r.text
+        disc = r.json()
+        assert disc["tool_count"] == 3, disc
+        assert set(disc["tools"]) == {
+            "query-analytics-dashboard", "list-session-recordings",
+            "query-documentation-resources"}
+    finally:
+        from api import mcp_bridge
+        mcp_bridge.shutdown_all_instances()
