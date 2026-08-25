@@ -171,9 +171,9 @@ docker container in production), short-lived and idle-reaped.
    superuser sets `approved_by_admin` / `enabled_global`. This is also where
    the monetization pipeline starts (user template requests → admin review).
 5. **Role hierarchy** — strict USER / SUPERUSER roles. Every `/superuser/*`
-   endpoint enforces the role server-side via a dependency; frontend gating
-   (`AuthContext.user.role === 'SUPERUSER'`) is cosmetic only — the backend is
-   the source of truth.
+    endpoint enforces the role server-side via a dependency; frontend gating
+    (`AuthContext.user.role === 'superuser'` — the UserRole StrEnum values are
+    lowercase) is cosmetic only — the backend is the source of truth.
 
 ## Technical Stack
 
@@ -183,10 +183,12 @@ docker container in production), short-lived and idle-reaped.
   shadows, dithered sky + scanline textures). Fonts via next/font: Pixelify
   Sans (`font-pixel`), VT323 (`font-console`), Nunito (`font-body`). Lucide
   React icons; a hand-drawn pixel moon mascot (`src/components/PixelMoon`).
-- **Backend:** FastAPI, PostgreSQL via SQLAlchemy (sync), Alembic migrations
-  (also an idempotent `backend/run_migrations.py`), JWT auth (PyJWT),
-  slowapi rate limiting on auth routes, `mcp` SDK + `docker` SDK for the
-  modular sidecar bridge.
+- **Backend:** FastAPI, PostgreSQL via SQLAlchemy (sync), schema bootstrap at
+  boot (`Base.metadata.create_all` + `sync_database_schema()` in `main.py`,
+  both idempotent; `alembic/` holds env scaffolding only — no version files —
+  and `backend/run_migrations.py` is a standalone CREATE TABLE script for the
+  MCP tables), JWT auth (PyJWT), slowapi rate limiting on auth routes,
+  `mcp` SDK + `docker` SDK for the modular sidecar bridge.
 - **Deploy:** Docker Compose in `deploy/` (db + backend + frontend), GHCR
   images via CI.
 
@@ -199,7 +201,9 @@ docker container in production), short-lived and idle-reaped.
 │   ├── auth.py               # JWT encode/decode (PyJWT; migrated from
 │   │                         #   python-jose — jose is unmaintained, CVE-2024-29370)
 │   ├── database.py           # engine/session (DATABASE_URL from env)
-│   ├── run_migrations.py     # idempotent schema bootstrap
+│   ├── run_migrations.py     # standalone MCP-tables CREATE script (recovery
+│   │                         #   path; boot itself uses create_all +
+│   │                         #   sync_database_schema in main.py)
  │   ├── api/
  │   │   ├── mcp_endpoints.py  # ALL MCP routes: tool keys, template list,
  │   │   │                     #   config register/list/delete/test/mcp-url,
@@ -220,17 +224,22 @@ docker container in production), short-lived and idle-reaped.
 │   ├── utils/
 │   │   ├── crypto.py         # Fernet encrypt/decrypt (+ SECRET_KEY fallback)
 │   │   └── logging_setup.py  # shared logger config (used across backend)
-│   ├── alembic/              # migration structure + MCP migration
-│   └── requirements.txt
+│   ├── alembic/              # migration scaffolding (env.py only — no
+│   │                         #   version files; boot schema = create_all +
+│   │                         #   sync_database_schema)
+│   ├── requirements.txt
+│   └── Dockerfile            # backend image (built by CI)
 ├── frontend/
 │   ├── app/                  # App Router pages: /auth, /dashboard/*
 │   ├── public/app-icons/     # per-integration app icons (PNG, alpha) shown on
 │   │                         #   the library cards + template info pages;
 │   │                         #   template id -> file map in lib/mcp.ts
 │   ├── context/AuthContext.tsx
-│   ├── lib/api.ts
- │   └── src/components/       # MCPConnectionWizard, OpenWebUIExportPanel,
- │                             #   AIPlatformConnectorPanel
+│   ├── lib/api.ts            # getApiUrl(): *.eepy.host → https://api.eepy.host
+│   ├── lib/mcp.ts            # template icon map, repo-label helper
+│   ├── src/components/       # MCPConnectionWizard, OpenWebUIExportPanel,
+│   │                         #   AIPlatformConnectorPanel
+│   └── Dockerfile            # frontend image (built by CI)
 ├── deploy/
 │   ├── docker-compose.yml    # db + backend + frontend (no secrets in file)
 │   └── stack.env.example     # secret reference — copy to stack.env and fill in
@@ -280,6 +289,7 @@ All under `/api/mcp` (router prefix in `api/mcp_endpoints.py`):
 | `POST /api/mcp/config/{template_id}/test` | Test stored credentials live | USER / Tool Key |
 | `GET/POST/PUT /api/mcp/proxy/{template_id}/{tool_name}` | The core proxy: decrypt in memory → call upstream → stream back. ALSO bound at `/api/mcp/{template_id}/{tool_name}` (no `proxy` segment) via `mcp_proxy_alias` so pre-fix Open WebUI spec imports (which call the base-URL + path shape) keep working | USER / Tool Key |
 | `POST /api/mcp/mcp` | The native MCP endpoint (AI Platform connector): streamable-HTTP JSON-RPC (`initialize`, `tools/list`, `tools/call`) served by `api/mcp_stream.py` — per-user tool list, proxy-equivalent calls, `eepy__status` built-in. NOT a FastAPI route (ASGI middleware + SDK session manager); see "Native MCP endpoint" below | USER / Tool Key |
+| `GET /superuser/mcp/templates` | Discovery state for every approved template (`tool_count`, `tools_discovered_at`) — backs the superuser Tool Discovery panel; `tool_count=0` means the OpenAPI spec serves untyped name-only tools for it | SUPERUSER |
 | `POST /superuser/mcp/templates/{template_id}/discover` | Run `tools/list` against the template's sidecar (superuser's own creds) and store the tool schemas | SUPERUSER |
 | `PATCH /superuser/mcp/templates/{template_id}/runtime` | Register/update a template's sidecar spec (`runtime`, `runtime_config`, approval flags) | SUPERUSER |
 | `GET /api/mcp/openapi.json` | Unified OpenAPI spec of ALL connected tools (Open WebUI import). Paths are `/proxy/{template_id}/{tool_name}` and `servers[0].url` is the base URL `.../api/mcp` — because Open WebUI appends spec paths to the PASTED base URL and ignores `servers[].url`, both compositions must yield the same route. Also served at `/api/mcp/openapi.json/openapi.json` because Open WebUI auto-appends `/openapi.json` to the pasted URL (users paste the base URL `.../api/mcp`) | public |
@@ -653,7 +663,7 @@ keeps stack secrets distinct from any host-level dotfiles.
 
 ### Testing
 ```bash
-cd backend && pytest tests/ --cov=. -v || echo "Tests failed"
+cd backend && pytest tests/ -q || echo "Tests failed"
 cd frontend && npm run lint && npx tsc --noEmit
 ```
 
@@ -817,7 +827,7 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
     Host check: `docker exec eepy-backend ls -l /var/run/docker.sock`.
   - **Sidecars are spawned ON DEMAND, per (user, template, exact credentials),
     and reaped after `EEPY_MCP_INSTANCE_IDLE_TIMEOUT` (default 300s) idle.**
-    So seeing NO extra `eepy-sidecar-*` containers on the host while idle is
+    So seeing NO extra `eepy-mcp-*` containers on the host while idle is
     NORMAL — a sidecar exists only from first use until ~5 min after the last
     call. If none EVER appears when a tool is called, spawning is failing
     (check the daemon line above / the Debug Log console).
