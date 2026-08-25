@@ -10,7 +10,9 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 class UserLogin(BaseModel):
-    username: str
+    # Bounded: the identifier is echoed into a log line on every attempt — an
+    # unbounded string would let an unauthenticated client bloat the log buffer.
+    username: str = Field(min_length=1, max_length=255)
     password: str
 
 class PasswordResetIn(BaseModel):

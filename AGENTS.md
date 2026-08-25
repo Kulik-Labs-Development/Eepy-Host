@@ -306,6 +306,49 @@ lives in ONE place: the `key_allowed` check in `_resolve_scoped_user`
 (`api/mcp_endpoints.py`), with `MCP_STREAM_PATH` defined there as the single
 source of truth.
 
+## Security posture (audited 2026-08-24)
+
+- **Dependencies were audited clean** (`pip-audit` on `backend/requirements.txt`,
+  `npm audit` incl. dev deps): no known CVEs in the pinned set. Re-run both
+  after ANY dependency bump (`/tmp/eevenv` or `uv pip install pip-audit`).
+- **SSRF guard on the legacy native path** (`_assert_public_upstream`,
+  `api/mcp_endpoints.py`): the native runtime makes the BACKEND dial the
+  user-supplied upstream URL and return the response, so that host is checked
+  before every dial — https-only, and every resolved IP must be globally
+  public (`ip.is_global`, which blocks loopback / RFC1918 / CGNAT /
+  link-local incl. the cloud metadata 169.254.169.254 / ULA / multicast /
+  reserved). Regression: `tests/test_security_audit.py`. The mcp-server
+  runtime is NOT affected: the backend only dials its own sidecars.
+- **Rate limits are proxy-aware** (`rate_limit_key` in `main.py`): the
+  in-memory slowapi limits (signup 5/hour, login 10/minute) key on the client
+  IP — when the direct peer is listed in `TRUSTED_PROXY_IPS` (comma-separated
+  env, see `stack.env.example`) the key comes from the leftmost
+  X-Forwarded-For entry instead. Without it, a deployment behind a reverse
+  proxy shares ONE key for all clients (a login-limit DoS vector). Untrusted
+  peers ignore XFF entirely (no spoofed-IP bypass).
+- **Request body cap** (`RequestBodyLimitMiddleware`, `main.py`): bodies
+  declaring `Content-Length` over `EEPY_MAX_REQUEST_BODY_MB` (default 8,
+  above the 5 MB avatar cap) get a 413 before routing — protects the
+  unauthenticated `/auth/*` routes from a single giant-body OOM. Chunked /
+  under-declared bodies are the reverse proxy's job: set a body cap there too.
+- **Avatar uploads: raster only** (`ALLOWED_AVATAR_CONTENT_TYPES` in
+  `main.py`: png/jpeg/webp/gif) — `image/svg+xml` can reference external
+  resources and bloat at render, so it is rejected with 400.
+- **`UserLogin.username` is length-bounded** (≤255): the identifier is echoed
+  into a log line on every attempt; unbounded it could bloat the (superuser-
+  readable) in-memory log buffer.
+- **Auth core (unchanged, verified in the audit):** HS256-pinned PyJWT,
+  bcrypt cost 12 with 72-byte truncation + dummy-hash timing equalization, no
+  client-supplied role at signup, SHA-256-hashed tool keys with a strict
+  route-scope check, Fernet-at-rest credentials decrypted only in memory,
+  minimal sidecar env allowlist, secret redaction in sidecar diagnostics.
+- **Known open trade-offs** (pre-launch, see also the sidecar security note
+  above): sidecar images deploy as `:latest` (digest-pin before trusting
+  community repos); sidecar egress is unrestricted (egress proxy/allowlist
+  before unknown code); 24 h JWTs live in `localStorage` with no revocation
+  (XSS surface is minimal: no user-HTML rendering, CSP + frame-ancestors
+  'none' on the frontend).
+
 ## Adding a New Integration (runbook)
 
 Two runtimes exist. **Prefer `mcp-server`** — it is the scalable path and is
@@ -403,7 +446,10 @@ image from that exact commit. Re-run discovery. No Eepy backend code changes
 1. Register the template with `runtime="native"` + `config_schema`.
 2. Add an entry to `TEMPLATE_REGISTRY` in `backend/api/mcp_endpoints.py`
    (tool name → upstream HTTP method + path) plus upstream base-URL/auth logic
-   in the native proxy handler.
+   in the native proxy handler. NOTE: this runtime makes the BACKEND dial the
+   user-supplied upstream host, so it is behind the SSRF guard
+   (`_assert_public_upstream` — https-only, public IPs only; see "Security
+   posture"). Never bypass it.
 3. Approve it (`approved_by_admin=True`, `enabled_global=True`).
 
 > This path requires writing and maintaining per-integration Python. Use it
@@ -871,9 +917,13 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
  - **Secrets** come from `deploy/stack.env` (git-ignored): `POSTGRES_PASSWORD`,
   `DATABASE_URL`, `SECRET_KEY`, `MCP_ENCRYPTION_KEY`, plus the optional
   `EEPY_MCP_INSTANCE_BACKEND` (sidecar runtime: `docker` default in compose,
-  or `subprocess`) and `CORS_ORIGINS` (comma-separated origin pin for
-  browser-based clients like Open WebUI; unset = wildcard, which is safe —
-  Bearer-token auth only, no cookie sessions). `EEPY_MCP_DOCKER_HOST` is set
+   or `subprocess`) and `CORS_ORIGINS` (comma-separated origin pin for
+   browser-based clients like Open WebUI; unset = wildcard, which is safe —
+   Bearer-token auth only, no cookie sessions). Security-audit additions:
+   `TRUSTED_PROXY_IPS` (comma-separated; makes the auth rate limits key on
+   the leftmost X-Forwarded-For entry when the API sits behind a reverse
+   proxy — see "Security posture") and `EEPY_MAX_REQUEST_BODY_MB` (default 8,
+   the hard request-body cap). `EEPY_MCP_DOCKER_HOST` is set
   by the compose file itself (not in stack.env) to `host.docker.internal` so
   a containerized backend can
    reach loopback-bound sidecar ports (fallback only; the primary dial is

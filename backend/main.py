@@ -36,6 +36,10 @@ logger.addHandler(memory_handler)
 # realistic photo size. Anything larger is a storage/DoS vector, not an avatar.
 MAX_AVATAR_BYTES = 5 * 1024 * 1024  # 5 MB
 
+# Raster image types only: image/svg+xml passes a naive `image/*` check but an
+# SVG data-URI can reference external resources and bloat at render time.
+ALLOWED_AVATAR_CONTENT_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+
 
 def sync_database_schema():
     try:
@@ -944,8 +948,25 @@ app.router.lifespan_context = _lifespan
 
 # --- RATE LIMITING ---
 # Brute-force protection for credential endpoints. In-memory limiter (single
-# backend process); keyed by client IP.
-limiter = Limiter(key_func=get_remote_address)
+# backend process); keyed by client IP. Behind a reverse proxy every client
+# appears as the proxy's IP — which would make the 10/min login limit GLOBAL
+# (one attacker DoSes every user's login) — so when the direct peer is a
+# trusted proxy (TRUSTED_PROXY_IPS, comma-separated env) the key comes from
+# the leftmost X-Forwarded-For entry instead. Unset = old behavior (socket IP).
+_TRUSTED_PROXY_IPS = {ip.strip() for ip in os.getenv("TRUSTED_PROXY_IPS", "").split(",") if ip.strip()}
+
+
+def rate_limit_key(request: Request) -> str:
+    client = request.client
+    if client and client.host in _TRUSTED_PROXY_IPS:
+        xff = request.headers.get("x-forwarded-for", "")
+        first = xff.split(",")[0].strip() if xff else ""
+        if first:
+            return first
+    return get_remote_address(request)
+
+
+limiter = Limiter(key_func=rate_limit_key)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -985,6 +1006,43 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- REQUEST BODY SIZE CAP ---
+# Starlette buffers whole request bodies in memory, and /auth/* is
+# UNAUTHENTICATED: without a cap a single giant JSON body could spike process
+# memory (OOM DoS). Bodies declaring a Content-Length over the cap are
+# rejected with 413 before routing. Chunked / under-declared bodies are the
+# reverse proxy's job — set a body cap there too. Added LAST (Starlette:
+# last-added is outermost) so an oversized body never reaches CORS or routing.
+MAX_REQUEST_BODY_BYTES = int(os.getenv("EEPY_MAX_REQUEST_BODY_MB", "8")) * 1024 * 1024
+
+
+class RequestBodyLimitMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers") or [])
+            content_length = headers.get(b"content-length")
+            if content_length is not None:
+                try:
+                    if int(content_length) > MAX_REQUEST_BODY_BYTES:
+                        body = b'{"detail": "Request body too large."}'
+                        await send({
+                            "type": "http.response.start",
+                            "status": 413,
+                            "headers": [[b"content-type", b"application/json"],
+                                        [b"content-length", str(len(body)).encode()]],
+                        })
+                        await send({"type": "http.response.body", "body": body})
+                        return
+                except ValueError:
+                    pass  # malformed header: let normal routing handle it
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(RequestBodyLimitMiddleware)
 
 # NOTE: sync `def` on purpose — FastAPI runs these in the threadpool, so the
 # JWT decode + DB lookup never block the event loop. (Async endpoints below
@@ -1137,9 +1195,9 @@ def update_profile(body: ProfileUpdateIn, current_user: User = Depends(get_curre
 def upload_avatar(file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
         logger.info(f"Avatar upload started for user: {current_user.username}")
-        if not file.content_type.startswith("image/"):
+        if file.content_type not in ALLOWED_AVATAR_CONTENT_TYPES:
             logger.warning(f"Invalid file type attempted by {current_user.username}: {file.content_type}")
-            raise HTTPException(status_code=400, detail="Invalid file type. Please upload an image.")
+            raise HTTPException(status_code=400, detail="Invalid file type. PNG, JPEG, WebP, or GIF only.")
         # Sync def + file.file (the SpooledTemporaryFile underneath UploadFile):
         # the bounded read runs in the threadpool, never on the event loop.
         # Bounded read: never buffer more than the cap + 1 byte, then reject

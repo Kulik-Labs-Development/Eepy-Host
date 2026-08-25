@@ -171,6 +171,46 @@ def _happyfox_base(domain: str) -> str:
     return f"{domain.rstrip('/')}/api/1.1/json"
 
 
+def _assert_public_upstream(url: str) -> None:
+    """SSRF guard for the legacy native path: the BACKEND itself dials this
+    URL (httpx) and returns the response, so the user-supplied host must be a
+    public HTTPS endpoint. Blocks:
+      - plain http (the Basic-auth credentials would travel in the clear),
+      - loopback / private / link-local / multicast / reserved targets, which
+        otherwise lets any connected user read internal services or the cloud
+        metadata endpoint (http://169.254.169.254) from the backend container.
+    IP literals are range-checked directly; hostnames are resolved and every
+    resolved address must be public. Sync on purpose (DNS) — call it via
+    asyncio.to_thread from async routes.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise HTTPException(status_code=400, detail="Upstream host must use https.")
+    host = parsed.hostname or ""
+    if not host:
+        raise HTTPException(status_code=400, detail="Upstream host is empty.")
+
+    try:
+        candidates = [ipaddress.ip_address(host)]
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
+        except socket.gaierror:
+            raise HTTPException(status_code=400, detail="Upstream host does not resolve.") from None
+        candidates = [ipaddress.ip_address(info[4][0]) for info in infos]
+    for ip in candidates:
+        # is_global (Python 3.11+) is False for loopback, RFC1918, CGNAT
+        # (100.64/10), link-local (incl. the cloud metadata 169.254.169.254),
+        # ULA, multicast, reserved and unspecified ranges — exactly the set of
+        # hosts the backend must never dial on a user's behalf.
+        if not ip.is_global:
+            raise HTTPException(status_code=400, detail="Upstream host resolves to a non-public address.")
+
+
 # ---------------------------------------------------------------------------
 # User-scoped Tool API Key auth (Open WebUI integration)
 # ---------------------------------------------------------------------------
@@ -634,6 +674,7 @@ async def test_mcp_connection(
         raise HTTPException(status_code=400, detail="Stored credentials are incomplete.")
 
     base = _happyfox_base(domain)
+    await asyncio.to_thread(_assert_public_upstream, base)  # SSRF guard (DNS off-loop)
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.get(
@@ -842,6 +883,7 @@ async def _proxy_native(db: Session, template: MCPTemplate, user: User, creds: d
             raise HTTPException(status_code=400, detail=f"Missing required param '{m}' for {tool_name}.")
 
     base = _happyfox_base(creds.get("HAPPYFOX_DOMAIN", ""))
+    await asyncio.to_thread(_assert_public_upstream, base)  # SSRF guard (DNS off-loop)
     api_key = creds.get("HAPPYFOX_API_KEY", "")
     auth_code = creds.get("HAPPYFOX_AUTH_CODE", "")
 
