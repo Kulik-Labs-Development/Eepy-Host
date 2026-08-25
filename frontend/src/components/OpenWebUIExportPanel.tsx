@@ -273,11 +273,11 @@ export default function OpenWebUIPanel({ onClose }: Props) {
                       className={`led ${k.is_active ? 'bg-eepy-sage' : 'bg-ink-dim'}`}
                       title={k.is_active ? 'Active' : 'Revoked'}
                     />
-                    <code className="text-[15px] text-ink-faint font-console truncate">
+                    <span className="text-[15px] text-ink font-body truncate">{k.name}</span>
+                    <code className="text-[11px] text-ink-faint font-console shrink-0">
                       {k.key_prefix}
                       <span className="text-ink-dim">…</span>
                     </code>
-                    <span className="text-[11px] font-body text-ink-dim">{k.name}</span>
                     {!k.is_active && <span className="text-[11px] font-body text-ink-dim">revoked</span>}
                   </div>
                   <div className="relative shrink-0">
@@ -285,7 +285,7 @@ export default function OpenWebUIPanel({ onClose }: Props) {
                       onClick={() => setMenuFor(menuFor === k.id ? null : k.id)}
                       className="btn-icon"
                       title="Key options"
-                      aria-label={`Options for key ${k.key_prefix}`}
+                      aria-label={`Options for key ${k.name}`}
                     >
                       <MoreHorizontal size={15} />
                     </button>
