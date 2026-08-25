@@ -100,8 +100,11 @@ def _mcp_tools_for_template(template: MCPTemplate) -> list[types.Tool]:
         return [
             types.Tool(
                 name=_tool_ref(template.id, n),
-                description=f"{template.name} tool '{n}' (schema pending admin discovery; arguments are "
-                            "forwarded to the upstream server as-is).",
+                description=(
+                    f"{template.name} tool '{n}'. Schema pending admin discovery: parameter names and "
+                    "types are not validated here and are forwarded to the upstream server verbatim - "
+                    "use the correct JSON types (true/false, numbers) or the upstream may reject the call."
+                ),
                 inputSchema={"type": "object"},
             )
             for n in names
@@ -195,7 +198,12 @@ server = Server(
         "integrations this user has connected in the Eepy dashboard (call "
         "eepy__status to see which). Calls are proxied through Eepy with the "
         "user's encrypted credentials; results are JSON text. Tool errors come "
-        "back as isError results with a detail message."
+        "back as isError results with a detail message. Arguments are forwarded "
+        "to the upstream server exactly as you provide them: use the parameter "
+        "names and JSON types from each tool's input schema (booleans as true/"
+        "false, numbers as numbers). A tool whose description says 'schema "
+        "pending admin discovery' has no validated schema, so consult its "
+        "upstream docs or start with the minimal required call."
     ),
 )
 
