@@ -510,7 +510,7 @@ def seed_mcp_templates():
         name="Warden (Vaultwarden / Bitwarden)",
         repo_url="https://github.com/icoretech/warden-mcp",
         description=(
-            "Read and manage your Vaultwarden / Bitwarden vault across ~60 tools: "
+            "Read and manage your Vaultwarden / Bitwarden vault across ~50 tools: "
             "search items, fetch usernames, passwords, and TOTP codes (secret fields "
             "redacted unless a tool is asked to reveal), and create, update, move, or "
             "delete items, folders, organizations, collections, attachments, and "
@@ -646,7 +646,7 @@ def seed_mcp_templates():
                 "keychain_restore_item", "keychain_list_folders",
                 "keychain_create_folder", "keychain_list_organizations",
                 "keychain_list_collections", "keychain_create_attachment",
-                "keychain_get_attachment",                 "keychain_send_list",
+                "keychain_get_attachment", "keychain_send_list",
                 "keychain_generate", "keychain_sdk_version",
             ],
         },

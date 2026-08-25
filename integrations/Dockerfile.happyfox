@@ -5,9 +5,9 @@
 # code into an image; it is NOT where the server code lives.
 #
 # Build context must be the REPO ROOT (CI sets context: ./), so the
-# integrations/happyfox-mcp/ path below resolves. The submodule is checked out
-#   integrations/Dockerfile.happyfox), so the image
-# always contains exactly the happyfox-mcp commit this repo pins.
+# integrations/happyfox-mcp/ paths below resolve to exactly the submodule
+# commit this repo pins (CI checks the submodule out with
+# submodules: recursive — see .github/workflows/main.yml).
 #
 # Transport: streamable-HTTP on :8000 — the Eepy backend spawns this image
 # per user via the mcp-server sidecar runtime (api/mcp_bridge.py) and speaks

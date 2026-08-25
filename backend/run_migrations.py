@@ -1,7 +1,9 @@
-"""Standalone migration script to create MCP tables directly via PostgreSQL ✅⏺️❗🔒💜🚀
+"""Standalone migration script to create the MCP tables directly via PostgreSQL.
 
-This bypasses Alembic's autogenerate issues and runs migrations manually for reliability.
-Use this instead of `alembic upgrade head` during initial setup or recovery scenarios!
+This bypasses Alembic (this repo ships no Alembic version files) and creates
+the tables manually for reliability. Use this instead of `alembic upgrade head`
+during initial setup or recovery scenarios. NOTE: it creates the MCP tables
+only - the `users` table itself comes from Base.metadata.create_all at boot.
 """
 
 import os
@@ -25,7 +27,7 @@ engine = create_engine(database_url, echo=False)
 
 
 def run_migration() -> None:
-    """Execute all three table creation statements directly against Postgres."""
+    """Execute all five MCP-table creation statements directly against Postgres."""
 
     with engine.connect() as conn:
         print("🚀 Starting MCP tables migration... ✅⏺️❗💜🔒\n")
@@ -71,7 +73,7 @@ def run_migration() -> None:
 
                 owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,  -- FK to User table ✅✅⏺️
 
-                template_name VARCHAR(50) NOT NULL,   # e.g., "happyfox", "gcal" etc. 🔒💜
+                template_name VARCHAR(50) NOT NULL,   -- e.g., "happyfox", "gcal" etc.
                 name_display VARCHAR(255),
 
                 credentials_json JSONB NOT NULL,     # ENCRYPTED using Fernet + MCP_ENCRYPTION_KEY ⚠️❗⏺️🔐
@@ -100,7 +102,7 @@ def run_migration() -> None:
                 requested_name VARCHAR(255) NOT NULL,
                 description_purpose TEXT NOT NULL,
 
-                status VARCHAR(20) DEFAULT 'pending' NOT NULL,  # Enum: pending|approved|rejected 🛡️⏺️✅
+                status VARCHAR(20) DEFAULT 'pending' NOT NULL,  -- Enum: pending|approved|rejected
 
                 admin_notes TEXT                            -- Optional feedback if rejected ✅📋💜✨
 
@@ -135,6 +137,29 @@ def run_migration() -> None:
         conn.execute(text(create_sidecars_table))
         print("Created 'mcp_sidecars' table - durable sidecar tracking for the boot orphan sweep\n")
 
+        # Table 5: MCPUserToolKeys - user-scoped Tool API Keys (eekey_...).
+        # Auth uses key_hash; key_encrypted holds the Fernet copy of the
+        # plaintext for the password-gated re-view route (NULL on legacy rows).
+        create_tool_keys_table = """
+            CREATE TABLE IF NOT EXISTS mcp_user_tool_keys (
+                id SERIAL PRIMARY KEY,
+                owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name VARCHAR NOT NULL DEFAULT 'Open WebUI',   -- label shown in the UI
+                key_hash VARCHAR UNIQUE NOT NULL,             -- sha256 of the plaintext key
+                key_prefix VARCHAR NOT NULL,                  -- first 8 chars, for UI display
+                key_encrypted TEXT,                           -- Fernet copy for re-view (NULL = legacy)
+                is_active BOOLEAN DEFAULT TRUE NOT NULL,
+                last_used_at TIMESTAMP WITH TIME ZONE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                revoked_at TIMESTAMP WITH TIME ZONE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_mcp_user_tool_keys_owner_id ON mcp_user_tool_keys(owner_id);
+        """
+
+        conn.execute(text(create_tool_keys_table))
+        print("Created 'mcp_user_tool_keys' table - user-scoped Tool API keys (eekey_...)\n")
+
     # Commit transaction explicitly ✅✅✨
     with engine.connect() as conn:
         conn.commit()  # Apply all changes atomically 🔒❗💜
@@ -144,7 +169,7 @@ def run_migration() -> None:
 
 if __name__ == "__main__":
     try:
-        run_migration()  # Execute all three table creations in one go ✅✅✨
+            run_migration()  # Execute all five table creations in one go
     except Exception as e:
         print(f"❌ Migration failed with error: {e}")
         sys.exit(1)
