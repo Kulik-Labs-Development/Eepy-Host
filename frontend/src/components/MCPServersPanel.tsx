@@ -77,7 +77,7 @@ export default function MCPServersPanel({ mode }: Props) {
   // template serves name-only untyped tools and Open WebUI cannot pass
   // arguments to them (upstream 'Field required').
   const { user } = useAuth();
-  const isSuperuser = user?.role === 'SUPERUSER';
+  const isSuperuser = user?.role === 'superuser';
   const [discovery, setDiscovery] = useState<DiscoveryRow[]>([]);
   const [discoveringId, setDiscoveringId] = useState<string | null>(null);
   const [discoveryResults, setDiscoveryResults] = useState<Record<string, { status: string; detail: string }>>({});

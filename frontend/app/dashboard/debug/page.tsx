@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Terminal, RefreshCw, Loader2 } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
 import { getApiUrl } from '@/lib/api';
 
 interface LogEntry {
@@ -11,10 +12,16 @@ interface LogEntry {
 }
 
 export default function DebugLogPage() {
+  const { user } = useAuth();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
+
+  // The nav hides this page from regular users, but a deep link can still
+  // reach it: show the restricted notice immediately instead of polling
+  // /superuser/logs (the API would 403 on every tick anyway).
+  const showRestricted = forbidden || (user !== null && user.role !== 'superuser');
 
   async function fetchLogs() {
     setIsLoading(true);
@@ -48,10 +55,11 @@ export default function DebugLogPage() {
   }
 
   useEffect(() => {
+    if (showRestricted) return;
     fetchLogs();
     const interval = setInterval(fetchLogs, 5000); // Auto-refresh every 5 seconds
     return () => clearInterval(interval);
-  }, []);
+  }, [showRestricted]);
 
   const getLevelColor = (level: string) => {
     switch (level) {
@@ -98,7 +106,7 @@ export default function DebugLogPage() {
 
         {/* Terminal Body */}
         <div className="p-3 sm:p-4 h-[60vh] sm:h-[70vh] overflow-y-auto space-y-0.5 text-[16px] leading-relaxed bg-night-deep">
-          {forbidden ? (
+          {showRestricted ? (
             <div className="text-[16px] p-4 border-2 border-eepy-amber/50 bg-eepy-amber/10 text-ink-soft space-y-2">
               <div className="text-eepy-amber font-bold">[RESTRICTED] Superuser account required</div>
               <div className="font-body text-[14px] leading-relaxed">

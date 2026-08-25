@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from auth import DUMMY_HASH, create_access_token, decode_access_token, get_password_hash, verify_password
@@ -54,6 +54,28 @@ def sync_database_schema():
                 if col not in existing_columns:
                     logger.info(f"Adding missing column {col} to users table...")
                     conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
+
+            # Case-insensitive username uniqueness, rolled forward onto existing
+            # installs (fresh installs get the index from the model via
+            # create_all). If clashing rows already exist ("User123" +
+            # "user123") the unique index cannot be created: report the
+            # offending usernames and skip it until an operator renames one of
+            # each pair; the app-level check in /auth/signup keeps blocking
+            # NEW clashes either way.
+            clash_rows = conn.execute(text(
+                "SELECT min(username) FROM users GROUP BY lower(username) HAVING count(*) > 1"
+            )).fetchall()
+            if clash_rows:
+                logger.error(
+                    "Case-insensitive username uniqueness NOT enforced: the users table "
+                    f"already contains clashing usernames: {[row[0] for row in clash_rows]}. "
+                    "Rename one of each pair (e.g. via SQL) and restart the backend - "
+                    "the unique index is created automatically on the next boot."
+                )
+            else:
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_key ON users (lower(username))"
+                ))
 
             # mcp_templates columns for the modular MCP sidecar runtime.
             result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='mcp_templates'"))
@@ -110,7 +132,7 @@ def bootstrap_superuser() -> None:
         return
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.username == bootstrap_username).first()
+        user = db.query(User).filter(func.lower(User.username) == bootstrap_username.lower()).first()
         if user:
             if user.role != UserRole.SUPERUSER:
                 logger.info(f"Promoting {bootstrap_username} to superuser...")
@@ -1011,9 +1033,15 @@ def signup(
 ):
     try:
         logger.info(f"Signup request received for user: {user_in.username}")
-        existing_user = db.query(User).filter((User.username == user_in.username) | (User.email == user_in.email)).first()
+        # Case-insensitive uniqueness for BOTH username and email: "User123"
+        # and "user123" are the same identity (clash), and email is
+        # conventionally case-insensitive as well.
+        existing_user = db.query(User).filter(
+            (func.lower(User.username) == user_in.username.lower())
+            | (func.lower(User.email) == user_in.email.lower())
+        ).first()
         if existing_user:
-            raise HTTPException(status_code=400, detail="Username or email already registered")
+            raise HTTPException(status_code=400, detail="Username or email already registered (usernames are case-insensitive)")
 
         # SECURITY: role is NOT accepted from the client. Every account starts
         # as USER; superuser status comes only from the SUPERUSER_USERNAME
@@ -1043,20 +1071,29 @@ def login(
     db: Session = Depends(get_db),
 ):
     try:
-        logger.info(f"Login request received for user: {credentials.username}")
-        user = db.query(User).filter(User.username == credentials.username).first()
+        # The identifier may be the username OR the account's email address;
+        # both are matched case-insensitively.
+        logger.info(f"Login request received for identifier: {credentials.username}")
+        identifier = credentials.username
+        user = db.query(User).filter(
+            (func.lower(User.username) == identifier.lower())
+            | (func.lower(User.email) == identifier.lower())
+        ).first()
         # Always run bcrypt on a dummy hash when the user does not exist so
         # response timing does not reveal which usernames are registered.
+        # The message deliberately does not say WHICH part was wrong (no user
+        # enumeration) but does state that username or email is accepted.
+        invalid_detail = "Invalid credentials. You can sign in with your username or email address."
         if not user:
             verify_password(credentials.password[:72], DUMMY_HASH)
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+            raise HTTPException(status_code=401, detail=invalid_detail)
         if not verify_password(credentials.password[:72], user.hashed_password):
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+            raise HTTPException(status_code=401, detail=invalid_detail)
         # Opportunity to promote the configured initial superuser if their
         # account only existed after the last boot (see bootstrap_superuser).
         # Cheap: one string comparison, write only on the rare promotion.
         if (
-            os.getenv("SUPERUSER_USERNAME", "").strip() == user.username
+            os.getenv("SUPERUSER_USERNAME", "").strip().lower() == user.username.lower()
             and user.role != UserRole.SUPERUSER
         ):
             user.role = UserRole.SUPERUSER

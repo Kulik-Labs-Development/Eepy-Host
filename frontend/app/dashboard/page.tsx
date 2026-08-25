@@ -241,7 +241,10 @@ export default function OverviewPage() {
             {[
               { label: 'Connect an Integration', href: '/dashboard/servers/library', led: 'bg-eepy-blush' },
               { label: 'Manage Account', href: '/dashboard/account', led: 'bg-eepy-sage' },
-              { label: 'View Debug Log', href: '/dashboard/debug', led: 'bg-eepy-amber' },
+              // Debug Log streams the full backend log — superuser eyes only.
+              ...(user?.role === 'superuser'
+                ? [{ label: 'View Debug Log', href: '/dashboard/debug', led: 'bg-eepy-amber' }]
+                : []),
             ].map((action) => (
               <a
                 key={action.label}

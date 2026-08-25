@@ -39,16 +39,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { icon: <Server size={18} />, label: 'My MCP Servers', path: '/dashboard/servers' },
     { icon: <UserCircle size={18} />, label: 'Account', path: '/dashboard/account' },
     { icon: <Settings size={18} />, label: 'System Settings', path: '/dashboard/settings' },
-    { icon: <Terminal size={18} />, label: 'Debug Log', path: '/dashboard/debug' },
   ];
 
-  // Add Organization tab for Superusers
+  // Superuser-only tabs: Organization admin + the backend Debug Log console
+  // (streams the full backend log — never visible to regular users).
   if (user.role === 'superuser') {
-    navItems.push({
-      icon: <Building2 size={18} />,
-      label: 'Organization',
-      path: '/dashboard/organization',
-    });
+    navItems.push(
+      {
+        icon: <Terminal size={18} />,
+        label: 'Debug Log',
+        path: '/dashboard/debug',
+      },
+      {
+        icon: <Building2 size={18} />,
+        label: 'Organization',
+        path: '/dashboard/organization',
+      },
+    );
   }
 
   const navLinks = navItems.map((item) => {

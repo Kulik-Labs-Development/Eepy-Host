@@ -162,7 +162,7 @@ export default function AuthPage() {
                     <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-dim" />
                     <input
                       type="text"
-                      placeholder="Username"
+                      placeholder="Username or email"
                       required
                       className="input-pixel pl-9"
                       onChange={(e) => setFormData({ ...formData, username: e.target.value })}
