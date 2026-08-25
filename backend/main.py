@@ -152,8 +152,8 @@ def bootstrap_superuser() -> None:
 
 def seed_mcp_templates():
     """Seed the admin-approved templates (HappyFox #1, eBay #2, Portainer #3,
-    Warden #4, Proxmox VE #5, Tactical RMM #6 read-only + #7 read/command)
-    into the library.
+    Warden #4, Proxmox VE #5, Tactical RMM #6 read-only + #7 read/command,
+    Microsoft Clarity #8) into the library.
 
     Each integration's MCP server code lives OUTSIDE this backend, in its own
     git submodule under integrations/ (happyfox-mcp →
@@ -162,7 +162,8 @@ def seed_mcp_templates():
     github.com/portainer/portainer-mcp, warden-mcp →
     github.com/icoretech/warden-mcp, proxmox-mcp →
     github.com/RekklesNA/ProxmoxMCP-Plus, trmm-mcp →
-    github.com/shin2344234/trmm-mcp). These rows only register *how to
+    github.com/shin2344234/trmm-mcp, clarity-mcp →
+    github.com/microsoft/clarity-mcp-server). These rows only register *how to
     run* them:
 
     - docker backend (production/Portainer): CI builds each submodule into its

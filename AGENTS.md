@@ -448,6 +448,7 @@ admin-discovery time from the upstream server's own `tools/list`.
           "X-User-Key": "{{UPSTREAM_ENV_A}}"
         },
         "test_tool": {"name": "some_read_only_tool", "arguments": {}},
+        "test_error_markers": ["Upstream's fixed failure sentence."],
         "tool_names": ["tool_a", "tool_b"]
       }
       ```
@@ -481,6 +482,12 @@ admin-discovery time from the upstream server's own `tools/list`.
        Set `EEPY_MCP_INSTANCE_BACKEND` to pick; compose defaults to
        `docker`.
      - `test_tool` is a read-only tool used by `/config/{id}/test`.
+     - `test_error_markers` (optional): substrings the connection-test route
+       treats as failure IN ADDITION to its generic heuristics (`isError`,
+       text starting with `Error`, `401`/`403`). Needed when the upstream
+       swallows HTTP failures into a fixed sentence with `isError` still
+       false (Clarity: "An error occurred while fetching the data.") —
+       without the marker a bad credential passes the dashboard test.
      - `tool_names` is a best-effort list so the OpenAPI spec has entries
        before discovery (discovery overwrites `discovered_tools` with the real
        schemas and takes precedence).
