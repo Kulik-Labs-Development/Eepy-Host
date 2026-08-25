@@ -85,6 +85,7 @@ class TemplateOut(BaseModel):
     description: str
     config_schema: dict[str, Any]
     image_tag: str | None = None
+    repo_url: str | None = None
     approved_by_admin: bool
     enabled_global: bool
 
@@ -459,6 +460,7 @@ def list_templates(
             description=t.description,
             config_schema=t.config_schema or {},
             image_tag=t.image_tag,
+            repo_url=t.repo_url,
             approved_by_admin=t.approved_by_admin,
             enabled_global=t.enabled_global,
         )

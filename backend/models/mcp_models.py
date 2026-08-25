@@ -18,6 +18,10 @@ class MCPTemplate(Base):
     name = Column(String, nullable=False)  # Display name for UI
     description = Column(Text, nullable=False)  # Human-readable capabilities
 
+    # Upstream MCP server repository (author credit + code-audit link shown
+    # in the library info page).
+    repo_url = Column(String, nullable=True)
+
     config_schema = Column(JSON, nullable=False)  # Form field specs: {type, properties, required}
 
     image_tag = Column(String, nullable=True)  # Docker reference if needed (e.g., ghcr.io/glitch3dpenguin/happyfox-mcp)

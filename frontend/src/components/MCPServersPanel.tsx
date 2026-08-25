@@ -13,6 +13,7 @@
 // (/dashboard) - these sections are purely integrations in/out.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import {
   Loader2,
@@ -28,18 +29,12 @@ import {
   Search,
   Radar,
   Library,
+  Info,
 } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import MCPConnectionWizard, { TemplateSchema } from '@/src/components/MCPConnectionWizard';
-
-interface Template {
-  id: string;
-  name: string;
-  description: string;
-  config_schema?: TemplateSchema & { category?: string };
-  image_tag?: string | null;
-}
+import { Template, authHeaders, templateIcon } from '@/lib/mcp';
+import MCPConnectionWizard from '@/src/components/MCPConnectionWizard';
 
 interface MyConfig {
   id: number;
@@ -55,12 +50,6 @@ interface DiscoveryRow {
   runtime: string;
   tool_count: number;
   tools_discovered_at: string | null;
-}
-
-function authHeaders(): Record<string, string> {
-  if (typeof window === 'undefined') return {};
-  const token = localStorage.getItem('eepy_token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 interface Props {
@@ -309,24 +298,41 @@ export default function MCPServersPanel({ mode }: Props) {
                 No integrations match &ldquo;{search}&rdquo;.
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
                 {filteredTemplates.map((template) => {
                   const isConnected = configs.some((c) => c.template_name === template.id);
+                  const icon = templateIcon(template.id);
+                  const infoHref = `/dashboard/servers/library/${template.id}`;
                   return (
                     <div
                       key={template.id}
-                      className="panel pixel-caps lift p-6 [--cap:theme('colors.eepy.blush')] hover:border-eepy-blush/60 flex flex-col"
+                      className="panel pixel-caps lift p-4 [--cap:theme('colors.eepy.blush')] hover:border-eepy-blush/60 flex flex-col"
                     >
-                      <div className="flex justify-between items-start mb-4">
-                        <div className="well p-3 text-ink-faint">
-                          <PlugZap size={22} />
+                      <div className="flex justify-between items-center mb-3">
+                        <Link href={infoHref} className="well relative w-11 h-11 block" aria-label={`${template.name} details`}>
+                          {icon ? (
+                            <Image src={icon} alt="" fill sizes="44px" className="object-contain" />
+                          ) : (
+                            <span className="absolute inset-0 flex items-center justify-center text-ink-faint">
+                              <PlugZap size={20} />
+                            </span>
+                          )}
+                        </Link>
+                        <div className="flex items-center gap-1.5">
+                          {template.config_schema?.category && (
+                            <span className="chip">{template.config_schema.category}</span>
+                          )}
+                          <Link href={infoHref} className="btn-icon" title="Integration details">
+                            <Info size={15} />
+                          </Link>
                         </div>
-                        {template.config_schema?.category && (
-                          <span className="chip">{template.config_schema.category}</span>
-                        )}
                       </div>
-                      <h4 className="font-pixel font-bold text-lg mb-2 text-eepy-sage">{template.name}</h4>
-                      <p className="text-ink-faint font-body text-sm mb-6 leading-relaxed flex-1">{template.description}</p>
+                      <Link
+                        href={infoHref}
+                        className="font-pixel font-bold text-lg mb-4 text-eepy-sage hover:text-eepy-pink"
+                      >
+                        {template.name}
+                      </Link>
                       {isConnected ? (
                         <div className="w-full chip chip-sage justify-center py-2">
                           <Check size={14} /> Connected

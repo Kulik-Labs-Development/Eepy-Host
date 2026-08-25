@@ -130,6 +130,14 @@ docker container in production), short-lived and idle-reaped.
    `/openapi.json`** to the pasted URL, so users paste the base URL
    (`https://<host>/api/mcp`) and the backend serves the spec at BOTH
    `/api/mcp/openapi.json` and `/api/mcp/openapi.json/openapi.json`.
+- MCP Library UX: the catalog cards are compact (app icon from
+  `frontend/public/app-icons/` — template id → file map in `frontend/lib/mcp.ts`
+  — name, category chip, Connect) with NO description; each card links to a
+  per-template info page (`/dashboard/servers/library/{template_id}`,
+  `app/dashboard/servers/library/[templateId]/page.tsx`) carrying the full
+  description, the icon, a Connect button, and the upstream GitHub repo
+  (`MCPTemplate.repo_url`, seeded per template) as an author credit /
+  code-audit link.
 - **AI Platform connector (native MCP):** `POST /api/mcp/mcp` is a real
   Model Context Protocol endpoint (mcp SDK `StreamableHTTPSessionManager`,
   **stateless** + JSON responses — multi-replica safe, no SSE buffering
@@ -216,6 +224,9 @@ docker container in production), short-lived and idle-reaped.
 │   └── requirements.txt
 ├── frontend/
 │   ├── app/                  # App Router pages: /auth, /dashboard/*
+│   ├── public/app-icons/     # per-integration app icons (PNG, alpha) shown on
+│   │                         #   the library cards + template info pages;
+│   │                         #   template id -> file map in lib/mcp.ts
 │   ├── context/AuthContext.tsx
 │   ├── lib/api.ts
  │   └── src/components/       # MCPConnectionWizard, OpenWebUIExportPanel,
@@ -261,7 +272,7 @@ All under `/api/mcp` (router prefix in `api/mcp_endpoints.py`):
 | `GET /api/mcp/api-keys` | List keys (prefix only, never plaintext; `can_reveal` says whether re-view is possible) | USER |
 | `DELETE /api/mcp/api-keys/{key_id}` | Revoke a key (soft — the entry stays listed). `?hard=true` physically deletes the row (the UI "remove entry" action for revoked keys) | USER (owner) |
 | `POST /api/mcp/api-keys/{key_id}/reveal` | Re-view a key's plaintext after re-entering the account password (body `{"password": ...}`) — decrypts the Fernet copy stored at creation; 401 wrong password, 410 legacy key without a stored copy | USER |
-| `GET /api/mcp/templates/list` | Approved+enabled templates with config schemas | USER |
+| `GET /api/mcp/templates/list` | Approved+enabled templates with config schemas + `repo_url` (upstream repo, author credit / code-audit link) | USER |
 | `POST /api/mcp/config/register` | Save credentials for a template (encrypted on write) | USER |
 | `GET /api/mcp/config/list` | User's active configs (no plaintext creds) | USER |
 | `DELETE /api/mcp/config/{template_id}` | Remove a config + stored creds | USER (owner) |

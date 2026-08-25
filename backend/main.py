@@ -63,6 +63,8 @@ def sync_database_schema():
                 "runtime_config": "JSON",
                 "discovered_tools": "JSON",
                 "tools_discovered_at": "TIMESTAMP WITH TIME ZONE",
+                # Upstream repo for the author credit / code-audit link.
+                "repo_url": "VARCHAR(500)",
             }
             for col, col_type in template_required.items():
                 if col not in template_cols:
@@ -148,6 +150,7 @@ def seed_mcp_templates():
     happyfox = MCPTemplate(
         id="happyfox",
         name="HappyFox Help Desk",
+        repo_url="https://github.com/Glitch3dPenguin/happyfox-mcp",
         description=(
             "Manage, read, and respond to support tickets in your HappyFox Help Desk. "
             "Agents can triage queues, read threads, post replies and private notes, "
@@ -233,6 +236,7 @@ def seed_mcp_templates():
     ebay = MCPTemplate(
         id="ebay",
         name="eBay Sell",
+        repo_url="https://github.com/YosefHayim/ebay-mcp",
         description=(
             "Manage your eBay seller account across 299 tools over eBay's Sell APIs: "
             "inventory and offers, orders and fulfillment, promoted-listings marketing, "
@@ -344,6 +348,7 @@ def seed_mcp_templates():
     portainer = MCPTemplate(
         id="portainer",
         name="Portainer",
+        repo_url="https://github.com/portainer/portainer-mcp",
         description=(
             "Manage your Portainer instance across ~211 tools: environments and "
             "endpoints, Docker containers and images, Kubernetes resources, Helm "
@@ -481,6 +486,7 @@ def seed_mcp_templates():
     warden = MCPTemplate(
         id="warden",
         name="Warden (Vaultwarden / Bitwarden)",
+        repo_url="https://github.com/icoretech/warden-mcp",
         description=(
             "Read and manage your Vaultwarden / Bitwarden vault across ~60 tools: "
             "search items, fetch usernames, passwords, and TOTP codes (secret fields "
@@ -629,6 +635,7 @@ def seed_mcp_templates():
     proxmox = MCPTemplate(
         id="proxmox",
         name="Proxmox VE",
+        repo_url="https://github.com/RekklesNA/ProxmoxMCP-Plus",
         description=(
             "Manage your Proxmox VE cluster across ~45 tools: full VM and LXC "
             "lifecycle (create, clone, start, stop, delete), snapshots with "
@@ -793,6 +800,7 @@ def seed_mcp_templates():
                 existing.description = spec.description
                 existing.config_schema = spec.config_schema
                 existing.image_tag = spec.image_tag
+                existing.repo_url = spec.repo_url
                 # Roll forward to the modular sidecar runtime on every boot so
                 # the seeded templates always match this code's expectations.
                 existing.runtime = spec.runtime

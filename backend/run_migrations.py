@@ -37,6 +37,9 @@ def run_migration() -> None:
                 name VARCHAR NOT NULL,
                 description TEXT NOT NULL,
 
+                -- Upstream MCP server repo (author credit + code-audit link)
+                repo_url VARCHAR(500),
+
                 -- JSONB for dynamic form field specifications during connection wizard 💜📝⏺️❗✅
                 config_schema JSONB NOT NULL,
 
