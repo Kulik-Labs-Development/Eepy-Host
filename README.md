@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/images/glossy-zzz.png" alt="Eepy Host" width="220" />
+  <img src="assets/images/eepy.gif" alt="Eepy Host" width="220" />
 </p>
 
 <h1 align="center">Eepy Host</h1>
