@@ -267,6 +267,8 @@ All endpoints live under a single FastAPI app. Interactive docs at `/docs` when 
 - **Scoped, revocable tool keys.** External integrations (Open WebUI) authenticate with narrow `eekey_` keys that work on proxy routes only, resolve to a single user, and can be killed instantly. Keys are stored as a hash plus a Fernet-encrypted copy, so the owner can re-view one in the dashboard only after re-entering their account password.
 - **Admin-gated integrations.** No template is usable until a superuser approves it — the library is curated, not open.
 
+Security vulnerabilities should be reported privately — see [SECURITY.md](SECURITY.md).
+
 ## Project Structure
 
 ```
@@ -366,7 +368,11 @@ This project currently follows a rapid-iteration workflow on `main`:
 2. Verify end-to-end (build + a live call through the proxy) before pushing.
 3. Keep credential handling on the approved path: Fernet at rest, in-memory only.
 
-Issues and PRs are welcome. For security concerns, please open a private issue rather than a public report.
+Issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
+full guide (setup, testing, conventions) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+for community expectations. For security concerns, follow
+[SECURITY.md](SECURITY.md) and report privately — never in a public issue or
+pull request.
 
 ## License
 

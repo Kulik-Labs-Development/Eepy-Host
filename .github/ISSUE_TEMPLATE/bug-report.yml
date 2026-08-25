@@ -1,0 +1,64 @@
+name: "Eepy Host issue (bug report)"
+description: "Something in Eepy Host is not working as expected — the dashboard, the API/proxy, an agent connection, or a deployment."
+title: ""
+body:
+  - type: notes
+    attributes:
+      value: "Security vulnerabilities must NOT be reported in public issues — see [SECURITY.md](https://github.com/Kulik-Labs-Development/Eepy-Host/blob/main/SECURITY.md) and report privately. **Never include credentials, API keys, tokens, or personal data in this issue.**"
+  - type: textarea
+    id: what
+    attributes:
+      label: "What happened?"
+      description: "A short description of the problem, including the exact error message if there is one."
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: "Steps to reproduce"
+      description: "1. …\n2. …\n3. …"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Expected behavior"
+      description: "What you expected to happen instead."
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Area"
+      description: "Pick all that apply. For integration problems, name the integration in the description."
+      multiple: true
+      options:
+        - "Dashboard (web UI)"
+        - "Backend API / proxy"
+        - "Open WebUI connection"
+        - "Native MCP endpoint (MCP clients)"
+        - "Docker / Portainer deployment"
+        - "Integration / sidecar"
+    validations:
+      required: true
+  - type: dropdown
+    id: deploy
+    attributes:
+      label: "Where is this running?"
+      options:
+        - "eepy.host (hosted)"
+        - "Self-hosted — Docker Compose"
+        - "Self-hosted — Portainer stack"
+        - "Local development"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: "Environment (optional)"
+      description: "OS and browser, or the backend/frontend image versions if self-hosted."
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Logs (optional)"
+      description: "Relevant backend or frontend log lines. Redact everything sensitive — no credentials, keys, tokens, or personal data."

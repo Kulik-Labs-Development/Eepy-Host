@@ -1,0 +1,48 @@
+name: "Request a new MCP integration"
+description: "Suggest an app or service you would like MCP access to through Eepy Host — a SaaS API, or an existing community MCP server you want wrapped."
+title: "MCP request: "
+body:
+  - type: notes
+    attributes:
+      value: "Use this template to request access to an app or service. Eepy Host prefers to wrap existing upstream MCP servers (imported as a git submodule + sidecar image) rather than maintain its own integration code — if one exists, linking it makes this much faster."
+  - type: input
+    id: app
+    attributes:
+      label: "App / service"
+      description: "What do you want to connect?"
+      placeholder: "e.g., Google Calendar, Linear, Shopify, n8n…"
+    validations:
+      required: true
+  - type: textarea
+    id: use
+    attributes:
+      label: "What do you want to do with it?"
+      description: "The agent workflows you have in mind — reading data, creating or updating records, running automations, etc."
+    validations:
+      required: true
+  - type: textarea
+    id: upstream
+    attributes:
+      label: "Existing MCP server (optional)"
+      description: "If a community MCP server for this app already exists, link its repository here."
+      placeholder: "https://github.com/…"
+  - type: textarea
+    id: credentials
+    attributes:
+      label: "Credentials the app requires (optional)"
+      description: "What does connecting need — an API key, an OAuth client ID/secret, a personal access token, app-specific keys? **Never paste real secrets here.**"
+  - type: dropdown
+    id: priority
+    attributes:
+      label: "How important is this to you?"
+      options:
+        - "Nice to have"
+        - "I would use it myself"
+        - "Multiple users have asked"
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: "Anything else? (optional)"
+      description: "Rate limits to know about, features that matter most, the app's API documentation, alternatives you have considered."
