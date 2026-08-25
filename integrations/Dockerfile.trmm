@@ -1,0 +1,60 @@
+# Tactical RMM MCP server sidecar image (trmm-mcp).
+#
+# SOURCE OF TRUTH: integrations/trmm-mcp (git submodule →
+# github.com/shin2344234/trmm-mcp, AGPL-3.0-or-later). This Dockerfile only
+# builds that code into an image; it is NOT where the server code lives.
+#
+# Build context must be the REPO ROOT (CI sets context: ./), so the
+# integrations/trmm-mcp/ paths below resolve to exactly the submodule
+# commit this repo pins.
+#
+# Transport: streamable-HTTP on :8770 at /mcp (stateless by upstream
+# default). TLS is OFF here: the sidecar is only reachable on the internal
+# eepy-sidecars docker network, and the per-sidecar bearer token (the
+# TRMM_MCP_AUTH_TOKEN generated_secret + matching Authorization header from
+# the template runtime_config) is the auth layer. The upstream's own
+# self-signed-cert TLS exists for direct LAN clients, not for the bridge.
+#
+# The mode (readonly vs command) is a PER-TEMPLATE static env
+# (TRMM_MCP_MODE) in the seed — both Eepy templates share this image.
+#
+# TRMM_MCP_BASE_DIR=/data: the package is pip-installed (site-packages), so
+# without the override the server would use its XDG data dir for .env/state/
+# audit log. /data pins audit log, logs, and state to a known writable
+# location for the non-root runtime user. Sidecars are ephemeral (idle-
+# reaped), so per-user audit state lives and dies with the sidecar.
+#
+# Upstream pins mcp==2.0.0 exactly in its pyproject (the 2.0 SDK line — this
+# code uses the 2.0 `mcp.server.MCPServer` API), so no extra mcp pin is
+# needed here, unlike Dockerfile.happyfox.
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Package + metadata first (layer cache: deps reinstall only when pyproject
+# changes). README.md + LICENSE are embedded in the wheel metadata.
+COPY integrations/trmm-mcp/pyproject.toml integrations/trmm-mcp/README.md integrations/trmm-mcp/LICENSE ./
+COPY integrations/trmm-mcp/trmm_mcp ./trmm_mcp
+RUN pip install --no-cache-dir .
+
+# Non-root runtime user; /data holds the server's state, logs and audit log.
+RUN useradd --create-home --shell /usr/sbin/nologin trmm \
+ && mkdir -p /data \
+ && chown -R trmm:trmm /app /data
+USER trmm
+
+# Container defaults; the template runtime_config env repeats these so the
+# seed is the single readable source of the sidecar contract.
+ENV TRMM_MCP_TRANSPORT=streamable-http \
+    TRMM_MCP_HTTP_HOST=0.0.0.0 \
+    TRMM_MCP_TLS=false \
+    TRMM_MCP_STATELESS_HTTP=true \
+    TRMM_MCP_BASE_DIR=/data \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8770
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8770)); s.close()"
+
+CMD ["python", "-m", "trmm_mcp.server"]

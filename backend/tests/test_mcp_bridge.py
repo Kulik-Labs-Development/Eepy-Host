@@ -1421,3 +1421,334 @@ def test_real_warden_submodule_subprocess_path(client, auth_user):
     finally:
         from api import mcp_bridge
         mcp_bridge.shutdown_all_instances()
+
+
+# ---------------------------------------------------------------------------
+# Seeded Tactical RMM templates (#6 read-only, #7 read+command): both share
+# ONE upstream image (trmm-mcp) — the split is a per-template static env
+# (TRMM_MCP_MODE). The per-sidecar bearer gate + fixed Host header mirror
+# the Portainer contract (upstream requires Authorization on every request
+# when bound to non-loopback and 421-rejects Hosts outside
+# TRMM_MCP_ALLOWED_HOSTS).
+# ---------------------------------------------------------------------------
+TRMM_EXEC_TOOLS = {
+    "trmm_run_command", "trmm_run_script", "trmm_reboot_agent",
+    "trmm_service_action", "trmm_kill_process", "trmm_wake_on_lan",
+    "trmm_run_checks", "trmm_run_task",
+}
+
+
+def test_seeded_trmm_templates_shape(client):
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    db = SessionLocal()
+    try:
+        ro = db.query(MCPTemplate).filter(MCPTemplate.id == "trmm").first()
+        ex = db.query(MCPTemplate).filter(MCPTemplate.id == "trmm-exec").first()
+    finally:
+        db.close()
+    assert ro is not None, "trmm template was not seeded"
+    assert ex is not None, "trmm-exec template was not seeded"
+
+    for t in (ro, ex):
+        assert t.approved_by_admin and t.enabled_global
+        assert t.runtime == "mcp-server"
+        assert t.image_tag == "ghcr.io/kulik-labs-development/eepy-host-trmm"
+        cfg = t.runtime_config
+        # One image serves both templates; the mode is per-template static env.
+        assert cfg["image"] == "ghcr.io/kulik-labs-development/eepy-host-trmm:latest"
+        assert cfg["port"] == "8770"
+        assert cfg["endpoint"] == "/mcp"
+        # Local dev (subprocess backend): stdio via the submodule's own venv
+        # (upstream pins the mcp 2.0 SDK line the backend interpreter lacks).
+        assert cfg["command"] == ["./venv/bin/python", "-m", "trmm_mcp.server"]
+        assert cfg["cwd"] == "integrations/trmm-mcp"
+        # The upstream's HTTP gate: fresh per-sidecar token (never stored) +
+        # a fixed Host header its allowlist accepts.
+        # The NAME is stored (like Portainer's gate token); a VALUE is minted
+        # per spawn by the bridge and never persisted (checked in the
+        # resolution test below).
+        assert cfg["generated_secrets"] == ["TRMM_MCP_AUTH_TOKEN"]
+        assert cfg["headers"] == {
+            "Host": "eepy-sidecar:8770",
+            "Authorization": "Bearer {{TRMM_MCP_AUTH_TOKEN}}",
+        }
+        assert cfg["env"]["TRMM_MCP_ALLOWED_HOSTS"] == "eepy-sidecar:8770"
+        # Trusted-private-network posture: the sidecar is unreachable outside
+        # the eepy-sidecars network, so plaintext HTTP is the posture and the
+        # bearer token is the auth layer.
+        assert cfg["env"]["TRMM_MCP_TLS"] == "false"
+        assert cfg["env"]["TRMM_MCP_HTTP_HOST"] == "0.0.0.0"
+        assert cfg["env"]["TRMM_MCP_TRANSPORT"] == "streamable-http"
+        # TLS verification of the USER'S TRMM install defaults ON: an
+        # UNTOUCHED wizard field is absent from stored credentials, so this
+        # static value survives (upstream's _flag() treats an EMPTY string
+        # as false — the default must carry the on value explicitly).
+        for backend_env in (cfg["env"], cfg["subprocess_env"]):
+            assert backend_env["TRMM_VERIFY_SSL"] == "true"
+        assert cfg["subprocess_env"]["TRMM_MCP_TRANSPORT"] == "stdio"
+        assert cfg["test_tool"] == {"name": "trmm_fleet_overview", "arguments": {}}
+        assert cfg["test_tool"]["name"] in cfg["tool_names"]
+
+    # readonly: exactly the 20 read tools, NO execution tool, and the command
+    # key is never collected nor forwarded (unmapped).
+    ro_cfg = ro.runtime_config
+    assert ro_cfg["env"]["TRMM_MCP_MODE"] == "readonly"
+    assert ro_cfg["subprocess_env"]["TRMM_MCP_MODE"] == "readonly"
+    assert len(ro_cfg["tool_names"]) == 20
+    assert not (set(ro_cfg["tool_names"]) & TRMM_EXEC_TOOLS)
+    assert "TRMM_COMMAND_API_KEY" not in ro_cfg["env_mapping"]
+    assert ro.config_schema["required"] == ["TRMM_API_URL", "TRMM_READONLY_API_KEY"]
+
+    # command: all 28 tools (the 20 reads + the 8 executions), command key
+    # required, same image.
+    ex_cfg = ex.runtime_config
+    assert ex_cfg["env"]["TRMM_MCP_MODE"] == "command"
+    assert ex_cfg["subprocess_env"]["TRMM_MCP_MODE"] == "command"
+    assert set(ex_cfg["tool_names"]) == set(ro_cfg["tool_names"]) | TRMM_EXEC_TOOLS
+    assert ex_cfg["env_mapping"]["TRMM_COMMAND_API_KEY"] == "TRMM_COMMAND_API_KEY"
+    assert ex.config_schema["required"] == [
+        "TRMM_API_URL", "TRMM_READONLY_API_KEY", "TRMM_COMMAND_API_KEY"]
+
+
+def test_seeded_trmm_env_and_header_resolution(client, monkeypatch):
+    """The gate contract: a fresh random bearer token is minted into the
+    sidecar env on every spawn (never stored in the row) and sent as the
+    Authorization header; the fixed Host header matches the sidecar's
+    TRMM_MCP_ALLOWED_HOSTS. Optional fields follow the wizard-absent rule:
+    left blank -> static default / env var absent; typed -> rides through."""
+    import api.mcp_bridge as mcp_bridge
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    db = SessionLocal()
+    try:
+        ro = db.query(MCPTemplate).filter(MCPTemplate.id == "trmm").first()
+        ex = db.query(MCPTemplate).filter(MCPTemplate.id == "trmm-exec").first()
+    finally:
+        db.close()
+    assert ro is not None and ex is not None
+    monkeypatch.setattr(mcp_bridge, "INSTANCE_BACKEND", "docker")
+
+    creds = {
+        "TRMM_API_URL": "https://api.example.com",
+        "TRMM_READONLY_API_KEY": "ro-key",
+        "TRMM_COMMAND_API_KEY": "cmd-key",
+    }
+    cfg = ex.runtime_config
+    env = mcp_bridge._sidecar_env(cfg, mcp_bridge.map_env(cfg, creds))
+
+    # Minted per spawn: present, 64 hex chars (secrets.token_hex(32)).
+    assert len(env["TRMM_MCP_AUTH_TOKEN"]) == 64
+    # Mapped credentials + static defaults.
+    assert env["TRMM_API_URL"] == "https://api.example.com"
+    assert env["TRMM_READONLY_API_KEY"] == "ro-key"
+    assert env["TRMM_COMMAND_API_KEY"] == "cmd-key"
+    assert env["TRMM_VERIFY_SSL"] == "true"  # user left the field blank
+    assert env["TRMM_MCP_MODE"] == "command"
+    # Optional allowlist: absent from credentials -> env var absent upstream
+    # (empty allowlist = every agent the key can see).
+    assert "TRMM_MCP_AGENT_ALLOWLIST" not in env
+
+    headers = mcp_bridge._sidecar_headers(cfg, env)
+    assert headers["Host"] == "eepy-sidecar:8770"
+    assert headers["Authorization"] == f"Bearer {env['TRMM_MCP_AUTH_TOKEN']}"
+
+    # A re-spawn mints a DIFFERENT token (per-sidecar, never reused).
+    env2 = mcp_bridge._sidecar_env(cfg, mcp_bridge.map_env(cfg, creds))
+    assert env2["TRMM_MCP_AUTH_TOKEN"] != env["TRMM_MCP_AUTH_TOKEN"]
+
+    # Typed optionals ride through: verify_ssl off + agent allowlist set.
+    creds2 = dict(
+        creds,
+        TRMM_VERIFY_SSL="false",
+        TRMM_MCP_AGENT_ALLOWLIST="frontdesk-pc, fileserver01",
+    )
+    env3 = mcp_bridge._sidecar_env(cfg, mcp_bridge.map_env(cfg, creds2))
+    assert env3["TRMM_VERIFY_SSL"] == "false"
+    assert env3["TRMM_MCP_AGENT_ALLOWLIST"] == "frontdesk-pc, fileserver01"
+
+    # The readonly template must never forward a command key, even if a
+    # stray value sits in stored credentials (the field is unmapped).
+    ro_cfg = ro.runtime_config
+    env_ro = mcp_bridge._sidecar_env(ro_cfg, mcp_bridge.map_env(ro_cfg, creds))
+    assert "TRMM_COMMAND_API_KEY" not in env_ro
+    assert env_ro["TRMM_MCP_MODE"] == "readonly"
+
+
+# ---------------------------------------------------------------------------
+# Real upstream server: pinned trmm-mcp submodule through the subprocess
+# bridge path, with the runtime_config STRAIGHT FROM THE PRODUCTION SEEDS
+# (stdio transport). A fake Tactical RMM API (stdlib http) stands in for the
+# user's fleet and records every (method, path, X-API-KEY) it sees, so the
+# test proves the full path: env-mapped credentials -> sidecar env ->
+# upstream httpx call, the readonly template's 20-tool surface (execution
+# tools never registered), the command template's 28-tool surface, the
+# connection-test route, and the WRITE path (trmm_run_command reaching the
+# fake API as a POST under the command key).
+#
+# Needs the runbook's one-time venv inside the submodule (the upstream pins
+# the mcp 2.0 SDK line, which the backend interpreter does not carry) —
+# created here, cached on re-runs.
+# ---------------------------------------------------------------------------
+TRMM_SUBMODULE = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "integrations", "trmm-mcp"))
+
+TRMM_RO_KEY = "fake-trmm-ro-key-e2e"
+TRMM_CMD_KEY = "fake-trmm-cmd-key-e2e"
+TRMM_AGENT_ID = "e" * 40
+TRMM_AGENT_ROW = {
+    "agent_id": TRMM_AGENT_ID,
+    "hostname": "frontdesk-pc",
+    "client_name": "Acme",
+    "site_name": "HQ",
+    "status": 1,
+    "last_seen": "2026-08-24T10:00:00",
+    "plat": "Windows",
+    "operating_system": "Windows 11 Pro",
+    "version": "1.5.1",
+    "needs_reboot": False,
+    "has_patches_pending": True,
+    "pending_actions_count": 0,
+    "maintenance_mode": False,
+    "logged_username": "jdoe",
+    "public_ip": "203.0.113.7",
+    "checks": [],
+}
+
+
+@pytest.mark.skipif(
+    not os.path.isfile(os.path.join(TRMM_SUBMODULE, "trmm_mcp", "server.py")),
+    reason="integrations/trmm-mcp submodule is not checked out")
+def test_real_trmm_submodule_subprocess_path(client, auth_user):
+    import json
+    import subprocess as sp
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    venv_python = os.path.join(TRMM_SUBMODULE, "venv", "bin", "python")
+    if not os.path.isfile(venv_python):
+        sp.run([sys.executable, "-m", "venv", os.path.join(TRMM_SUBMODULE, "venv")],
+               check=True, stdout=sp.PIPE, stderr=sp.STDOUT, timeout=300)
+        sp.run([venv_python, "-m", "pip", "install", "-q", "-r",
+                os.path.join(TRMM_SUBMODULE, "requirements.txt")],
+               check=True, stdout=sp.PIPE, stderr=sp.STDOUT, timeout=900)
+
+    seen: list[tuple[str, str, str]] = []  # (method, path, X-API-KEY)
+
+    class FakeTrmm(BaseHTTPRequestHandler):
+        def _authed(self) -> bool:
+            key = self.headers.get("X-API-KEY", "")
+            seen.append((self.command, self.path, key))
+            if key not in (TRMM_RO_KEY, TRMM_CMD_KEY):
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"detail":"Unauthorized"}')
+                return False
+            return True
+
+        def _reply(self, payload: bytes) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_GET(self):
+            if not self._authed():
+                return
+            if self.path.startswith("/agents/"):
+                self._reply(json.dumps([TRMM_AGENT_ROW]).encode())
+            else:
+                self._reply(b"[]")
+
+        def do_POST(self):
+            if not self._authed():
+                return
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            if self.path.startswith(f"/agents/{TRMM_AGENT_ID}/cmd/"):
+                # TRMM returns a bare string here: stderr if non-empty, else stdout.
+                self._reply(json.dumps("eepy-e2e-cmd-ok").encode())
+            else:
+                self._reply(b"null")
+
+        def log_message(self, *args):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeTrmm)
+    api_url = f"http://127.0.0.1:{srv.server_address[1]}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    try:
+        # --- readonly template (seeded row, seed runtime_config as-is) ----
+        r = client.post("/api/mcp/config/register", headers=_h(auth_user["token"]),
+                        json={"template_id": "trmm",
+                              "credentials_json": {
+                                  "TRMM_API_URL": api_url,
+                                  "TRMM_READONLY_API_KEY": TRMM_RO_KEY}})
+        assert r.status_code == 200, r.text
+
+        # Discovery against the REAL upstream: readonly mode registers
+        # exactly the 20 read tools — no execution tool may exist.
+        r = client.post("/superuser/mcp/templates/trmm/discover",
+                        headers=_h(auth_user["token"]))
+        assert r.status_code == 200, r.text
+        disc = r.json()
+        assert disc["tool_count"] == 20, disc["tool_count"]
+        assert "trmm_fleet_overview" in disc["tools"]
+        assert not (set(disc["tools"]) & TRMM_EXEC_TOOLS), \
+            f"readonly mode must never register execution tools: {disc['tools']}"
+
+        # Proxy read tool: the sidecar dials the fake TRMM under the
+        # read-only key and the result relays back.
+        r = client.post("/api/mcp/proxy/trmm/trmm_fleet_overview",
+                        headers=_h(auth_user["token"]), json={})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["is_error"] is False, body["data"][:300]
+        assert "frontdesk-pc" in body["data"]
+        assert any(m == "GET" and p.startswith("/agents/") and k == TRMM_RO_KEY
+                   for m, p, k in seen), seen
+
+        # Connection test (test_tool) against the reachable fake API: ok.
+        r = client.post("/api/mcp/config/trmm/test", headers=_h(auth_user["token"]))
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "ok", r.json()
+
+        # --- command template (seeded row, seed runtime_config as-is) ----
+        r = client.post("/api/mcp/config/register", headers=_h(auth_user["token"]),
+                        json={"template_id": "trmm-exec",
+                              "credentials_json": {
+                                  "TRMM_API_URL": api_url,
+                                  "TRMM_READONLY_API_KEY": TRMM_RO_KEY,
+                                  "TRMM_COMMAND_API_KEY": TRMM_CMD_KEY}})
+        assert r.status_code == 200, r.text
+
+        # Discovery: command mode registers all 28 tools (20 read + 8 exec).
+        r = client.post("/superuser/mcp/templates/trmm-exec/discover",
+                        headers=_h(auth_user["token"]))
+        assert r.status_code == 200, r.text
+        disc = r.json()
+        assert disc["tool_count"] == 28, disc["tool_count"]
+        assert "trmm_run_command" in disc["tools"]
+
+        # The WRITE path: run a command on the fake agent. In command mode
+        # approval is not required; the call must reach the fake API as a
+        # POST under the command key and the output must relay back.
+        before = len(seen)
+        r = client.post("/api/mcp/proxy/trmm-exec/trmm_run_command",
+                        headers=_h(auth_user["token"]),
+                        json={"agent": "frontdesk-pc",
+                              "command": "echo eepy-e2e-ok"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["is_error"] is False, body["data"][:300]
+        assert "eepy-e2e-cmd-ok" in body["data"]
+        cmd_calls = [e for e in seen[before:]
+                     if e[0] == "POST" and e[1].startswith(f"/agents/{TRMM_AGENT_ID}/cmd/")]
+        assert cmd_calls and cmd_calls[0][2] == TRMM_CMD_KEY, seen[before:]
+    finally:
+        from api import mcp_bridge
+        mcp_bridge.shutdown_all_instances()
+        srv.shutdown()

@@ -152,7 +152,8 @@ def bootstrap_superuser() -> None:
 
 def seed_mcp_templates():
     """Seed the admin-approved templates (HappyFox #1, eBay #2, Portainer #3,
-    Warden #4, Proxmox VE #5) into the library.
+    Warden #4, Proxmox VE #5, Tactical RMM #6 read-only + #7 read/command)
+    into the library.
 
     Each integration's MCP server code lives OUTSIDE this backend, in its own
     git submodule under integrations/ (happyfox-mcp →
@@ -160,7 +161,8 @@ def seed_mcp_templates():
     github.com/YosefHayim/ebay-mcp, portainer-mcp →
     github.com/portainer/portainer-mcp, warden-mcp →
     github.com/icoretech/warden-mcp, proxmox-mcp →
-    github.com/RekklesNA/ProxmoxMCP-Plus). These rows only register *how to
+    github.com/RekklesNA/ProxmoxMCP-Plus, trmm-mcp →
+    github.com/shin2344234/trmm-mcp). These rows only register *how to
     run* them:
 
     - docker backend (production/Portainer): CI builds each submodule into its
@@ -816,9 +818,256 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
+    # Tactical RMM (templates #6 and #7) come from the SAME upstream image
+    # (trmm-mcp) — the split is a per-template static env (TRMM_MCP_MODE):
+    # "trmm" pins readonly (20 read tools, execution tools never registered,
+    # and the upstream HTTP client refuses any non-read request), "trmm-exec"
+    # pins command (all 28 tools incl. 8 execution: run commands/scripts,
+    # reboot, service control, kill process, WoL, force checks, run task).
+    # The upstream's third mode, "elevate", is deliberately NOT offered: its
+    # per-call approval gate is out-of-band (a human opens the approval URL
+    # in a browser, password + TOTP) and a sidecar on the internal
+    # eepy-sidecars network exposes no ports, so no user could ever reach it.
+    #
+    # The upstream HTTP mode requires a shared bearer token on EVERY request
+    # when bound to non-loopback (its BearerAuthMiddleware) and 421-rejects
+    # Hosts outside TRMM_MCP_ALLOWED_HOSTS (mcp SDK DNS-rebinding protection),
+    # so — like Portainer — the bridge mints a fresh per-sidecar
+    # TRMM_MCP_AUTH_TOKEN (generated_secrets) sent as the Authorization
+    # header, and dials with a fixed Host header the allowlist accepts.
+    #
+    # TRMM_VERIFY_SSL defaults to "true" in the static env: an UNTOUCHED
+    # wizard field is absent from the stored credentials, so the default
+    # survives; the user can type "false" for a self-signed TRMM cert.
+    # (Upstream reads this with a _flag() that treats an EMPTY string as
+    # false, so the static default must carry the on value.)
+    _trmm_read_only_tools = [
+        "trmm_fleet_overview", "trmm_list_agents", "trmm_get_agent",
+        "trmm_agent_services", "trmm_agent_processes", "trmm_agent_event_log",
+        "trmm_agent_checks", "trmm_agent_history", "trmm_agent_software",
+        "trmm_agent_windows_updates", "trmm_list_clients_sites",
+        "trmm_list_alerts", "trmm_list_scripts", "trmm_get_script",
+        "trmm_agent_tasks", "trmm_pending_actions", "trmm_audit_log",
+        "trmm_debug_log", "trmm_server_info", "trmm_api_get",
+    ]
+    _trmm_execution_tools = [
+        "trmm_run_command", "trmm_run_script", "trmm_reboot_agent",
+        "trmm_service_action", "trmm_kill_process", "trmm_wake_on_lan",
+        "trmm_run_checks", "trmm_run_task",
+    ]
+    _trmm_common_sidecar_env = {
+        # Trusted-private-network posture: the sidecar is unreachable outside
+        # the eepy-sidecars docker network, so plaintext HTTP is the
+        # deployment's posture (the per-sidecar bearer token is the auth
+        # layer). TLS is the upstream's self-signed-cert mode for direct LAN
+        # clients — the bridge speaks plain HTTP to the container IP.
+        "TRMM_MCP_TRANSPORT": "streamable-http",
+        "TRMM_MCP_HTTP_HOST": "0.0.0.0",
+        "TRMM_MCP_TLS": "false",
+        "TRMM_MCP_STATELESS_HTTP": "true",
+        # Pins the server's .env/state/audit-log base dir to a writable,
+        # predictable location (the package is pip-installed, so the XDG
+        # fallback would apply otherwise).
+        "TRMM_MCP_BASE_DIR": "/data",
+        # Accepts the bridge's fixed Host header (eepy-sidecar:8770).
+        "TRMM_MCP_ALLOWED_HOSTS": "eepy-sidecar:8770",
+        "TRMM_VERIFY_SSL": "true",
+    }
+    _trmm_env_mapping = {
+        "TRMM_API_URL": "TRMM_API_URL",
+        "TRMM_READONLY_API_KEY": "TRMM_READONLY_API_KEY",
+        "TRMM_VERIFY_SSL": "TRMM_VERIFY_SSL",
+    }
+    _trmm_headers = {
+        "Host": "eepy-sidecar:8770",
+        "Authorization": "Bearer {{TRMM_MCP_AUTH_TOKEN}}",
+    }
+
+    trmm = MCPTemplate(
+        id="trmm",
+        name="Tactical RMM (Read-Only)",
+        repo_url="https://github.com/shin2344234/trmm-mcp",
+        description=(
+            "Read everything in your Tactical RMM fleet across 20 tools: a "
+            "one-call fleet overview (offline, needs-reboot, failing-check and "
+            "pending-patch lists), agents, clients and sites, alerts, services, "
+            "processes, event logs, configured checks, software inventory, "
+            "Windows update status, scripts, automated tasks, pending actions, "
+            "the TRMM audit log, and a raw-GET escape hatch for anything not "
+            "covered. Strictly read-only at three layers: the execution tools "
+            "are never registered, the server's HTTP client refuses any "
+            "non-read request, and the read-only API key cannot execute "
+            "anyway. Point it at your TRMM with a read-only-scoped API key "
+            "(TRMM Settings > Global Settings > API Keys); credentials stay "
+            "encrypted at rest and are proxied through the Eepy unified proxy."
+        ),
+        config_schema={
+            "category": "IT / RMM & Device Management",
+            "type": "object",
+            "properties": {
+                "TRMM_API_URL": {
+                    "type": "string",
+                    "label": "TRMM API URL",
+                    "placeholder": "https://api.example.com",
+                    "help": "Base URL of your Tactical RMM backend API (Settings > Global Settings > API).",
+                    "required": True,
+                },
+                "TRMM_READONLY_API_KEY": {
+                    "type": "password",
+                    "label": "Read-Only API Key",
+                    "placeholder": "TRMM API key",
+                    "help": "An API key bound to a role WITHOUT execution permissions — reads work, execution is refused even if the server mode allowed it.",
+                    "required": True,
+                },
+                "TRMM_VERIFY_SSL": {
+                    "type": "string",
+                    "label": "Verify TRMM TLS Certificate",
+                    "placeholder": "true",
+                    "help": "Optional. Leave blank to verify TLS (default). Set to false if your TRMM install uses a self-signed certificate.",
+                    "required": False,
+                },
+            },
+            "required": ["TRMM_API_URL", "TRMM_READONLY_API_KEY"],
+        },
+        image_tag="ghcr.io/kulik-labs-development/eepy-host-trmm",
+        runtime="mcp-server",
+        runtime_config={
+            "image": "ghcr.io/kulik-labs-development/eepy-host-trmm:latest",
+            # Local (subprocess backend): stdio transport; runs the pinned
+            # submodule from its own venv (the upstream pins the mcp 2.0 SDK
+            # line, which the backend's interpreter does not carry). One-time
+            # setup: python3 -m venv integrations/trmm-mcp/venv &&
+            # integrations/trmm-mcp/venv/bin/pip install -r
+            # integrations/trmm-mcp/requirements.txt
+            "command": ["./venv/bin/python", "-m", "trmm_mcp.server"],
+            "cwd": "integrations/trmm-mcp",
+            "env": {
+                **_trmm_common_sidecar_env,
+                "TRMM_MCP_MODE": "readonly",
+            },
+            "subprocess_env": {
+                "TRMM_MCP_MODE": "readonly",
+                "TRMM_MCP_TRANSPORT": "stdio",
+                "TRMM_VERIFY_SSL": "true",
+            },
+            "endpoint": "/mcp",
+            "port": "8770",
+            "env_mapping": dict(_trmm_env_mapping),
+            "generated_secrets": ["TRMM_MCP_AUTH_TOKEN"],
+            "headers": dict(_trmm_headers),
+            # No-argument read that hits /agents/ — validates the API key and
+            # the TRMM URL before any tool runs (a bad key fails loudly).
+            "test_tool": {"name": "trmm_fleet_overview", "arguments": {}},
+            # The 20 read-only tools the upstream registers in readonly mode.
+            # Admin discovery overwrites this with the authoritative
+            # tools/list.
+            "tool_names": list(_trmm_read_only_tools),
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
+    trmm_exec = MCPTemplate(
+        id="trmm-exec",
+        name="Tactical RMM (Read + Command)",
+        repo_url="https://github.com/shin2344234/trmm-mcp",
+        description=(
+            "Everything the read-only Tactical RMM connection can read (20 "
+            "tools: fleet overview, agents, clients and sites, alerts, "
+            "services, processes, event logs, checks, software, patches, "
+            "scripts, audit history) plus 8 execution tools: run a command or "
+            "a saved script, reboot, start/stop/restart a service, kill a "
+            "process, wake-on-LAN, force checks, and run an automated task. "
+            "Execution acts on REAL production machines — the server refuses "
+            "a fixed list of destructive patterns client-side, and you can "
+            "hard-scope it to specific agents with the optional allowlist. "
+            "Use a dedicated least-privilege TRMM user for the command key. "
+            "Credentials stay encrypted at rest and are proxied through the "
+            "Eepy unified proxy."
+        ),
+        config_schema={
+            "category": "IT / RMM & Device Management",
+            "type": "object",
+            "properties": {
+                "TRMM_API_URL": {
+                    "type": "string",
+                    "label": "TRMM API URL",
+                    "placeholder": "https://api.example.com",
+                    "help": "Base URL of your Tactical RMM backend API (Settings > Global Settings > API).",
+                    "required": True,
+                },
+                "TRMM_READONLY_API_KEY": {
+                    "type": "password",
+                    "label": "Read-Only API Key",
+                    "placeholder": "TRMM API key",
+                    "help": "API key for the read tools — bind it to a role WITHOUT execution permissions.",
+                    "required": True,
+                },
+                "TRMM_COMMAND_API_KEY": {
+                    "type": "password",
+                    "label": "Command API Key",
+                    "placeholder": "TRMM API key",
+                    "help": "API key for the execution tools — bind it to a role that can run commands on agents. Use a dedicated least-privilege user.",
+                    "required": True,
+                },
+                "TRMM_VERIFY_SSL": {
+                    "type": "string",
+                    "label": "Verify TRMM TLS Certificate",
+                    "placeholder": "true",
+                    "help": "Optional. Leave blank to verify TLS (default). Set to false if your TRMM install uses a self-signed certificate.",
+                    "required": False,
+                },
+                "TRMM_MCP_AGENT_ALLOWLIST": {
+                    "type": "string",
+                    "label": "Agent Allowlist (Optional)",
+                    "placeholder": "frontdesk-pc, fileserver01",
+                    "help": "Optional hard scope: comma-separated hostnames or agent_ids that execution tools may touch. Leave blank to allow every agent the key can see.",
+                    "required": False,
+                },
+            },
+            "required": [
+                "TRMM_API_URL",
+                "TRMM_READONLY_API_KEY",
+                "TRMM_COMMAND_API_KEY",
+            ],
+        },
+        image_tag="ghcr.io/kulik-labs-development/eepy-host-trmm",
+        runtime="mcp-server",
+        runtime_config={
+            "image": "ghcr.io/kulik-labs-development/eepy-host-trmm:latest",
+            "command": ["./venv/bin/python", "-m", "trmm_mcp.server"],
+            "cwd": "integrations/trmm-mcp",
+            "env": {
+                **_trmm_common_sidecar_env,
+                "TRMM_MCP_MODE": "command",
+            },
+            "subprocess_env": {
+                "TRMM_MCP_MODE": "command",
+                "TRMM_MCP_TRANSPORT": "stdio",
+                "TRMM_VERIFY_SSL": "true",
+            },
+            "endpoint": "/mcp",
+            "port": "8770",
+            "env_mapping": {
+                **_trmm_env_mapping,
+                "TRMM_COMMAND_API_KEY": "TRMM_COMMAND_API_KEY",
+                "TRMM_MCP_AGENT_ALLOWLIST": "TRMM_MCP_AGENT_ALLOWLIST",
+            },
+            "generated_secrets": ["TRMM_MCP_AUTH_TOKEN"],
+            "headers": dict(_trmm_headers),
+            "test_tool": {"name": "trmm_fleet_overview", "arguments": {}},
+            # All 28 tools the upstream registers in command mode (20 read +
+            # 8 execution). Admin discovery overwrites this with the
+            # authoritative tools/list.
+            "tool_names": list(_trmm_read_only_tools + _trmm_execution_tools),
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
     db = SessionLocal()
     try:
-        for spec in (happyfox, ebay, portainer, warden, proxmox):
+        for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
                 existing.approved_by_admin = True

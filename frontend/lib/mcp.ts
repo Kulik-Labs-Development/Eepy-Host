@@ -24,6 +24,8 @@ export const APP_ICONS: Record<string, string> = {
   portainer: '/app-icons/portainer-pink.png',
   warden: '/app-icons/vaultwarden.png',
   proxmox: '/app-icons/proxmox.png',
+  trmm: '/app-icons/trmm.png',
+  'trmm-exec': '/app-icons/trmm.png',
 };
 
 export function templateIcon(templateId: string): string | null {

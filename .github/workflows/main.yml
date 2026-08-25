@@ -104,6 +104,20 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-proxmox:latest
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Build and push Tactical RMM MCP sidecar image
+        # Built from the integrations/trmm-mcp submodule (upstream
+        # shin2344234/trmm-mcp) so the deployed sidecar always matches the
+        # exact upstream commit this repo pins. One image serves BOTH Eepy
+        # templates (trmm read-only and trmm-exec read+command) — the mode
+        # is a per-template static env in the seed.
+        uses: docker/build-push-action@v5
+        with:
+          context: ./
+          file: ./integrations/Dockerfile.trmm
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-trmm:latest
+          labels: ${{ steps.meta.outputs.labels }}
+
       - name: Build and push Frontend image
         uses: docker/build-push-action@v5
         with:

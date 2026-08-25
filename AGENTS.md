@@ -116,6 +116,34 @@ docker container in production), short-lived and idle-reaped.
   upstream pyproject already pins `mcp>=1.8,<2`, so the image needs no extra
   mcp pin (unlike happyfox). Local-dev (subprocess) path: one-time
   `pip install -e integrations/proxmox-mcp` in the backend's interpreter.
+- Tactical RMM is Templates #6 and #7, same modular pattern from the
+  `integrations/trmm-mcp` git submodule (github.com/shin2344234/trmm-mcp —
+  AGPL-3.0-or-later, Python, 28 tools over the Tactical RMM API: 20 read-only
+  covering agents, clients/sites, alerts, services, processes, event logs,
+  checks, software, patches, scripts, audit history + a raw-GET escape hatch,
+  and 8 execution tools — run command/script, reboot, service control, kill
+  process, WoL, force checks, run task). ONE image (`eepy-host-trmm`) serves
+  BOTH templates; the split is a per-template static env
+  (`TRMM_MCP_MODE=readonly` for `trmm`, `TRMM_MCP_MODE=command` for
+  `trmm-exec`). The upstream's third mode, `elevate`, is deliberately NOT
+  offered: its approval gate is out-of-band (a human opens the approval URL
+  in a browser, password + TOTP) and sidecars expose no ports. Fourth
+  integration on the bridge's **per-request header** machinery: the upstream
+  HTTP mode (:8770 at /mcp) wraps the app in a bearer middleware whenever
+  `TRMM_MCP_AUTH_TOKEN` is set (required for non-loopback binds), so the
+  bridge mints a fresh per-sidecar `TRMM_MCP_AUTH_TOKEN` (generated_secrets)
+  and sends it as `Authorization`, plus a fixed `Host: eepy-sidecar:8770`
+  the seed's `TRMM_MCP_ALLOWED_HOSTS` accepts (mcp SDK DNS-rebinding
+  protection). TLS is OFF in the sidecar env (internal network; the bearer
+  is the auth layer). Users provide `TRMM_API_URL` + a read-only-scoped API
+  key (+ a command-capable key for `trmm-exec`; in command mode ALL traffic
+  — reads included — goes out under the command key) and optional
+  `TRMM_VERIFY_SSL` ("false" for self-signed TRMM certs). NOTE: upstream
+  pins the **mcp 2.0 SDK line** (`mcp==2.0.0`, `mcp.server.MCPServer` API) —
+  unlike every other integration here, so the subprocess dev path runs the
+  submodule from its OWN venv (`./venv/bin/python -m trmm_mcp.server`,
+  one-time `python3 -m venv integrations/trmm-mcp/venv && venv/bin/pip
+  install -r requirements.txt`), not the backend interpreter.
 - The unified proxy (`/api/mcp/proxy/{template_id}/{tool_name}`) routes by
   template `runtime`: `mcp-server` → generic bridge (`api/mcp_bridge.py`),
   `native` → hardcoded `TEMPLATE_REGISTRY` (HappyFox reference path, kept for
@@ -263,11 +291,15 @@ docker container in production), short-lived and idle-reaped.
 │   │                         #    --ignore-scripts)
 │   ├── Dockerfile.proxmox    #   (pip-installs the submodule; upstream pyproject
 │   │                         #    already pins mcp<2, no extra pin needed)
+│   ├── Dockerfile.trmm       #   (pip-installs the submodule; upstream pins
+│   │                         #    mcp==2.0.0 exactly — its own SDK line,
+│   │                         #    so the subprocess dev path uses its own venv)
 │   ├── happyfox-mcp/         # GIT SUBMODULE → Glitch3dPenguin/happyfox-mcp
 │   ├── ebay-mcp/             # GIT SUBMODULE → YosefHayim/ebay-mcp
 │   ├── portainer-mcp/        # GIT SUBMODULE → portainer/portainer-mcp
 │   ├── warden-mcp/           # GIT SUBMODULE → icoretech/warden-mcp
-│   └── proxmox-mcp/          # GIT SUBMODULE → RekklesNA/ProxmoxMCP-Plus
+│   ├── proxmox-mcp/          # GIT SUBMODULE → RekklesNA/ProxmoxMCP-Plus
+│   └── trmm-mcp/             # GIT SUBMODULE → shin2344234/trmm-mcp
 └── assets/
 ```
 
@@ -835,17 +867,20 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   (a plain clone leaves the submodule dir empty until
   `git submodule update --init`).
 - **Two CI workflows, both on push to main:** `CI` (ruff+pytest, eslint+tsc —
-  no image builds) and `Build and Push to GHCR`, which builds **seven**
+  no image builds) and   `Build and Push to GHCR`, which builds **eight**
   images: `eepy-host-backend`, `eepy-host-frontend`, `eepy-host-happyfox`
   (sidecar, built from the submodule via `integrations/Dockerfile.happyfox`),
   `eepy-host-ebay` (sidecar, via `integrations/Dockerfile.ebay`),
   `eepy-host-portainer` (sidecar, via `integrations/Dockerfile.portainer`),
-  `eepy-host-warden` (sidecar, via `integrations/Dockerfile.warden`) and
-  `eepy-host-proxmox` (sidecar, via `integrations/Dockerfile.proxmox`)
+  `eepy-host-warden` (sidecar, via `integrations/Dockerfile.warden`),
+  `eepy-host-proxmox` (sidecar, via `integrations/Dockerfile.proxmox`) and
+  `eepy-host-trmm` (sidecar, via `integrations/Dockerfile.trmm` — serves
+  BOTH the trmm and trmm-exec templates; the mode is per-template env)
   — all sidecars built with the repo root as build context. So every push to
   main refreshes all deployed images.
-- **Seed roll-forward:** `seed_mcp_templates()` in `main.py` updates the
-  existing seeded rows' (HappyFox, eBay, Portainer, Warden, Proxmox) `runtime`,
+  - **Seed roll-forward:** `seed_mcp_templates()` in `main.py` updates the
+  existing seeded rows' (HappyFox, eBay, Portainer, Warden, Proxmox, Tactical
+  RMM read-only + command) `runtime`,
   `runtime_config`, `config_schema`, `image_tag`, and approval flags on
   **every boot** (idempotent). That is how spec changes reach the live DB —
   pushing a backend change is enough; no manual DB edit needed.
@@ -853,9 +888,10 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   updated `eepy-host-backend:latest` / `eepy-host-frontend:latest` /
   `eepy-host-happyfox:latest` / `eepy-host-ebay:latest` /
   `eepy-host-portainer:latest` / `eepy-host-warden:latest` /
-  `eepy-host-proxmox:latest` images and recreate the containers (sidecar images are pulled lazily by the bridge, so
-  just make sure the backend has fresh access). `stack.env` values rarely
-  change — only when a new secret is introduced.
+  `eepy-host-proxmox:latest` / `eepy-host-trmm:latest` images and recreate
+  the containers (sidecar images are pulled lazily by the bridge, so just
+  make sure the backend has fresh access). `stack.env` values rarely change
+  — only when a new secret is introduced.
   - **The backend needs the Docker socket or sidecars can never spawn:** with
     `EEPY_MCP_INSTANCE_BACKEND=docker` (the compose default) the backend
     spawns per-user sidecar containers THROUGH the host Docker socket, which
@@ -877,9 +913,9 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
     NORMAL — a sidecar exists only from first use until ~5 min after the last
     call. If none EVER appears when a tool is called, spawning is failing
     (check the daemon line above / the Debug Log console).
-  - **Verify the docker sidecar path (production):** the dev machine has
+  -    **Verify the docker sidecar path (production):** the dev machine has
      Docker, so the full compose stack CAN be exercised locally (build the
-     seven app+sidecar images with the GHCR tags, `docker compose --env-file
+     eight app+sidecar images with the GHCR tags, `docker compose --env-file
     stack.env up -d`). After a deploy: hit the dashboard's connection test,
    then a real proxy tool call, and confirm in the backend logs (or the
    Debug Log console) that `mcp-bridge: started sidecar container ...
@@ -905,9 +941,13 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
    `mcp[cli]>=1.0,<2` after the submodule's pip install, in OUR Dockerfile so
    the pin survives every CI rebuild without touching upstream submodule
    code. The portainer sidecar is NOT affected: its image installs from
-   `uv.lock` (mcp pinned at 1.28.x by upstream). If a future sidecar image
-   is built from a submodule whose code imports the 1.x API, keep such a
-   pin in its Dockerfile.
+   `uv.lock` (mcp pinned at 1.28.x by upstream). The trmm sidecar is on the
+   OTHER side of this: its upstream pins `mcp==2.0.0` exactly (the 2.0
+   `mcp.server.MCPServer` API line) — that is also why its subprocess dev
+   path must run from the submodule's OWN venv, never the backend
+   interpreter (which carries the 1.x line the bridge itself uses). If a
+   future sidecar image is built from a submodule whose code imports the
+   1.x API, keep such a pin in its Dockerfile.
 - **Dev-sandbox test tooling (ephemeral, rebuild if missing):** venv at
   `/tmp/eevenv` (`python3 -m venv /tmp/eevenv && /tmp/eevenv/bin/pip install
   -r requirements.txt pytest ruff`), and integration script
