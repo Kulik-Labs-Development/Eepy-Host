@@ -19,3 +19,6 @@
 [submodule "integrations/clarity-mcp"]
 	path = integrations/clarity-mcp
 	url = https://github.com/microsoft/clarity-mcp-server.git
+[submodule "integrations/bookstack-mcp"]
+	path = integrations/bookstack-mcp
+	url = https://github.com/pnocera/bookstack-mcp-server.git

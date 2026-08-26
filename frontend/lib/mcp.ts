@@ -27,6 +27,7 @@ export const APP_ICONS: Record<string, string> = {
   trmm: '/app-icons/trmm.png',
   'trmm-exec': '/app-icons/trmm.png',
   clarity: '/app-icons/clarity.png',
+  bookstack: '/app-icons/bookstack.png',
 };
 
 export function templateIcon(templateId: string): string | null {

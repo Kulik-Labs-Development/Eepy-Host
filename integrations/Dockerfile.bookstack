@@ -1,0 +1,84 @@
+# BookStack MCP server sidecar image.
+#
+# SOURCE OF TRUTH: integrations/bookstack-mcp (git submodule →
+# github.com/pnocera/bookstack-mcp-server, MIT). This Dockerfile only builds
+# that code into an image; it is NOT where the server code lives.
+#
+# Build context must be the REPO ROOT (CI sets context: ./), so the
+# integrations/bookstack-mcp/ paths below resolve to exactly the submodule
+# commit this repo pins.
+#
+# Transport: stateless streamable-HTTP (JSON responses) on :3000 at
+# POST /message — the MCP endpoint is /message, NOT / (GET / and GET /health
+# are unauthenticated info/liveness probes). The Eepy backend spawns this
+# image per user via the mcp-server sidecar runtime (api/mcp_bridge.py).
+#
+# Auth model (Eepy bridge contract):
+#  - Inbound: the HTTP transport REFUSES to start without MCP_AUTH_TOKEN
+#    (fail-closed, no "no auth" mode). The bridge mints a fresh random
+#    MCP_AUTH_TOKEN per sidecar spawn (runtime_config generated_secrets) and
+#    sends it as `Authorization: Bearer ...` on every request (runtime_config
+#    headers), so the per-sidecar gate token never reaches the DB or runtime
+#    config. GET / and GET /health stay unauthenticated (they take no
+#    credentials and leak nothing beyond liveness).
+#  - Outbound: the user's BookStack credentials ride the sidecar env
+#    (BOOKSTACK_BASE_URL + BOOKSTACK_API_TOKEN, mapped from the user's stored
+#    credentials at spawn). The sidecar is keyed per (user, exact
+#    credentials) and idle-reaped, so its env identity IS the user's.
+#
+# Mirrors the upstream repo's own Dockerfile (digest-pinned oven/bun image,
+# non-root `bun` user, bun runs the TypeScript source directly — no compile
+# step). Differences:
+#  - COPY paths from the repo-root build context.
+#  - The bun base image digest is pinned exactly as upstream pins it (the
+#    multi-arch manifest list for 1.3.14-alpine) so the tag cannot drift
+#    under a CI rebuild. Bump it only together with the submodule.
+#
+# NOTE: the upstream requires Bun (engines: bun >= 1.1.0; Node.js is NOT
+# supported — the package ships TypeScript source run directly by Bun). The
+# local-dev subprocess path needs bun on the host PATH plus a one-time
+# `bun install` in the submodule.
+ARG BUN_IMAGE=oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0
+
+# --- Dependencies stage: install production node_modules only ---
+FROM ${BUN_IMAGE} AS deps
+WORKDIR /app
+
+# Manifest + lockfile first so this layer is cached unless deps change.
+COPY integrations/bookstack-mcp/package.json integrations/bookstack-mcp/bun.lock ./
+RUN bun install --production --frozen-lockfile
+
+# --- Runtime stage: production deps + TypeScript source ---
+FROM ${BUN_IMAGE} AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Bring in the resolved production dependencies.
+COPY --from=deps /app/node_modules ./node_modules
+
+# Application manifest and source. No build: Bun runs the TS source directly.
+COPY integrations/bookstack-mcp/package.json integrations/bookstack-mcp/bun.lock integrations/bookstack-mcp/tsconfig.json ./
+COPY integrations/bookstack-mcp/.env.example ./.env.example
+COPY integrations/bookstack-mcp/src ./src
+
+# Streamable-HTTP on :3000 (upstream default SERVER_PORT); Express listens on
+# all interfaces, which is exactly what the eepy-sidecars docker network dial
+# needs. No host-allowlist: the TS mcp SDK's DNS-rebinding protection is
+# disabled by default (enableDnsRebindingProtection=false) and upstream
+# configures no allowedHosts, so the bridge's direct container-IP dial passes
+# as-is (the per-sidecar bearer is the auth layer).
+EXPOSE 3000
+
+# Run as the non-root `bun` user provided by the oven/bun base image.
+USER bun
+
+# GET /health returns 200 when healthy, 503 otherwise (it verifies live
+# BookStack connectivity, so a sidecar with bad credentials reports unhealthy
+# — informational only; the bridge uses its own readiness polling). The
+# image ships `bun` but NOT `node`, so the probe is implemented with `bun -e`.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+  CMD bun -e "const r=await fetch('http://localhost:3000/health').catch(()=>null); process.exit(r&&r.status===200?0:1)"
+
+# HTTP transport by default (MCP_TRANSPORT unset => http; stdio is opt-in and
+# is only used by the bridge's local-dev subprocess backend).
+CMD ["bun", "run", "src/server.ts"]

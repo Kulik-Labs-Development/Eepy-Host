@@ -153,7 +153,7 @@ def bootstrap_superuser() -> None:
 def seed_mcp_templates():
     """Seed the admin-approved templates (HappyFox #1, eBay #2, Portainer #3,
     Warden #4, Proxmox VE #5, Tactical RMM #6 read-only + #7 read/command,
-    Microsoft Clarity #8) into the library.
+    Microsoft Clarity #8, BookStack #9) into the library.
 
     Each integration's MCP server code lives OUTSIDE this backend, in its own
     git submodule under integrations/ (happyfox-mcp →
@@ -163,8 +163,9 @@ def seed_mcp_templates():
     github.com/icoretech/warden-mcp, proxmox-mcp →
     github.com/RekklesNA/ProxmoxMCP-Plus, trmm-mcp →
     github.com/shin2344234/trmm-mcp, clarity-mcp →
-    github.com/microsoft/clarity-mcp-server). These rows only register *how to
-    run* them:
+    github.com/microsoft/clarity-mcp-server, bookstack-mcp →
+    github.com/pnocera/bookstack-mcp-server). These rows only register *how
+    to run* them:
 
     - docker backend (production/Portainer): CI builds each submodule into its
       eepy-host-<name> GHCR sidecar image on every push (the submodule pin in
@@ -1138,9 +1139,156 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
+    bookstack = MCPTemplate(
+        id="bookstack",
+        name="BookStack",
+        repo_url="https://github.com/pnocera/bookstack-mcp-server",
+        description=(
+            "Manage your BookStack knowledge base across 59 tools: books, pages, "
+            "chapters, and shelves (create, read, update, delete, export), search, "
+            "user, role, and permission management, attachments, images, the recycle "
+            "bin, the audit log, and system info — plus guarded partial page editing "
+            "(outline, grep-read, find-and-replace, append) for long documents. Runs "
+            "against YOUR BookStack with your own API token; credentials stay "
+            "encrypted at rest and are proxied through the Eepy unified proxy."
+        ),
+        config_schema={
+            "category": "Knowledge Management / Docs",
+            "type": "object",
+            "properties": {
+                "BOOKSTACK_URL": {
+                    "type": "string",
+                    "label": "BookStack Base URL",
+                    "placeholder": "https://docs.example.com/api",
+                    "help": "Full URL of your BookStack API, INCLUDING the /api suffix (e.g. https://docs.example.com/api).",
+                    "required": True,
+                },
+                "BOOKSTACK_TOKEN": {
+                    "type": "password",
+                    "label": "API Token (id:secret)",
+                    "placeholder": "token_id:token_secret",
+                    "help": "BookStack: your profile picture > API Tokens > Create Token. Enter the Token ID and Secret combined as token_id:token_secret.",
+                    "required": True,
+                },
+            },
+            "required": ["BOOKSTACK_URL", "BOOKSTACK_TOKEN"],
+        },
+        image_tag="ghcr.io/kulik-labs-development/eepy-host-bookstack",
+        runtime="mcp-server",
+        # Modular sidecar spec (same contract as the Proxmox reference): the
+        # upstream is Bun-native TypeScript (Node.js is NOT supported — bun
+        # runs the TS source directly), so both the image and the local-dev
+        # subprocess path run on bun.
+        #
+        # Transport: stateless streamable-HTTP (JSON responses) on :3000 at
+        # POST /message — the MCP endpoint is /message, NOT / (GET / and
+        # GET /health are unauthenticated probes). A fresh server + transport
+        # is created per POST, so the bridge's one initialize + one call per
+        # proxy request is exactly the upstream's contract.
+        #
+        #  - generated_secrets + headers: the HTTP transport REFUSES to start
+        #    without MCP_AUTH_TOKEN (fail-closed, no "no auth" mode) and every
+        #    POST /message — including initialize — must carry it as
+        #    `Authorization: Bearer <token>`. The bridge mints a fresh random
+        #    MCP_AUTH_TOKEN into the sidecar env on every spawn and resolves
+        #    the same value into the per-request Authorization header, so a
+        #    headerless peer on the sidecar network gets 401 and the gate
+        #    token is never stored.
+        #  - Credentials ride env vars (BOOKSTACK_BASE_URL +
+        #    BOOKSTACK_API_TOKEN, mapped from the user's stored credentials):
+        #    the sidecar is keyed per (user, exact credentials) and
+        #    idle-reaped, so its env identity IS the user's. The upstream
+        #    also accepts per-request x-bookstack-url/x-bookstack-token
+        #    overrides, but the env path keeps every request on the identity
+        #    the user connected with.
+        #  - No Host header override is needed: the TS mcp SDK (1.29) has
+        #    DNS-rebinding protection OFF by default and the upstream
+        #    configures no allowedHosts, so the bridge's direct container-IP
+        #    dial on the eepy-sidecars network passes as-is.
+        #
+        # Production (docker backend): the image serves :3000 at /message,
+        # reachable only on the internal eepy-sidecars docker network (the
+        # per-sidecar bearer is the auth layer). Local (subprocess backend):
+        # stdio transport via subprocess_env (stdio ignores MCP_AUTH_TOKEN);
+        # needs bun on the host PATH and a one-time `bun install` inside
+        # integrations/bookstack-mcp.
+        runtime_config={
+            "image": "ghcr.io/kulik-labs-development/eepy-host-bookstack:latest",
+            "command": ["bun", "run", "src/server.ts"],
+            "cwd": "integrations/bookstack-mcp",
+            # Docker backend env: HTTP transport on :3000 (the upstream
+            # defaults are already these values; stated explicitly so the
+            # seed is the readable contract).
+            "env": {
+                "MCP_TRANSPORT": "http",
+                "SERVER_PORT": "3000",
+            },
+            # Subprocess backend env (local dev): stdio handshake, no HTTP
+            # transport vars (stdio ignores MCP_AUTH_TOKEN).
+            "subprocess_env": {"MCP_TRANSPORT": "stdio"},
+            "endpoint": "/message",
+            "port": "3000",
+            "env_mapping": {
+                "BOOKSTACK_URL": "BOOKSTACK_BASE_URL",
+                "BOOKSTACK_TOKEN": "BOOKSTACK_API_TOKEN",
+            },
+            # Fresh per-spawn inbound gate (see comment above).
+            "generated_secrets": ["MCP_AUTH_TOKEN"],
+            "headers": {
+                "Authorization": "Bearer {{MCP_AUTH_TOKEN}}",
+            },
+            # Read-only probe for POST /config/{id}/test: lists the first book
+            # via the user's token, so a bad token, wrong base URL, or
+            # unreachable instance fails the test loudly (the server throws
+            # -> isError MCP result, which the test route catches).
+            "test_tool": {"name": "bookstack_books_list", "arguments": {"count": 1}},
+            # The full tool set (59 tools at submodule v2.1.0, verified from
+            # the submodule source). Admin discovery overwrites this with the
+            # authoritative tools/list.
+            "tool_names": [
+                "bookstack_books_list", "bookstack_books_create",
+                "bookstack_books_read", "bookstack_books_update",
+                "bookstack_books_delete", "bookstack_books_export",
+                "bookstack_pages_list", "bookstack_pages_create",
+                "bookstack_pages_read", "bookstack_pages_update",
+                "bookstack_pages_delete", "bookstack_pages_export",
+                "bookstack_pages_outline", "bookstack_pages_edit",
+                "bookstack_pages_append",
+                "bookstack_chapters_list", "bookstack_chapters_create",
+                "bookstack_chapters_read", "bookstack_chapters_update",
+                "bookstack_chapters_delete", "bookstack_chapters_export",
+                "bookstack_shelves_list", "bookstack_shelves_create",
+                "bookstack_shelves_read", "bookstack_shelves_update",
+                "bookstack_shelves_delete",
+                "bookstack_search",
+                "bookstack_users_list", "bookstack_users_create",
+                "bookstack_users_read", "bookstack_users_update",
+                "bookstack_users_delete",
+                "bookstack_roles_list", "bookstack_roles_create",
+                "bookstack_roles_read", "bookstack_roles_update",
+                "bookstack_roles_delete",
+                "bookstack_permissions_read", "bookstack_permissions_update",
+                "bookstack_system_info", "bookstack_audit_log_list",
+                "bookstack_recyclebin_list", "bookstack_recyclebin_restore",
+                "bookstack_recyclebin_delete_permanently",
+                "bookstack_attachments_list", "bookstack_attachments_create",
+                "bookstack_attachments_read", "bookstack_attachments_update",
+                "bookstack_attachments_delete",
+                "bookstack_images_list", "bookstack_images_create",
+                "bookstack_images_read", "bookstack_images_update",
+                "bookstack_images_delete",
+                "bookstack_server_info", "bookstack_help",
+                "bookstack_tool_categories", "bookstack_usage_examples",
+                "bookstack_error_guides",
+            ],
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
     db = SessionLocal()
     try:
-        for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec, clarity):
+        for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec, clarity, bookstack):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
                 existing.approved_by_admin = True
