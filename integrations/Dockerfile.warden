@@ -17,7 +17,7 @@
 # sidecar's env identity.
 #
 # Mirrors the upstream repo's own Dockerfile (multi-stage
-# node:24-bookworm-slim, non-root `node` user uid/gid 1000, HOME=/data).
+# node:22-bookworm-slim, non-root `node` user uid/gid 1000, HOME=/data).
 # Differences:
 #  - COPY paths from the repo-root build context.
 #  - The final stage carries bin/ and runs the package's official entry
@@ -30,7 +30,7 @@
 # the bundled @bitwarden/cli (accountKeysResponseModel fallback). Without it,
 # `bw` auth against Vaultwarden servers fails. The patch is idempotent and
 # touches only the installed package tree — no network, no host paths.
-FROM node:24-bookworm-slim AS builder
+FROM node:22-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -50,7 +50,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # Production stage.
-FROM node:24-bookworm-slim
+FROM node:22-bookworm-slim
 
 # Use the `node` user that already exists in the base image (uid/gid 1000).
 RUN mkdir -p /app /data \

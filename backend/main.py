@@ -591,8 +591,9 @@ def seed_mcp_templates():
         #
         # Local (subprocess backend): stdio transport reads the BW_* env vars
         # and LOGS IN AT STARTUP (before the MCP handshake), so a misconfigured
-        # sidecar fails loudly at spawn. Needs Node 24+ on the host PATH and a
-        # one-time `npm install && npm run build` inside integrations/warden-mcp
+        # sidecar fails loudly at spawn. Needs Node 22 on the host PATH
+        # (upstream declares engines ~22) and a one-time `npm install &&
+        # npm run build` inside integrations/warden-mcp
         # (the postinstall applies the Vaultwarden compat patch to the bundled
         # @bitwarden/cli — do not use --ignore-scripts).
         runtime_config={

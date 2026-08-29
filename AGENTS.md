@@ -90,9 +90,11 @@ docker container in production), short-lived and idle-reaped.
   is a LAZY check that reports "not ready" without validating credentials.
   The sidecar image's `npm ci` MUST run lifecycle scripts: the package's
   postinstall applies the Vaultwarden compatibility patch to the bundled
-  `@bitwarden/cli` (never `--ignore-scripts` here). Local-dev (subprocess)
-  path needs Node 24+ on PATH and a one-time `npm install && npm run build`
-  in the submodule.
+  `@bitwarden/cli` (never `--ignore-scripts` here; as of 0.2.34 the bundled
+  CLI is 2026.8.0 and the upstream image + `engines` moved to Node 22, so
+  `Dockerfile.warden` mirrors `node:22-bookworm-slim`). Local-dev
+  (subprocess) path needs Node 22 on PATH (upstream declares engines ~22)
+  and a one-time `npm install && npm run build` in the submodule.
 - Proxmox VE is Template #5, same modular pattern from the
   `integrations/proxmox-mcp` git submodule (github.com/RekklesNA/
   ProxmoxMCP-Plus — MIT, Python/FastMCP, ~45 tools: full VM/LXC lifecycle,

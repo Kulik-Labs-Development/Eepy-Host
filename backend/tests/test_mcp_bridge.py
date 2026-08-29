@@ -1281,8 +1281,9 @@ def test_seeded_warden_header_resolution_with_optional_logins(client, monkeypatc
 # against the actual upstream code, upstream error relay as a tool error (not
 # a bridge failure), a clean credential failure from the connection-test
 # route, and admin discovery of the full tool catalogue.
-# Needs Node 24+ on PATH; performs the runbook's one-time
-# `npm install && npm run build` inside the submodule if dist/ is missing.
+# Needs Node 22+ on PATH (upstream declares engines ~22); performs the
+# runbook's one-time `npm install && npm run build` inside the submodule
+# if dist/ is missing.
 # ---------------------------------------------------------------------------
 WARDEN_SUBMODULE = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "..", "integrations", "warden-mcp"))
@@ -1290,7 +1291,8 @@ WARDEN_SUBMODULE = os.path.normpath(
 
 def _node_major() -> int | None:
     """Major version of the host `node`, or None when missing (the upstream
-    requires Node 24+; an older host node would fail opaquely at runtime)."""
+    declares engines ~22; an older host node would fail opaquely at
+    runtime)."""
     if not shutil.which("node"):
         return None
     import subprocess as sp
@@ -1309,8 +1311,8 @@ _NODE_MAJOR = _node_major()
     not os.path.isfile(os.path.join(WARDEN_SUBMODULE, "package.json")),
     reason="integrations/warden-mcp submodule is not checked out")
 @pytest.mark.skipif(
-    _NODE_MAJOR is None or _NODE_MAJOR < 24,
-    reason=f"node 24+ is required for the warden subprocess dev path (found: {_NODE_MAJOR or 'none'})")
+    _NODE_MAJOR is None or _NODE_MAJOR < 22,
+    reason=f"node 22+ is required for the warden subprocess dev path (found: {_NODE_MAJOR or 'none'})")
 def test_real_warden_submodule_subprocess_path(client, auth_user):
     import subprocess as sp
 
