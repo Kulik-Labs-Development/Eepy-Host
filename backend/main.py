@@ -153,7 +153,8 @@ def bootstrap_superuser() -> None:
 def seed_mcp_templates():
     """Seed the admin-approved templates (HappyFox #1, eBay #2, Portainer #3,
     Warden #4, Proxmox VE #5, Tactical RMM #6 read-only + #7 read/command,
-    Microsoft Clarity #8, BookStack #9) into the library.
+    Microsoft Clarity #8, BookStack #9, Cloudflare #10 Code Mode + #11 Full
+    Endpoint Tools) into the library.
 
     Each integration's MCP server code lives OUTSIDE this backend, in its own
     git submodule under integrations/ (happyfox-mcp →
@@ -171,6 +172,9 @@ def seed_mcp_templates():
       eepy-host-<name> GHCR sidecar image on every push (the submodule pin in
       git = exactly that code).
     - subprocess backend (local dev): runs the submodule in-repo directly.
+    - hosted remote upstreams (runtime_config "url", e.g. the Cloudflare MCP
+      server): no sidecar at all — the bridge registers the fixed URL and
+      dials it with the user's per-request headers.
 
     Updating an integration = update its submodule ref + re-run admin
     discovery; never edit its code inside the backend.
@@ -1287,9 +1291,88 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
+    # Cloudflare (hosted remote upstreams — no sidecar, no image, no command):
+    # the bridge registers the fixed upstream URL (runtime_config 'url') and
+    # dials it with the user's per-request headers. The user's own Cloudflare
+    # API token is mapped into env (env_mapping) and resolved into the
+    # Authorization header per request ({{CF_API_TOKEN}}) — the token never
+    # touches runtime_config, the DB, or the logs. No test_tool: the tool
+    # schemas are unknown without a live token, so the connection test falls
+    # back to a handshake + tools/list (a bad token 401s at initialize).
+    _cloudflare_schema = {
+        "category": "Cloud / DNS & Networking",
+        "type": "object",
+        "properties": {
+            "CLOUDFLARE_API_TOKEN": {
+                "type": "password",
+                "label": "Cloudflare API Token",
+                "placeholder": "API token",
+                "help": "Create one at dash.cloudflare.com (Profile > API Tokens). Account-level tokens need at least 'Account Resources: Read'. IP-filtered tokens are not supported by the hosted server.",
+                "required": True,
+            },
+        },
+        "required": ["CLOUDFLARE_API_TOKEN"],
+    }
+
+    cloudflare = MCPTemplate(
+        id="cloudflare",
+        name="Cloudflare (Code Mode)",
+        repo_url="https://github.com/cloudflare/mcp",
+        description=(
+            "Query the entire Cloudflare API (2,500+ endpoints across DNS, "
+            "Workers, R2, Zero Trust, and every other product) through the "
+            "hosted Cloudflare MCP server in Code Mode: two tools, search() "
+            "and execute(), in about 1,000 tokens, with generated code run in "
+            "an isolated Dynamic Worker sandbox. No sidecar to run — the "
+            "upstream is hosted at mcp.cloudflare.com; bring your own "
+            "Cloudflare API token (credentials stay encrypted at rest and "
+            "are sent to the upstream as a per-request bearer header)."
+        ),
+        config_schema=dict(_cloudflare_schema),
+        runtime="mcp-server",
+        runtime_config={
+            "url": "https://mcp.cloudflare.com",
+            "endpoint": "/mcp",
+            "env_mapping": {"CLOUDFLARE_API_TOKEN": "CF_API_TOKEN"},
+            "headers": {"Authorization": "Bearer {{CF_API_TOKEN}}"},
+            # Two tools in Code Mode (search/execute); admin discovery
+            # overwrites this with the authoritative tools/list.
+            "tool_names": ["search", "execute"],
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
+    cloudflare_full = MCPTemplate(
+        id="cloudflare-full",
+        name="Cloudflare (Full Endpoint Tools)",
+        repo_url="https://github.com/cloudflare/mcp",
+        description=(
+            "WARNING: the non-Code-Mode tool list exposes ~2,594 per-endpoint "
+            "tools (~244k tokens) — most agents cannot fit that in context; "
+            "use Cloudflare (Code Mode) for everyday work. Same hosted "
+            "upstream as the Code Mode template, with the full per-endpoint "
+            "tool list (?codemode=false). No sidecar to run; bring your own "
+            "Cloudflare API token."
+        ),
+        config_schema=dict(_cloudflare_schema),
+        runtime="mcp-server",
+        runtime_config={
+            "url": "https://mcp.cloudflare.com",
+            "endpoint": "/mcp?codemode=false",
+            "env_mapping": {"CLOUDFLARE_API_TOKEN": "CF_API_TOKEN"},
+            "headers": {"Authorization": "Bearer {{CF_API_TOKEN}}"},
+            # No tool_names: 2,594 tools is too many to seed — run admin
+            # discovery with a real token to populate discovered_tools.
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
     db = SessionLocal()
     try:
-        for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec, clarity, bookstack):
+        for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec, clarity, bookstack,
+                    cloudflare, cloudflare_full):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
                 existing.approved_by_admin = True
