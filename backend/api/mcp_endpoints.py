@@ -42,6 +42,7 @@ from database import User, get_db
 from models.mcp_models import MCPTemplate, MCPUserToolKey, UserMCPConfig
 from utils.crypto import decrypt_credentials, decrypt_secret, encrypt_credentials, encrypt_secret
 from utils.logging_setup import logger
+from utils.upstream import assert_public_upstream
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp-integrations"])
 
@@ -171,44 +172,9 @@ def _happyfox_base(domain: str) -> str:
     return f"{domain.rstrip('/')}/api/1.1/json"
 
 
-def _assert_public_upstream(url: str) -> None:
-    """SSRF guard for the legacy native path: the BACKEND itself dials this
-    URL (httpx) and returns the response, so the user-supplied host must be a
-    public HTTPS endpoint. Blocks:
-      - plain http (the Basic-auth credentials would travel in the clear),
-      - loopback / private / link-local / multicast / reserved targets, which
-        otherwise lets any connected user read internal services or the cloud
-        metadata endpoint (http://169.254.169.254) from the backend container.
-    IP literals are range-checked directly; hostnames are resolved and every
-    resolved address must be public. Sync on purpose (DNS) — call it via
-    asyncio.to_thread from async routes.
-    """
-    import ipaddress
-    import socket
-    from urllib.parse import urlparse
-
-    parsed = urlparse(url)
-    if parsed.scheme != "https":
-        raise HTTPException(status_code=400, detail="Upstream host must use https.")
-    host = parsed.hostname or ""
-    if not host:
-        raise HTTPException(status_code=400, detail="Upstream host is empty.")
-
-    try:
-        candidates = [ipaddress.ip_address(host)]
-    except ValueError:
-        try:
-            infos = socket.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
-        except socket.gaierror:
-            raise HTTPException(status_code=400, detail="Upstream host does not resolve.") from None
-        candidates = [ipaddress.ip_address(info[4][0]) for info in infos]
-    for ip in candidates:
-        # is_global (Python 3.11+) is False for loopback, RFC1918, CGNAT
-        # (100.64/10), link-local (incl. the cloud metadata 169.254.169.254),
-        # ULA, multicast, reserved and unspecified ranges — exactly the set of
-        # hosts the backend must never dial on a user's behalf.
-        if not ip.is_global:
-            raise HTTPException(status_code=400, detail="Upstream host resolves to a non-public address.")
+# The SSRF guard for the native-path dials below lives in
+# utils.upstream.assert_public_upstream (shared with the bridge's url
+# templates) and is imported at the top of this module.
 
 
 # ---------------------------------------------------------------------------
@@ -634,6 +600,7 @@ async def test_mcp_connection(
     # Sync dependency (threadpool): auth (JWT or Tool API Key — eekey route
     # scoping enforced there) + template lookup + credential decryption.
     context: tuple[MCPTemplate, dict[str, str], User] = Depends(get_proxy_context),
+    db: Session = Depends(get_db),
 ):
     """Validate stored credentials against the external API (read-only call).
 
@@ -649,8 +616,17 @@ async def test_mcp_connection(
         test_spec = rctx.get("test_tool") or {}
         test_name = test_spec.get("name")
         if not test_name:
-            raise HTTPException(status_code=500,
-                                detail="Template has no test_tool configured in runtime_config.")
+            # No known-schema test tool (e.g. token-based url templates):
+            # fall back to a handshake + tools/list through a short-lived
+            # instance. A bad token 401s at MCP initialize and the test
+            # fails cleanly; a guessed tool schema would false-fail valid
+            # tokens.
+            try:
+                tools = await mcp_bridge.discover_tools_for_template(
+                    db, current_user, template, creds)
+            except HTTPException as exc:
+                return {"status": "failed", "detail": str(exc.detail)[:200]}
+            return {"status": "ok", "detail": f"Connected - {len(tools)} tools discovered."}
         try:
             data, is_error = await mcp_bridge.bridge_call(
                 current_user, template, creds, test_name, test_spec.get("arguments") or {})
@@ -679,7 +655,7 @@ async def test_mcp_connection(
         raise HTTPException(status_code=400, detail="Stored credentials are incomplete.")
 
     base = _happyfox_base(domain)
-    await asyncio.to_thread(_assert_public_upstream, base)  # SSRF guard (DNS off-loop)
+    await asyncio.to_thread(assert_public_upstream, base)  # SSRF guard (DNS off-loop)
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.get(
@@ -888,7 +864,7 @@ async def _proxy_native(db: Session, template: MCPTemplate, user: User, creds: d
             raise HTTPException(status_code=400, detail=f"Missing required param '{m}' for {tool_name}.")
 
     base = _happyfox_base(creds.get("HAPPYFOX_DOMAIN", ""))
-    await asyncio.to_thread(_assert_public_upstream, base)  # SSRF guard (DNS off-loop)
+    await asyncio.to_thread(assert_public_upstream, base)  # SSRF guard (DNS off-loop)
     api_key = creds.get("HAPPYFOX_API_KEY", "")
     auth_code = creds.get("HAPPYFOX_AUTH_CODE", "")
 

@@ -12,8 +12,9 @@ import random
 import pytest
 from pydantic import ValidationError
 
-from api.mcp_endpoints import _assert_public_upstream, _happyfox_base
+from api.mcp_endpoints import _happyfox_base
 from schemas import UserLogin
+from utils.upstream import assert_public_upstream
 
 
 # ---------------------------------------------------------------------------
@@ -37,12 +38,12 @@ class TestNativePathSSRFGuard:
         from fastapi import HTTPException
 
         with pytest.raises(HTTPException) as exc:
-            _assert_public_upstream(url)
+            assert_public_upstream(url)
         assert exc.value.status_code == 400
 
     def test_allows_public_ip_literal(self):
         # IP literal: range-checked without DNS (deterministic, no network).
-        _assert_public_upstream("https://93.184.216.34")  # does not raise
+        assert_public_upstream("https://93.184.216.34")  # does not raise
 
     def test_happyfox_base_bare_host_gets_https(self):
         assert _happyfox_base("93.184.216.34") == "https://93.184.216.34/api/1.1/json"

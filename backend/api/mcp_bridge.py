@@ -69,6 +69,7 @@ from sqlalchemy.orm import Session
 from database import User
 from models.mcp_models import MCPSidecar, MCPTemplate
 from utils.logging_setup import logger
+from utils.upstream import assert_public_upstream
 
 # ---------------------------------------------------------------------------
 # Tunables (env-overridable)
@@ -126,6 +127,15 @@ def _runtime_config(template: MCPTemplate) -> dict[str, Any]:
     cfg = template.runtime_config or {}
     if not isinstance(cfg, dict):
         raise BridgeError("Template runtime_config is malformed.")
+    if cfg.get("url"):
+        # Hosted remote upstream (no sidecar to run): a fixed admin-registered
+        # URL is valid without image/command. Cheap scheme check only — the
+        # full DNS/public-IP guard runs once per registration, off-loop, in
+        # spawn_instance (this helper is sync and runs on the event loop).
+        url = str(cfg["url"]).strip()
+        if not url.lower().startswith("https://"):
+            raise BridgeError("Template runtime_config 'url' must use https.")
+        return cfg
     if INSTANCE_BACKEND == "docker" or cfg.get("image"):
         if not cfg.get("image"):
             raise BridgeError("Template runtime_config is missing 'image'.")
@@ -589,12 +599,20 @@ async def spawn_instance(template: MCPTemplate, key: str,
     headers = headers or {}
 
     if cfg.get("url"):
-        # Fixed upstream endpoint (no per-user env possible) -- rare, e.g. for
-        # discovery probing of public servers.
+        # Hosted remote upstream (no sidecar to run): register the fixed URL.
+        # Per-user auth rides the per-request headers (see _sidecar_headers);
+        # the URL itself is admin-registered, not user-supplied.
+        url = str(cfg["url"]).strip()
         endpoint = str(cfg.get("endpoint") or "/mcp")
         if not endpoint.startswith("/"):
             endpoint = "/" + endpoint
-        inst = Instance(key=key, kind="url", url=str(cfg["url"]).rstrip("/") + endpoint,
+        try:
+            # Full SSRF guard (DNS) once per registration, off-loop; reused
+            # instances never re-run it.
+            await asyncio.to_thread(assert_public_upstream, url)
+        except HTTPException as exc:
+            raise BridgeError(f"Template upstream rejected: {exc.detail}") from exc
+        inst = Instance(key=key, kind="url", url=url.rstrip("/") + endpoint,
                         headers=headers, ephemeral=ephemeral)
         _REGISTRY[key] = inst
         logger.info(f"mcp-bridge: registered url instance {template.id} key={key[:12]}")
