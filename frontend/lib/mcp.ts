@@ -28,6 +28,8 @@ export const APP_ICONS: Record<string, string> = {
   'trmm-exec': '/app-icons/trmm.png',
   clarity: '/app-icons/clarity.png',
   bookstack: '/app-icons/bookstack.png',
+  cloudflare: '/app-icons/cloudflare.png',
+  'cloudflare-full': '/app-icons/cloudflare.png',
 };
 
 export function templateIcon(templateId: string): string | null {
