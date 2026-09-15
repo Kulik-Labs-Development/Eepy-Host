@@ -26,15 +26,17 @@ interface Props {
   templateId: string;
   templateName: string;
   schema: TemplateSchema | undefined;
+  authMode?: string | null;
   onSuccess: (result: { configId: number; proxyUrl: string }) => void;
   onClose: () => void;
 }
 
-export default function MCPConnectionWizard({ templateId, templateName, schema, onSuccess, onClose }: Props) {
+export default function MCPConnectionWizard({ templateId, templateName, schema, authMode, onSuccess, onClose }: Props) {
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [oauthDone, setOauthDone] = useState(false);
 
   const properties = schema?.properties || {};
   const required = new Set(schema?.required || Object.keys(properties).filter((k) => properties[k].required));
@@ -46,6 +48,57 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
 
   const toggleVisibility = (field: string) =>
     setShowPasswords((prev) => ({ ...prev, [field]: !prev[field] }));
+
+  // OAuth login mode (hosted remote MCP, e.g. Uber): no API key to type —
+  // the user logs in at the provider and the callback stores the tokens.
+  const authedFetch = (path: string, init?: RequestInit) => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('eepy_token') : null;
+    return fetch(`${getApiUrl()}${path}`, {
+      ...init,
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(init?.headers || {}) },
+    });
+  };
+
+  const startOAuth = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await authedFetch(`/api/mcp/config/${templateId}/oauth/authorize`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || `Backend returned ${res.status}`);
+      }
+      window.open(data.url, '_blank', 'noopener');
+      setOauthDone(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const checkConnection = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await authedFetch('/api/mcp/config/list');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || `Backend returned ${res.status}`);
+      }
+      const rows: { id: number; template_name?: string }[] =
+        Array.isArray(data) ? data : data.configs || [];
+      const row = rows.find((c) => c.template_name === templateId);
+      if (!row) {
+        throw new Error('Connection not found — finish the login in the opened tab, then try again.');
+      }
+      onSuccess({ configId: row.id, proxyUrl: `/api/mcp/proxy/${templateId}` });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -104,6 +157,36 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
           </button>
         </header>
 
+        {authMode === 'oauth' ? (
+          <div className="space-y-4 mb-6">
+            <p className="text-xs text-ink-dim font-body leading-relaxed">
+              You&apos;ll be redirected to log in with {templateName}. Your tokens are stored
+              encrypted and refresh automatically — no API key to enter.
+            </p>
+            {error && (
+              <p className="text-sm text-eepy-ember mb-0 bg-eepy-ember/10 border-l-4 border-eepy-ember p-3 font-body">
+                {error}
+              </p>
+            )}
+            {oauthDone ? (
+              <button type="button" onClick={checkConnection} disabled={loading} className="btn btn-blush w-full py-3">
+                {loading ? (
+                  <><Loader2 size={16} className="animate-spin" /> Checking...</>
+                ) : (
+                  <><CheckCircle2 size={16} /> I finished logging in</>
+                )}
+              </button>
+            ) : (
+              <button type="button" onClick={startOAuth} disabled={loading} className="btn btn-blush w-full py-3">
+                {loading ? (
+                  <><Loader2 size={16} className="animate-spin" /> Opening login...</>
+                ) : (
+                  <><ShieldCheck size={16} /> Log in with {templateName}</>
+                )}
+              </button>
+            )}
+          </div>
+        ) : (
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 mb-6">
             {Object.entries(properties).map(([key, prop]) => (
@@ -162,6 +245,7 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
             )}
           </button>
         </form>
+        )}
       </div>
     </div>
   );
