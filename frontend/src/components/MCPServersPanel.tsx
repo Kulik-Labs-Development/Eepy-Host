@@ -518,6 +518,7 @@ export default function MCPServersPanel({ mode }: Props) {
           templateId={wizardTemplate.id}
           templateName={wizardTemplate.name}
           schema={wizardTemplate.config_schema}
+          authMode={wizardTemplate.auth_mode}
           onSuccess={() => {
             setWizardTemplate(null);
             refresh();

@@ -44,7 +44,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy.orm import Session
 
-from api import mcp_bridge
+from api import mcp_bridge, mcp_oauth
 from api.mcp_endpoints import (
     MCP_STREAM_PATH,
     TEMPLATE_REGISTRY,
@@ -281,6 +281,13 @@ async def _call_tool(name: str, arguments: dict | None) -> types.CallToolResult:
 
     if template.runtime == "mcp-server":
         known = {t.get("name") for t in (template.discovered_tools or []) if isinstance(t, dict)}
+
+        try:
+            fresh = await mcp_oauth.ensure_fresh_token(user, template, creds)
+        except HTTPException as exc:
+            return _error_result(str(exc.detail))
+        if fresh is not None:
+            creds = fresh
         if known and tool_name not in known:
             allowed = ", ".join(sorted(n for n in known if n))[:500]
             return _error_result(f"Unknown tool '{tool_name}' for {template_id} (allowed: {allowed}).")

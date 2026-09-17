@@ -24,6 +24,7 @@ Security model:
 
 import asyncio
 import hashlib
+import html
 import re
 import secrets
 from datetime import UTC, datetime
@@ -32,11 +33,14 @@ from typing import Any
 import httpx
 from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from api import mcp_bridge  # absolute import: Uvicorn runs main.py top-level
+from api import (
+    mcp_bridge,  # absolute import: Uvicorn runs main.py top-level
+    mcp_oauth,
+)
 from auth import decode_access_token, verify_password
 from database import User, get_db
 from models.mcp_models import MCPTemplate, MCPUserToolKey, UserMCPConfig
@@ -89,6 +93,8 @@ class TemplateOut(BaseModel):
     repo_url: str | None = None
     approved_by_admin: bool
     enabled_global: bool
+
+    auth_mode: str | None = None  # "oauth" = per-user OAuth login (hosted remote MCP), else None
 
 
 class ConfigOut(BaseModel):
@@ -469,6 +475,8 @@ def list_templates(
             repo_url=t.repo_url,
             approved_by_admin=t.approved_by_admin,
             enabled_global=t.enabled_global,
+
+            auth_mode="oauth" if mcp_oauth.oauth_config(t) else None,
         )
         for t in templates
     ]
@@ -609,6 +617,104 @@ def mcp_proxy_url(
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Hosted remote MCP: per-user OAuth login (Uber / Uber Eats class)
+# ---------------------------------------------------------------------------
+def _oauth_page(message: str, status: int = 200) -> HTMLResponse:
+    """The result page shown in the browser tab the provider bounces to."""
+    return HTMLResponse(
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<title>Eepy</title><style>body{background:#0f1115;color:#e6e6e6;"
+        "font-family:system-ui,sans-serif;display:flex;align-items:center;"
+        "justify-content:center;height:100vh;margin:0}"
+        "div{max-width:26rem;text-align:center;line-height:1.6}"
+        "</style></head><body><div>" + message + "</div></body></html>",
+        status_code=status,
+    )
+
+
+@router.post("/config/{template_id}/oauth/authorize")
+def mcp_oauth_authorize(
+    template_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Start a per-user OAuth login: returns the provider's authorize URL.
+
+    The browser opens that URL (authorization code + PKCE); after the user
+    logs in, the provider bounces to GET /api/mcp/oauth/callback.
+    """
+    template = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
+    if not template or not template.approved_by_admin or not template.enabled_global:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' is not available.")
+    rc = template.runtime_config or {}
+    if not isinstance(rc.get("oauth"), dict):
+        raise HTTPException(status_code=400, detail=f"Template '{template_id}' has no OAuth login.")
+    if mcp_oauth.oauth_config(template) is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OAuth login not fully configured yet (provider client_id missing).",
+        )
+    try:
+        url = mcp_oauth.build_authorize_url(template, current_user.id, str(request.base_url))
+    except mcp_oauth.OAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"url": url}
+
+
+@router.get("/oauth/callback")
+async def mcp_oauth_callback(
+    request: Request,
+    code: str = Query(default=""),
+    state: str = Query(default=""),
+    db: Session = Depends(get_db),
+):
+    """Public OAuth callback — the state JWT (not a session) authenticates it.
+
+    Exchange the code for tokens and Fernet-encrypt them into the user's
+    config row (same table and at-rest guarantees as every other template).
+    Errors are rendered user-safe: no tokens, no secrets, provider text
+    escaped.
+    """
+    payload = mcp_oauth.decode_state(state)
+    if not payload:
+        return _oauth_page("<b>Login state is invalid or expired.</b><br>Try connecting again.",
+                           status=400)
+    try:
+        user_id = int(payload["sub"])
+    except (KeyError, TypeError, ValueError):
+        return _oauth_page("<b>Login state is invalid.</b><br>Try connecting again.", status=400)
+    user = db.query(User).filter(User.id == user_id).first()
+    template = db.query(MCPTemplate).filter(MCPTemplate.id == payload.get("tid")).first()
+    if not user or not template:
+        return _oauth_page("<b>Login state is invalid.</b><br>Try connecting again.", status=400)
+    if not template.approved_by_admin or not template.enabled_global:
+        return _oauth_page("<b>This integration is no longer available.</b>", status=400)
+    cfg = mcp_oauth.oauth_config(template)
+    if not cfg:
+        return _oauth_page("<b>This integration is not configured for OAuth login.</b>", status=400)
+    if not code:
+        return _oauth_page("<b>Login failed: the provider did not return a code.</b>", status=400)
+    base = str(request.base_url).rstrip("/")
+    redirect_uri = str(cfg.get("redirect_uri") or f"{base}/api/mcp/oauth/callback")
+    try:
+        tokens = await asyncio.to_thread(
+            mcp_oauth.exchange_code, cfg, code, payload["cv"], redirect_uri)
+    except mcp_oauth.OAuthError as exc:
+        return _oauth_page(f"<b>Login failed.</b><br>{html.escape(str(exc))}", status=400)
+    try:
+        await asyncio.to_thread(
+            mcp_oauth.store_tokens, user.id, template, mcp_oauth.tokens_to_creds(tokens))
+    except ValueError:
+        return _oauth_page(
+            "<b>Login completed, but token storage is not configured on the server.</b>",
+            status=400)
+    label = html.escape(str(cfg.get("auth_label") or template.name))
+    return _oauth_page(f"<b>Connected to {label}.</b><br>You can close this tab and go back to Eepy.")
+
+
 # ---------------------------------------------------------------------------
 # Connection test
 # ---------------------------------------------------------------------------
@@ -632,6 +738,10 @@ async def test_mcp_connection(
     if template.runtime == "mcp-server":
         rctx = template.runtime_config or {}
         test_spec = rctx.get("test_tool") or {}
+
+        fresh = await mcp_oauth.ensure_fresh_token(current_user, template, creds)
+        if fresh is not None:
+            creds = fresh
         test_name = test_spec.get("name")
         if not test_name:
             # No known-schema test tool (e.g. token-based url templates):
@@ -847,6 +957,10 @@ async def _proxy_mcp_server(db: Session, template: MCPTemplate, user: User,
     if known and tool_name not in known:
         raise HTTPException(status_code=404, detail=f"Unknown tool '{tool_name}'.",
                             headers={"X-Allowed-Tools": ", ".join(sorted(n for n in known if n))})
+
+    fresh = await mcp_oauth.ensure_fresh_token(user, template, creds)
+    if fresh is not None:
+        creds = fresh
     try:
         data, is_error = await mcp_bridge.bridge_call(user, template, creds, tool_name, params or {})
     except mcp_bridge.BridgeError as exc:

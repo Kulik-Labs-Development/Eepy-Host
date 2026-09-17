@@ -1373,14 +1373,76 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
+    # Hosted OAuth templates (Uber / Uber Eats): per-user browser login, no
+    # sidecar. They stay hidden until a provider-issued client_id is deployed
+    # (UBER_MCP_CLIENT_ID env, or a runtime_config PATCH by an admin) — the
+    # approval flag below is env-driven, so a stale client_id rolls back on
+    # the next boot.
+    uber_client_id = os.getenv("UBER_MCP_CLIENT_ID", "").strip()
+
+    def _uber_oauth(label: str, scopes: str) -> dict:
+        return {
+            "authorize_endpoint": "https://auth.uber.com/oauth/v2/universal/authorize",
+            "token_endpoint": "https://auth.uber.com/oauth/v2/token",
+            "client_id": uber_client_id,
+            "scopes": scopes,
+            "auth_label": label,
+        }
+
+    uber = MCPTemplate(
+        id="uber",
+        name="Uber Rides",
+        description=(
+            "Request and manage rides through Uber's hosted MCP server "
+            "(mcp.uber.com). No sidecar to run and no API key to enter: "
+            "users log in to their own Uber account in the browser (OAuth "
+            "authorization code + PKCE); the resulting tokens are stored "
+            "encrypted and refreshed automatically."
+        ),
+        config_schema={},
+        runtime="mcp-server",
+        runtime_config={
+            "url": "https://mcp.uber.com",
+            "endpoint": "/claude/rides-3p/mcp",
+            "env_mapping": {"access_token": "UBER_ACCESS_TOKEN"},
+            "headers": {"Authorization": "Bearer {{UBER_ACCESS_TOKEN}}"},
+            "oauth": _uber_oauth("Uber", "openid offline_access profile email 3p.rides.mcp"),
+        },
+        approved_by_admin=bool(uber_client_id),
+        enabled_global=True,
+    )
+
+    ubereats = MCPTemplate(
+        id="ubereats",
+        name="Uber Eats",
+        description=(
+            "Order food through Uber Eats' hosted MCP server (mcp.ubereats.com). "
+            "No sidecar to run and no API key to enter: users log in to their "
+            "own Uber Eats account in the browser (OAuth authorization code + "
+            "PKCE); the resulting tokens are stored encrypted and refreshed "
+            "automatically."
+        ),
+        config_schema={},
+        runtime="mcp-server",
+        runtime_config={
+            "url": "https://mcp.ubereats.com",
+            "endpoint": "/eats-claude/mcp",
+            "env_mapping": {"access_token": "UBER_ACCESS_TOKEN"},
+            "headers": {"Authorization": "Bearer {{UBER_ACCESS_TOKEN}}"},
+            "oauth": _uber_oauth("Uber Eats", "openid offline_access profile email eats.3p.mcp"),
+        },
+        approved_by_admin=bool(uber_client_id),
+        enabled_global=True,
+    )
+
     db = SessionLocal()
     try:
         for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec, clarity, bookstack,
-                    cloudflare, cloudflare_full):
+                    cloudflare, cloudflare_full, uber, ubereats):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
-                existing.approved_by_admin = True
-                existing.enabled_global = True
+                existing.approved_by_admin = spec.approved_by_admin
+                existing.enabled_global = spec.enabled_global
                 existing.description = spec.description
                 existing.config_schema = spec.config_schema
                 existing.image_tag = spec.image_tag

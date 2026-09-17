@@ -8,6 +8,7 @@ export interface Template {
   config_schema?: TemplateSchema & { category?: string };
   image_tag?: string | null;
   repo_url?: string | null;
+  auth_mode?: string | null; // "oauth" = per-user OAuth login wizard (hosted remote MCP)
 }
 
 export function authHeaders(): Record<string, string> {
