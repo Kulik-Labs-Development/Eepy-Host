@@ -252,15 +252,19 @@ def seed_mcp_templates():
             "test_tool": {"name": "list_tickets", "arguments": {"status": "_pending", "size": 1}},
             # Best-effort tool list for the OpenAPI spec until admin discovery
             # stores the authoritative tools/list (from the upstream repo).
-            # Kept in sync with integrations/happyfox-mcp (16 tools at submodule
-            # commit 91906dc, verified through the subprocess sidecar path).
+            # Kept in sync with integrations/happyfox-mcp (23 tools at submodule
+            # commit 6570351, verified through the subprocess sidecar path).
             "tool_names": [
-                "list_tickets", "get_ticket_details", "get_ticket_messages",
-                "get_ticket_attachments", "download_attachment", "list_statuses",
-                "list_categories", "list_staff", "list_priorities",
-                "add_ticket_update", "create_ticket", "assign_ticket",
-                "suggest_ticket_rename", "change_ticket_status",
+                "check_connection", "list_tickets", "get_ticket_details",
+                "get_ticket_messages", "get_ticket_attachments",
+                "download_attachment", "list_statuses", "list_categories",
+                "list_priorities", "list_staff", "list_ticket_custom_fields",
+                "list_contacts", "get_contact", "add_ticket_update",
+                "create_ticket", "suggest_ticket_rename",
+                "change_ticket_status", "assign_ticket",
                 "change_ticket_priority", "change_ticket_category",
+                "update_ticket_tags", "set_ticket_due_date",
+                "update_ticket_custom_fields",
             ],
         },
         approved_by_admin=True,

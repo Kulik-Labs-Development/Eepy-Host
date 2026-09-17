@@ -586,11 +586,11 @@ def test_real_happyfox_submodule_subprocess_path(client, auth_user):
         assert r.json()["status"] == "failed", r.json()
 
         # Admin discovery against the real server: the pinned submodule commit
-        # (91906dc) exposes exactly the 16 tools listed in the production seed.
+        # (6570351) exposes exactly the 23 tools listed in the production seed.
         r = client.post(f"/superuser/mcp/templates/{template_id}/discover",
                         headers=_h(auth_user["token"]))
         assert r.status_code == 200, r.text
-        assert r.json()["tool_count"] == 16, r.json()
+        assert r.json()["tool_count"] == 23, r.json()
         assert "download_attachment" in r.json()["tools"]
     finally:
         from api import mcp_bridge
