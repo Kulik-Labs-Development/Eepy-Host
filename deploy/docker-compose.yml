@@ -76,6 +76,11 @@ services:
       # superuser at boot and on its login (idempotent). Needed for the Debug
       # Log console and the superuser admin tools.
       - SUPERUSER_USERNAME=${SUPERUSER_USERNAME:-}
+      # Optional: Uber MCP OAuth client ID (a developer.uber.com application).
+      # When set, the Uber / Uber Eats MCP templates are enabled in the
+      # dashboard and users can connect with Uber OAuth; when empty, the rows
+      # stay hidden. Put the value in stack.env next to the other secrets.
+      - UBER_MCP_CLIENT_ID=${UBER_MCP_CLIENT_ID:-}
     # host.docker.internal -> Docker host, so the backend can dial the
     # loopback-bound sidecar ports (EEPY_MCP_DOCKER_HOST above).
     extra_hosts:
