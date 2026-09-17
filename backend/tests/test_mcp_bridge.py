@@ -237,6 +237,29 @@ def test_tool_key_still_rejected_on_management_routes(client, auth_user):
     assert r.status_code == 401
 
 
+def test_bookstack_register_rejects_url_without_api_suffix(client, auth_user):
+    """Fail-fast at connect time (the 2026-09-16 incident): the BookStack
+    MCP server uses BOOKSTACK_URL verbatim as the API base URL, so a URL
+    without the /api suffix makes every tool call hit the site's HTML
+    routes and return the login page instead of API JSON."""
+    creds = {
+        "BOOKSTACK_URL": "https://docs.example.com",
+        "BOOKSTACK_TOKEN": "fake-token-id:fake-secret",
+    }
+    r = client.post("/api/mcp/config/register",
+                    headers=_h(auth_user["token"]),
+                    json={"template_id": "bookstack", "credentials_json": creds})
+    assert r.status_code == 400, r.text
+    assert "/api" in r.json()["detail"]
+
+    # The suffix is accepted; a trailing slash is tolerated.
+    creds["BOOKSTACK_URL"] = "https://docs.example.com/api/"
+    r = client.post("/api/mcp/config/register",
+                    headers=_h(auth_user["token"]),
+                    json={"template_id": "bookstack", "credentials_json": creds})
+    assert r.status_code == 200, r.text
+
+
 def test_tool_key_works_on_proxy(client, auth_user, fake_template_id):
     r = client.post(f"/api/mcp/proxy/{fake_template_id}/list_items",
                     headers=_h(auth_user["eekey"]), json={"limit": 1})

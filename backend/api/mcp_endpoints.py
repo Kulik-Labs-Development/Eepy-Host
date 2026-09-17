@@ -489,6 +489,24 @@ def register_mcp_config(
         raise HTTPException(status_code=404, detail=f"Template '{body.template_id}' is not available.")
 
     creds = dict(body.credentials_json)
+
+    if body.template_id == "bookstack":
+        # Fail-fast at connect time: the BookStack MCP server uses
+        # BOOKSTACK_URL verbatim as the API base URL (it does not append
+        # /api), so a URL without the /api suffix makes every tool call
+        # hit the site's HTML routes and come back as the login page.
+        bookstack_url = str(creds.get("BOOKSTACK_URL") or "").strip().rstrip("/")
+        if bookstack_url and not bookstack_url.lower().endswith("/api"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "BOOKSTACK_URL must include the /api suffix "
+                    "(e.g. https://docs.example.com/api). The BookStack server "
+                    "uses it verbatim as the API base URL; without /api, every "
+                    "tool call returns the site's login page instead of API "
+                    "responses."
+                ),
+            )
     try:
         encrypted_blob = encrypt_credentials(creds)
     except ValueError as err:
