@@ -31,6 +31,8 @@ export const APP_ICONS: Record<string, string> = {
   bookstack: '/app-icons/bookstack.png',
   cloudflare: '/app-icons/cloudflare.png',
   'cloudflare-full': '/app-icons/cloudflare.png',
+  uber: '/app-icons/uber.png',
+  ubereats: '/app-icons/ubereats.png',
 };
 
 export function templateIcon(templateId: string): string | null {
