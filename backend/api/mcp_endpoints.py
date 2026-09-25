@@ -498,6 +498,18 @@ def register_mcp_config(
 
     creds = dict(body.credentials_json)
 
+    existing = (
+        db.query(UserMCPConfig)
+        .filter(UserMCPConfig.owner_id == current_user.id, UserMCPConfig.template_name == body.template_id)
+        .first()
+    )
+    old_creds: dict = {}
+    if existing:
+        try:
+            old_creds = decrypt_credentials(existing.credentials_json)
+        except Exception:
+            old_creds = {}
+
     if body.template_id == "bookstack":
         # Fail-fast at connect time: the BookStack MCP server uses
         # BOOKSTACK_URL verbatim as the API base URL (it does not append
@@ -515,16 +527,54 @@ def register_mcp_config(
                     "responses."
                 ),
             )
+        # The UI submits the token as two fields (ID + secret); the sidecar
+        # expects the combined token_id:token_secret form, so join here.
+        # An empty pair on an EDIT keeps the stored token (the user may only
+        # be changing the URL); the legacy combined form is still accepted.
+        token_id = str(creds.pop("BOOKSTACK_TOKEN_ID", "") or "").strip()
+        token_secret = str(creds.pop("BOOKSTACK_TOKEN_SECRET", "") or "").strip()
+        combined = str(creds.pop("BOOKSTACK_TOKEN", "") or "").strip()
+        if not (token_id or token_secret or combined):
+            old_token = str(old_creds.get("BOOKSTACK_TOKEN") or "").strip()
+            if existing and old_token:
+                creds["BOOKSTACK_TOKEN"] = old_token
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="BookStack requires both the Token ID and the Token Secret.",
+                )
+        elif token_id or token_secret:
+            if not (token_id and token_secret):
+                raise HTTPException(
+                    status_code=400,
+                    detail="BookStack requires both the Token ID and the Token Secret together.",
+                )
+            creds["BOOKSTACK_TOKEN"] = f"{token_id}:{token_secret}"
+        elif combined:
+            head, sep, tail = combined.partition(":")
+            if sep and head.strip() and tail.strip():
+                creds["BOOKSTACK_TOKEN"] = f"{head.strip()}:{tail.strip()}"
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="BookStack token must be the combined token_id:token_secret form.",
+                )
+    else:
+        # Edit semantics: an empty password field means "keep the stored
+        # secret" (the UI cannot prefill it — secrets are never read back).
+        props = (template.config_schema or {}).get("properties") or {}
+        for key in list(creds):
+            if (
+                str(creds.get(key) or "").strip() == ""
+                and (props.get(key) or {}).get("type") == "password"
+                and key in old_creds
+            ):
+                creds[key] = old_creds[key]
+
     try:
         encrypted_blob = encrypt_credentials(creds)
     except ValueError as err:
         raise HTTPException(status_code=500, detail="Credential encryption is not configured on the server.") from err
-
-    existing = (
-        db.query(UserMCPConfig)
-        .filter(UserMCPConfig.owner_id == current_user.id, UserMCPConfig.template_name == body.template_id)
-        .first()
-    )
 
     if existing:
         existing.credentials_json = encrypted_blob
@@ -565,6 +615,40 @@ def list_my_configs(
         .all()
     )
     return [_config_to_out(c) for c in configs]
+
+
+@router.get("/config/{template_id}/credentials/prefill")
+def get_credentials_prefill(
+    template_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Non-secret credential values for the edit wizard to prefill.
+
+    Password-type fields (per the template schema) are NEVER returned —
+    secrets are write-only; the edit flow keeps them when left blank.
+    Keys that are not in the current schema are also excluded (e.g. the
+    legacy combined BookStack token).
+    """
+    cfg = (
+        db.query(UserMCPConfig)
+        .filter(UserMCPConfig.owner_id == current_user.id, UserMCPConfig.template_name == template_id)
+        .first()
+    )
+    if not cfg:
+        raise HTTPException(status_code=404, detail="Not found")
+    template = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
+    props = ((template.config_schema or {}).get("properties") or {}) if template else {}
+    try:
+        creds = decrypt_credentials(cfg.credentials_json)
+    except Exception:
+        return {"template_id": template_id, "prefill": {}}
+    prefill = {
+        k: str(v)
+        for k, v in creds.items()
+        if k in props and (props.get(k) or {}).get("type") != "password"
+    }
+    return {"template_id": template_id, "prefill": prefill}
 
 
 @router.delete("/config/{template_id}")

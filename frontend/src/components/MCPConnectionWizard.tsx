@@ -27,12 +27,16 @@ interface Props {
   templateName: string;
   schema: TemplateSchema | undefined;
   authMode?: string | null;
+  /** Edit mode: prefill non-secret fields, and empty fields keep the stored value. */
+  isEdit?: boolean;
+  /** Non-secret credential values to prefill the form with (edit mode). */
+  initialValues?: Record<string, string>;
   onSuccess: (result: { configId: number; proxyUrl: string }) => void;
   onClose: () => void;
 }
 
-export default function MCPConnectionWizard({ templateId, templateName, schema, authMode, onSuccess, onClose }: Props) {
-  const [formData, setFormData] = useState<Record<string, string>>({});
+export default function MCPConnectionWizard({ templateId, templateName, schema, authMode, isEdit, initialValues, onSuccess, onClose }: Props) {
+  const [formData, setFormData] = useState<Record<string, string>>(initialValues || {});
   const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -105,8 +109,9 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
     setLoading(true);
     setError('');
 
-    // Client-side preflight: required fields populated.
-    const missing = Array.from(required).filter((f) => !formData[f]?.trim());
+    // Client-side preflight: required fields populated. In edit mode an
+    // empty field means "keep the stored value", so required is not enforced.
+    const missing = Array.from(required).filter((f) => !formData[f]?.trim() && !isEdit);
     if (missing.length > 0) {
       setError(`Missing required fields: ${missing.join(', ')}`);
       setLoading(false);
@@ -148,9 +153,13 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
           <div className="min-w-0">
             <h2 className="font-pixel font-bold text-base sm:text-lg flex items-center gap-2 text-ink">
               <ShieldCheck className="text-eepy-sage" size={18} shrink-0 />
-              <span className="truncate">Connect: {templateName}</span>
+              <span className="truncate">{isEdit ? 'Edit' : 'Connect'}: {templateName}</span>
             </h2>
-            <p className="text-xs text-ink-dim mt-1.5 font-body">Credentials are encrypted at rest (Fernet) on the server.</p>
+            <p className="text-xs text-ink-dim mt-1.5 font-body">
+              {isEdit
+                ? 'Leave a field blank to keep its current value. Secrets are never shown — leave password fields blank to keep them.'
+                : 'Credentials are encrypted at rest (Fernet) on the server.'}
+            </p>
           </div>
           <button onClick={onClose} className="btn-icon shrink-0" aria-label="Close">
             <X size={16} />
@@ -238,6 +247,10 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
               </>
             ) : error ? (
               'Retry Connection'
+            ) : isEdit ? (
+              <>
+                <CheckCircle2 size={16} /> Save Changes
+              </>
             ) : (
               <>
                 <CheckCircle2 size={16} /> Connect &amp; Encrypt Credentials
