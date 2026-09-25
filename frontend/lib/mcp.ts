@@ -33,6 +33,7 @@ export const APP_ICONS: Record<string, string> = {
   'cloudflare-full': '/app-icons/cloudflare.png',
   uber: '/app-icons/uber.png',
   ubereats: '/app-icons/ubereats.png',
+  'microsoft-365': '/app-icons/microsoft.png',
 };
 
 export function templateIcon(templateId: string): string | null {

@@ -1442,10 +1442,71 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
+    # Microsoft 365 (work/school) — Microsoft's hosted MCP Server for
+    # Enterprise (public preview, read-only Entra scenarios). Delegated auth
+    # only: the tenant's IT admin registers ONE public (PKCE) app per tenant
+    # and grants it the MCP server's permissions; every user then pastes the
+    # app's client ID (CLIENT_ID) and signs in with their own work account.
+    # No sidecar, no app on our side, no client_secret.
+    microsoft365 = MCPTemplate(
+        id="microsoft-365",
+        name="Microsoft 365 (work/school)",
+        description=(
+            "Query your work/school tenant (Microsoft Entra identity and "
+            "directory) through Microsoft's hosted MCP Server for Enterprise. "
+            "No sidecar to run and no API key: your IT admin registers one "
+            "app for the tenant and grants it MCP permissions, then each user "
+            "enters that app's client ID and signs in to their own work "
+            "account in the browser (OAuth authorization code + PKCE); tokens "
+            "are stored encrypted and refreshed automatically. Public "
+            "preview: read-only Entra scenarios — M365 app data comes via "
+            "Microsoft's Agent 365."
+        ),
+        config_schema={
+            "properties": {
+                "CLIENT_ID": {
+                    "type": "string",
+                    "label": "Your tenant's Eepy app client ID",
+                    "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+                    "help": (
+                        "Microsoft Entra admin center > App registrations: have your IT admin "
+                        "register a single-tenant app (platform 'Mobile and desktop applications', "
+                        "redirect URI https://api.eepy.host/api/mcp/oauth/callback) and grant it "
+                        "the Microsoft MCP Server's permissions (e.g. MCP.User.Read.All), then "
+                        "paste the app's Application (client) ID here. Leave blank when editing "
+                        "to keep it."
+                    ),
+                },
+            },
+            "required": ["CLIENT_ID"],
+        },
+        runtime="mcp-server",
+        runtime_config={
+            "url": "https://mcp.svc.cloud.microsoft",
+            "endpoint": "/enterprise",
+            "env_mapping": {"access_token": "M365_ACCESS_TOKEN"},
+            "headers": {"Authorization": "Bearer {{M365_ACCESS_TOKEN}}"},
+            "oauth": {
+                "authorize_endpoint": "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
+                "token_endpoint": "https://login.microsoftonline.com/organizations/oauth2/v2.0/token",
+                # Public (PKCE) client — no client_secret. The client_id is
+                # per-tenant: it comes from the user's CLIENT_ID config field
+                # (client_id_field), not from runtime_config.
+                "client_id": "",
+                "client_id_field": "CLIENT_ID",
+                "scopes": "api://e8c77dc2-69b3-43f4-bc51-3213c9d915b4/.default",
+                "auth_label": "Microsoft 365 (work/school)",
+            },
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+        repo_url="https://github.com/microsoft/enterprisemcp",
+    )
+
     db = SessionLocal()
     try:
         for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec, clarity, bookstack,
-                    cloudflare, cloudflare_full, uber, ubereats):
+                    cloudflare, cloudflare_full, uber, ubereats, microsoft365):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
                 existing.approved_by_admin = spec.approved_by_admin

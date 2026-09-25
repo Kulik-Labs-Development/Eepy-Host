@@ -44,8 +44,46 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
 
   const properties = schema?.properties || {};
   const required = new Set(schema?.required || Object.keys(properties).filter((k) => properties[k].required));
+  const hasFields = Object.keys(properties).length > 0;
 
   const isPassword = (key: string) => properties[key]?.type === 'password';
+
+  // The schema-driven field list (shared by the plain form and the
+  // OAuth-with-fields flow, e.g. Microsoft 365's tenant client ID).
+  const renderFields = () => (
+    <div className="space-y-4">
+      {Object.entries(properties).map(([key, prop]) => (
+        <div key={key}>
+          <label className="label-pixel flex items-center gap-2">
+            {prop.label || key}
+            {required.has(key) && <span className="w-2 h-2 bg-eepy-ember inline-block" title="Required" />}
+          </label>
+          <div className="relative">
+            <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-dim" />
+            <input
+              type={isPassword(key) && !showPasswords[key] ? 'password' : 'text'}
+              required={required.has(key)}
+              placeholder={prop.placeholder || key}
+              value={formData[key] || ''}
+              onChange={(e) => setField(key, e.target.value)}
+              className="input-pixel pl-9 pr-10"
+            />
+            {isPassword(key) && (
+              <button
+                type="button"
+                onClick={() => toggleVisibility(key)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-dim hover:text-eepy-blush transition-colors"
+                aria-label={showPasswords[key] ? 'Hide value' : 'Show value'}
+              >
+                {showPasswords[key] ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            )}
+          </div>
+          {prop.help && <p className="text-xs text-ink-dim mt-1.5 font-body">{prop.help}</p>}
+        </div>
+      ))}
+    </div>
+  );
 
   const setField = (field: string, value: string) =>
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -138,6 +176,12 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
         throw new Error(data.detail || `Backend returned ${res.status}`);
       }
 
+      if (authMode === 'oauth') {
+        // OAuth template with config fields (Microsoft 365's tenant
+        // client ID): the register saved them — now open the provider login.
+        await startOAuth();
+        return;
+      }
       onSuccess({ configId: data.id, proxyUrl: data.proxy_url || `/api/mcp/proxy/${templateId}` });
     } catch (err) {
       // Error strings from the backend are safe (no secrets in them by design).
@@ -169,9 +213,23 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
         {authMode === 'oauth' ? (
           <div className="space-y-4 mb-6">
             <p className="text-xs text-ink-dim font-body leading-relaxed">
-              You&apos;ll be redirected to log in with {templateName}. Your tokens are stored
-              encrypted and refresh automatically — no API key to enter.
+              {hasFields
+                ? `Enter your tenant details below, then you'll be redirected to log in with ${templateName}.`
+                : `You'll be redirected to log in with ${templateName}. No API key to enter.`}{' '}
+              Your tokens are stored encrypted and refresh automatically.
             </p>
+            {hasFields && !oauthDone && (
+              <form id="mcp-cred-form" onSubmit={handleSubmit} className="space-y-4">
+                {renderFields()}
+                <button type="submit" disabled={loading} className="btn btn-blush w-full py-3">
+                  {loading ? (
+                    <><Loader2 size={16} className="animate-spin" /> Saving &amp; opening login...</>
+                  ) : (
+                    <><ShieldCheck size={16} /> Save &amp; open {templateName} login</>
+                  )}
+                </button>
+              </form>
+            )}
             {error && (
               <p className="text-sm text-eepy-ember mb-0 bg-eepy-ember/10 border-l-4 border-eepy-ember p-3 font-body">
                 {error}
@@ -186,48 +244,21 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
                 )}
               </button>
             ) : (
-              <button type="button" onClick={startOAuth} disabled={loading} className="btn btn-blush w-full py-3">
-                {loading ? (
-                  <><Loader2 size={16} className="animate-spin" /> Opening login...</>
-                ) : (
-                  <><ShieldCheck size={16} /> Log in with {templateName}</>
-                )}
-              </button>
+              !hasFields && (
+                <button type="button" onClick={startOAuth} disabled={loading} className="btn btn-blush w-full py-3">
+                  {loading ? (
+                    <><Loader2 size={16} className="animate-spin" /> Opening login...</>
+                  ) : (
+                    <><ShieldCheck size={16} /> Log in with {templateName}</>
+                  )}
+                </button>
+              )
             )}
           </div>
         ) : (
         <form onSubmit={handleSubmit}>
           <div className="space-y-4 mb-6">
-            {Object.entries(properties).map(([key, prop]) => (
-              <div key={key}>
-                <label className="label-pixel flex items-center gap-2">
-                  {prop.label || key}
-                  {required.has(key) && <span className="w-2 h-2 bg-eepy-ember inline-block" title="Required" />}
-                </label>
-                <div className="relative">
-                  <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-dim" />
-                  <input
-                    type={isPassword(key) && !showPasswords[key] ? 'password' : 'text'}
-                    required={required.has(key)}
-                    placeholder={prop.placeholder || key}
-                    value={formData[key] || ''}
-                    onChange={(e) => setField(key, e.target.value)}
-                    className="input-pixel pl-9 pr-10"
-                  />
-                  {isPassword(key) && (
-                    <button
-                      type="button"
-                      onClick={() => toggleVisibility(key)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-dim hover:text-eepy-blush transition-colors"
-                      aria-label={showPasswords[key] ? 'Hide value' : 'Show value'}
-                    >
-                      {showPasswords[key] ? <EyeOff size={15} /> : <Eye size={15} />}
-                    </button>
-                  )}
-                </div>
-                {prop.help && <p className="text-xs text-ink-dim mt-1.5 font-body">{prop.help}</p>}
-              </div>
-            ))}
+            {renderFields()}
           </div>
 
           {error && (

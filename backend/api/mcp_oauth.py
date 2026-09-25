@@ -29,6 +29,8 @@ OAuth config lives in the template's ``runtime_config["oauth"]``:
       "token_endpoint":     "https://auth.example.com/token",
       "client_id":          "...",               # issued by the provider (admin-managed)
       "client_secret":      "...",               # optional; omit for public (PKCE) clients
+      "client_id_field":    "CLIENT_ID",         # optional; read the client_id from the
+                                                 # user's stored config (per-tenant apps)
       "scopes":             "openid offline_access ...",
       "auth_label":         "Provider",          # UI text
       "redirect_uri":       "https://.../api/mcp/oauth/callback"  # optional override
@@ -73,14 +75,17 @@ class OAuthError(Exception):
 
 def oauth_config(template: MCPTemplate) -> dict[str, Any] | None:
     """The template's OAuth config, or None if the template is not a complete
-    OAuth login (missing section, or any of authorize/token endpoint/client_id)."""
+    OAuth login (missing section, missing authorize/token endpoints, or
+    neither an admin-registered client_id nor a per-user client_id_field)."""
     rc = template.runtime_config or {}
     cfg = rc.get("oauth")
     if not isinstance(cfg, dict):
         return None
-    for key in ("authorize_endpoint", "token_endpoint", "client_id"):
+    for key in ("authorize_endpoint", "token_endpoint"):
         if not str(cfg.get(key) or "").strip():
             return None
+    if not str(cfg.get("client_id") or "").strip() and not str(cfg.get("client_id_field") or "").strip():
+        return None
     return cfg
 
 
@@ -106,9 +111,7 @@ def _guard_endpoint(url: str) -> None:
 def build_authorize_url(template: MCPTemplate, user_id: int, base_url: str) -> str:
     """The provider authorize URL the user's browser must visit (PKCE S256,
     state = short-lived server-signed JWT carrying the code verifier)."""
-    cfg = oauth_config(template)
-    if not cfg:
-        raise OAuthError("Template has no complete OAuth config (missing client_id?).")
+    cfg = complete_config_for_user(template, user_id)
     _guard_endpoint(str(cfg["authorize_endpoint"]))
     _guard_endpoint(str(cfg["token_endpoint"]))
 
@@ -143,6 +146,50 @@ def decode_state(state: str) -> dict[str, Any] | None:
     if not payload or "cv" not in payload or "tid" not in payload or "sub" not in payload:
         return None
     return payload
+def _user_creds(user_id: int, template_id: str) -> dict[str, Any]:
+    """The user's stored config for the template, decrypted. {} on any
+    failure — a missing or unreadable row must not break the flow, only
+    the fields that need it."""
+    db: Session = SessionLocal()
+    try:
+        row = (
+            db.query(UserMCPConfig)
+            .filter(UserMCPConfig.owner_id == user_id,
+                    UserMCPConfig.template_name == template_id)
+            .first()
+        )
+        if not row:
+            return {}
+        try:
+            creds = decrypt_credentials(row.credentials_json)
+        except Exception:
+            return {}
+        return creds if isinstance(creds, dict) else {}
+    finally:
+        db.close()
+
+
+def complete_config_for_user(template: MCPTemplate, user_id: int) -> dict[str, Any]:
+    """The template's OAuth config with the client_id resolved for this user.
+
+    Some hosted MCP servers take the client_id per-tenant: the tenant's IT
+    admin registers one public (PKCE) app and every user pastes its client
+    ID into the named config field (``client_id_field``). Otherwise the
+    admin-registered client_id stands. Raises OAuthError when the needed
+    client_id is absent."""
+    cfg = oauth_config(template)
+    if not cfg:
+        raise OAuthError("Template has no complete OAuth config.")
+    field = str(cfg.get("client_id_field") or "").strip()
+    if not field:
+        return cfg
+    client_id = str(_user_creds(user_id, template.id).get(field) or "").strip()
+    if not client_id:
+        raise OAuthError(
+            f"This login needs the {field} value your IT admin registered for "
+            "your tenant — connect with it before signing in."
+        )
+    return {**cfg, "client_id": client_id}
 
 
 def _token_request(cfg: dict[str, str], form: dict[str, str]) -> dict[str, Any]:
@@ -214,9 +261,10 @@ def tokens_to_creds(tokens: dict[str, Any]) -> dict[str, str]:
 
 def store_tokens(user_id: int, template: MCPTemplate, creds: dict[str, str]) -> None:
     """Encrypt + upsert the user's config row for the template with the token
-    blob. Raises ValueError when no encryption key is configured (the caller
-    surfaces a clean error instead of a 500)."""
-    blob = encrypt_credentials(creds)
+    blob, MERGED over any stored config fields (per-tenant values like the
+    Microsoft 365 client ID must survive the token round trip). Raises
+    ValueError when no encryption key is configured (the caller surfaces a
+    clean error instead of a 500)."""
     db: Session = SessionLocal()
     try:
         row = (
@@ -226,14 +274,24 @@ def store_tokens(user_id: int, template: MCPTemplate, creds: dict[str, str]) -> 
             .first()
         )
         if row:
-            row.credentials_json = blob
+            # Merge (never replace): per-tenant config fields (e.g. the
+            # Microsoft 365 client ID) live in the same blob and must
+            # survive the token round trip.
+            try:
+                merged = decrypt_credentials(row.credentials_json)
+                if not isinstance(merged, dict):
+                    merged = {}
+            except Exception:
+                merged = {}
+            merged.update(creds)
+            row.credentials_json = encrypt_credentials(merged)
             row.is_active = True
         else:
             row = UserMCPConfig(
                 owner_id=user_id,
                 template_name=template.id,
                 name_display=f"{template.name} login",
-                credentials_json=blob,
+                credentials_json=encrypt_credentials(creds),
                 is_active=True,
             )
             db.add(row)
@@ -313,6 +371,16 @@ async def ensure_fresh_token(user: User, template: MCPTemplate,
         refresh_token = current.get("refresh_token")
         if not refresh_token:
             raise HTTPException(status_code=409, detail=_refresh_detail(template))
+        # Per-tenant templates take the client_id from the user's stored
+        # config (client_id_field) — resolve it from the fresh blob.
+        field = str(cfg.get("client_id_field") or "").strip()
+        client_id = (
+            str(current.get(field) or "").strip() if field
+            else str(cfg.get("client_id") or "").strip()
+        )
+        if not client_id:
+            raise HTTPException(status_code=409, detail=_refresh_detail(template))
+        cfg = {**cfg, "client_id": client_id}
         try:
             tokens = await asyncio.to_thread(refresh_tokens, cfg, refresh_token)
         except OAuthError as exc:

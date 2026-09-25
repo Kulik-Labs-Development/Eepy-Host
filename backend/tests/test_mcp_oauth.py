@@ -358,6 +358,25 @@ def _seed_tokens(tid, username, creds: dict) -> None:
     template = _load_template(tid)
     user = _load_user(username)
     mcp_oauth.store_tokens(user.id, template, creds)
+def _clear_config(tid, username) -> None:
+    """Delete the user's config row (a clean slate for merge-semantics tests)."""
+    from database import SessionLocal, User
+    from models.mcp_models import UserMCPConfig
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.username == username).first()
+        row = (
+            db.query(UserMCPConfig)
+            .filter(UserMCPConfig.owner_id == user.id,
+                    UserMCPConfig.template_name == tid)
+            .first()
+        )
+        if row:
+            db.delete(row)
+            db.commit()
+    finally:
+        db.close()
 
 
 def test_ensure_fresh_token_refreshes_and_persists(client, auth_user, oauth_env):
@@ -394,6 +413,9 @@ def test_ensure_fresh_token_fresh_blob_is_noop(client, auth_user, oauth_env):
 
 
 def test_ensure_fresh_token_expired_without_refresh_token_409(client, auth_user, oauth_env):
+    # Clean state: store_tokens now MERGES into the blob, and an earlier test
+    # (the callback roundtrip) left a refresh_token in this user's row.
+    _clear_config(TEMPLATE_ID, auth_user["username"])
     _seed_tokens(TEMPLATE_ID, auth_user["username"], {
         "access_token": "tok-stale",
         "expires_at": str(int(time.time()) - 10),

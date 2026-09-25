@@ -560,14 +560,21 @@ def register_mcp_config(
                     detail="BookStack token must be the combined token_id:token_secret form.",
                 )
     else:
-        # Edit semantics: an empty password field means "keep the stored
-        # secret" (the UI cannot prefill it — secrets are never read back).
+        # Edit semantics: an empty field means "keep the stored value" for
+        # password fields (the UI cannot prefill them — secrets are never
+        # read back) and the OAuth client_id field (per-tenant apps: it is
+        # prefilled for display, blank keeps it).
         props = (template.config_schema or {}).get("properties") or {}
+        oauth_cfg = (template.runtime_config or {}).get("oauth") or {}
+        client_id_field = str(oauth_cfg.get("client_id_field") or "")
         for key in list(creds):
             if (
                 str(creds.get(key) or "").strip() == ""
-                and (props.get(key) or {}).get("type") == "password"
                 and key in old_creds
+                and (
+                    (props.get(key) or {}).get("type") == "password"
+                    or key == client_id_field
+                )
             ):
                 creds[key] = old_creds[key]
 
@@ -776,9 +783,12 @@ async def mcp_oauth_callback(
         return _oauth_page("<b>Login state is invalid.</b><br>Try connecting again.", status=400)
     if not template.approved_by_admin or not template.enabled_global:
         return _oauth_page("<b>This integration is no longer available.</b>", status=400)
-    cfg = mcp_oauth.oauth_config(template)
-    if not cfg:
+    if mcp_oauth.oauth_config(template) is None:
         return _oauth_page("<b>This integration is not configured for OAuth login.</b>", status=400)
+    try:
+        cfg = mcp_oauth.complete_config_for_user(template, user.id)
+    except mcp_oauth.OAuthError as exc:
+        return _oauth_page(f"<b>Login failed.</b><br>{html.escape(str(exc))}", status=400)
     if not code:
         return _oauth_page("<b>Login failed: the provider did not return a code.</b>", status=400)
     base = str(request.base_url).rstrip("/")
