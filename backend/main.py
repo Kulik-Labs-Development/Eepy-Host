@@ -154,7 +154,7 @@ def seed_mcp_templates():
     """Seed the admin-approved templates (HappyFox #1, eBay #2, Portainer #3,
     Warden #4, Proxmox VE #5, Tactical RMM #6 read-only + #7 read/command,
     Microsoft Clarity #8, BookStack #9, Cloudflare #10 Code Mode + #11 Full
-    Endpoint Tools) into the library.
+    Endpoint Tools, Spotify #12) into the library.
 
     Each integration's MCP server code lives OUTSIDE this backend, in its own
     git submodule under integrations/ (happyfox-mcp →
@@ -165,7 +165,8 @@ def seed_mcp_templates():
     github.com/RekklesNA/ProxmoxMCP-Plus, trmm-mcp →
     github.com/shin2344234/trmm-mcp, clarity-mcp →
     github.com/microsoft/clarity-mcp-server, bookstack-mcp →
-    github.com/pnocera/bookstack-mcp-server). These rows only register *how
+    github.com/pnocera/bookstack-mcp-server, spotify-mcp →
+    github.com/marcelmarais/spotify-mcp-server). These rows only register *how
     to run* them:
 
     - docker backend (production/Portainer): CI builds each submodule into its
@@ -1503,10 +1504,173 @@ def seed_mcp_templates():
         repo_url="https://github.com/microsoft/enterprisemcp",
     )
 
+    # Spotify — the marcelmarais/spotify-mcp-server sidecar: 30 tools over
+    # the user's OWN Spotify account (playback control, queue, search,
+    # playlists, library, recently played, top artists/tracks). Spotify has
+    # no per-tenant keys: each end user registers their own (free) app in
+    # the Spotify Developer Dashboard with Eepy's login callback as its
+    # redirect URI, and signs in to their own account through the hosted
+    # OAuth layer's authorization code + PKCE flow (the M365
+    # client_id_field shape — the user's SPOTIFY_CLIENT_ID from their stored
+    # config, NO admin-side client_secret: Spotify's token endpoint accepts
+    # the PKCE code exchange AND the refresh grant without a secret).
+    # The sidecar image's entrypoint materializes the upstream's
+    # spotify-config.json from the sidecar env (see
+    # integrations/Dockerfile.spotify); tokens are stored encrypted and
+    # refreshed automatically. Spotify refresh tokens die after 6 months of
+    # non-use, so a user reauthorizes at most every half year (the 409
+    # reconnect path covers it).
+    spotify = MCPTemplate(
+        id="spotify",
+        name="Spotify",
+        repo_url="https://github.com/marcelmarais/spotify-mcp-server",
+        description=(
+            "Control your own Spotify account across 30 tools: play/pause/"
+            "skip/seek and volume, the queue, search, playlists (create, "
+            "update, add/remove/reorder tracks), your library and saved "
+            "tracks and albums, recently played, and top artists/tracks. "
+            "You register a free app in the Spotify Developer Dashboard and "
+            "sign in to YOUR Spotify account (OAuth authorization code + "
+            "PKCE); the client ID, secret, and resulting tokens stay "
+            "encrypted at rest and are proxied through the Eepy unified "
+            "proxy."
+        ),
+        config_schema={
+            "category": "Music / Streaming",
+            "type": "object",
+            "properties": {
+                "SPOTIFY_CLIENT_ID": {
+                    "type": "string",
+                    "label": "Client ID",
+                    "placeholder": "32-character hex",
+                    "help": (
+                        "Spotify Developer Dashboard (developer.spotify.com/dashboard) > your app "
+                        "> Settings: the Client ID. Register Eepy's login callback as the app's "
+                        "Redirect URI: https://api.eepy.host/api/mcp/oauth/callback. Leave blank "
+                        "when editing to keep the stored value."
+                    ),
+                    "required": True,
+                },
+                "SPOTIFY_CLIENT_SECRET": {
+                    "type": "password",
+                    "label": "Client Secret",
+                    "placeholder": "32-character hex",
+                    "help": "The Client Secret from the same Settings panel (leave blank when editing to keep the stored value). Used by the sidecar to refresh tokens locally; the browser login itself is secretless PKCE.",
+                    "required": True,
+                },
+                "SPOTIFY_REDIRECT_URI": {
+                    "type": "string",
+                    "label": "Redirect URI",
+                    "placeholder": "https://api.eepy.host/api/mcp/oauth/callback",
+                    "help": "The Redirect URI you registered in the Spotify app Settings — Eepy's login callback (https://api.eepy.host/api/mcp/oauth/callback). It must match exactly.",
+                    "required": True,
+                },
+            },
+            "required": ["SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "SPOTIFY_REDIRECT_URI"],
+        },
+        image_tag="ghcr.io/kulik-labs-development/eepy-host-spotify",
+        runtime="mcp-server",
+        # Modular sidecar spec (same contract as the eBay/BookStack
+        # references). The upstream reads a spotify-config.json FILE at the
+        # repo root (next to build/), not env vars — the sidecar image's
+        # entrypoint materializes that file from the sidecar env on every
+        # start (integrations/Dockerfile.spotify), so this env_mapping is
+        # the readable contract.
+        #
+        # Transport: opt-in streamable-HTTP on :3000 at /mcp
+        # (MCP_TRANSPORT=http; the default transport is stdio, so the
+        # subprocess backend needs none of the HTTP vars). MCP_HTTP_HOST
+        # must be explicit: upstream binds 127.0.0.1 when it is unset, which
+        # the bridge's container-IP dial could not reach. The upstream has
+        # no server-level auth; the sidecar is only reachable on the
+        # internal eepy-sidecars docker network and the Eepy unified proxy
+        # is the auth layer (eBay posture). No Host override needed: the TS
+        # mcp SDK has DNS-rebinding protection OFF by default and upstream
+        # configures no allowedHosts — the guard is loopback-only.
+        #
+        # Per-user OAuth (the M365 shape): the "oauth" section below drives
+        # the browser login — authorization code + PKCE with the USER's own
+        # app client ID (client_id_field, resolved from their stored
+        # SPOTIFY_CLIENT_ID). The exchanged tokens (access_token/
+        # refresh_token/expires_at) ride the env_mapping into the sidecar
+        # config file; the upstream auto-refreshes every 45 minutes and
+        # persists rotated tokens with mode 0600.
+        #
+        # Local (subprocess backend): stdio transport; needs Node 26 on the
+        # host PATH (upstream engines: >=26.8.1) and a one-time
+        # `npm ci && npm run build` inside integrations/spotify-mcp.
+        runtime_config={
+            "image": "ghcr.io/kulik-labs-development/eepy-host-spotify:latest",
+            "command": ["node", "build/index.js"],
+            "cwd": "integrations/spotify-mcp",
+            # Docker backend env: HTTP transport on :3000 at /mcp.
+            "env": {
+                "MCP_TRANSPORT": "http",
+                "MCP_HTTP_HOST": "0.0.0.0",
+                "MCP_HTTP_PORT": "3000",
+            },
+            # stdio is the upstream's default transport; the subprocess
+            # backend needs none of the HTTP transport vars.
+            "subprocess_env": {},
+            "endpoint": "/mcp",
+            "port": "3000",
+            "env_mapping": {
+                "SPOTIFY_CLIENT_ID": "SPOTIFY_CLIENT_ID",
+                "SPOTIFY_CLIENT_SECRET": "SPOTIFY_CLIENT_SECRET",
+                "SPOTIFY_REDIRECT_URI": "SPOTIFY_REDIRECT_URI",
+                "access_token": "SPOTIFY_ACCESS_TOKEN",
+                "refresh_token": "SPOTIFY_REFRESH_TOKEN",
+                "expires_at": "SPOTIFY_EXPIRES_AT",
+            },
+            "oauth": {
+                "authorize_endpoint": "https://accounts.spotify.com/authorize",
+                "token_endpoint": "https://accounts.spotify.com/api/token",
+                # Public (PKCE) client — no client_secret. The client_id is
+                # per-user: it comes from the user's SPOTIFY_CLIENT_ID
+                # config field (client_id_field), not from runtime_config.
+                # Scopes = the exact list the upstream's auth flow requests.
+                "client_id": "",
+                "client_id_field": "SPOTIFY_CLIENT_ID",
+                "scopes": (
+                    "user-read-private user-read-email user-read-playback-state "
+                    "user-modify-playback-state user-read-currently-playing "
+                    "user-read-playback-position playlist-read-private "
+                    "playlist-read-collaborative playlist-modify-private "
+                    "playlist-modify-public user-library-read user-library-modify "
+                    "user-read-recently-played user-top-read"
+                ),
+                "auth_label": "Spotify",
+            },
+            # Read-only probe for POST /config/{id}/test: the current
+            # playback state. A "Nothing is currently playing" answer is a
+            # PASS (it proves a valid user token); a bad token or a missing
+            # login fails it.
+            "test_tool": {"name": "getNowPlaying", "arguments": {}},
+            # All 30 upstream tools, so the OpenAPI spec has entries before
+            # admin discovery stores the authoritative tools/list
+            # (discovery takes precedence).
+            "tool_names": [
+                "getNowPlaying", "getAvailableDevices", "getQueue",
+                "playMusic", "pausePlayback", "resumePlayback",
+                "skipToNext", "skipToPrevious", "setVolume", "adjustVolume",
+                "addToQueue", "searchSpotify", "getMyPlaylists", "getPlaylist",
+                "getPlaylistTracks", "createPlaylist", "updatePlaylist",
+                "addTracksToPlaylist", "removeTracksFromPlaylist",
+                "reorderPlaylistItems", "unfollowPlaylist", "getAlbums",
+                "getAlbumTracks", "getUsersSavedTracks",
+                "saveOrRemoveAlbumForUser", "checkUsersSavedAlbums",
+                "removeUsersSavedTracks", "getRecentlyPlayed", "getTopArtists",
+                "getTopTracks",
+            ],
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
     db = SessionLocal()
     try:
         for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec, clarity, bookstack,
-                    cloudflare, cloudflare_full, uber, ubereats, microsoft365):
+                    cloudflare, cloudflare_full, uber, ubereats, microsoft365, spotify):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
                 existing.approved_by_admin = spec.approved_by_admin

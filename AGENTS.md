@@ -210,6 +210,36 @@ docker container in production), short-lived and idle-reaped.
   rejected by upstream, so call integer-param tools via POST/JSON or the
   native MCP endpoint. Local-dev (subprocess) path: bun on PATH + one-time
   `bun install` in the submodule (e2e-tested on the docker backend).
+ - Spotify is Template #12, same modular pattern from the
+  `integrations/spotify-mcp` git submodule (github.com/marcelmarais/
+  spotify-mcp-server — TypeScript, 30 tools over the user's OWN Spotify
+  account: playback control (play/pause/skip/seek/volume), queue, search,
+  playlists (create/update/add/remove/reorder), library + saved tracks and
+  albums, recently played, top artists/tracks, current playback and device
+  state). First **per-user OAuth** integration: Spotify has no per-tenant
+  keys, so each end user registers their own (free) app in the Spotify
+  Developer Dashboard (redirect URI `https://api.eepy.host/
+  api/mcp/oauth/callback`) and signs in to their own Spotify account through
+  the hosted OAuth layer's authorization code + PKCE flow — the M365
+  `client_id_field` shape (the user's `SPOTIFY_CLIENT_ID` from their stored
+  config; NO admin-side client_secret, because Spotify's token endpoint
+  accepts the PKCE code exchange AND the refresh grant without a secret —
+  official docs). The sidecar is streamable-HTTP on :3000 at /mcp
+  (`MCP_TRANSPORT=http` + explicit `MCP_HTTP_HOST=0.0.0.0` — the upstream
+  binds 127.0.0.1 otherwise; the image is node:26-alpine, upstream engines
+  pin node >=26.8.1). The upstream reads a `spotify-config.json` FILE, not
+  env, so the image entrypoint materializes that file from the sidecar env
+  on every start (clientId/clientSecret/redirectUri + the exchanged token
+  blob — `access_token`/`refresh_token`/`expires_at`, epoch seconds
+  converted to milliseconds by the entrypoint); the upstream auto-refreshes
+  every 45 minutes and persists rotated tokens with mode 0600. No
+  server-level auth upstream: the sidecar is only reachable on the internal
+  eepy-sidecars docker network and the unified proxy is the auth layer
+  (eBay posture). Spotify refresh tokens die after 6 months of non-use —
+  users reauthorize at most every half year (the 409 reconnect path covers
+  it). Local-dev (subprocess) path: stdio is the upstream's default
+  transport; Node 26 on PATH + one-time `npm ci && npm run build` in the
+  submodule.
  - The unified proxy (`/api/mcp/proxy/{template_id}/{tool_name}`) routes by
   template `runtime`: `mcp-server` → generic bridge (`api/mcp_bridge.py`),
   `native` → hardcoded `TEMPLATE_REGISTRY` (HappyFox reference path, kept for
@@ -367,6 +397,10 @@ docker container in production), short-lived and idle-reaped.
 │   ├── Dockerfile.bookstack  #   (digest-pinned oven/bun; Bun runs the TS
 │   │                         #    source directly — no compile step; HTTP
 │   │                         #    mode on :3000 at /message)
+│   ├── Dockerfile.spotify    #   (node:26-alpine — upstream engines pin
+│   │                         #    node >=26.8.1; entrypoint materializes
+│   │                         #    spotify-config.json from the sidecar env;
+│   │                         #    HTTP mode on :3000 at /mcp)
 │   ├── happyfox-mcp/         # GIT SUBMODULE → Glitch3dPenguin/happyfox-mcp
 │   ├── ebay-mcp/             # GIT SUBMODULE → YosefHayim/ebay-mcp
 │   ├── portainer-mcp/        # GIT SUBMODULE → portainer/portainer-mcp
@@ -374,7 +408,8 @@ docker container in production), short-lived and idle-reaped.
 │   ├── proxmox-mcp/          # GIT SUBMODULE → RekklesNA/ProxmoxMCP-Plus
 │   ├── trmm-mcp/             # GIT SUBMODULE → shin2344234/trmm-mcp
 │   ├── clarity-mcp/          # GIT SUBMODULE → microsoft/clarity-mcp-server
-│   └── bookstack-mcp/        # GIT SUBMODULE → pnocera/bookstack-mcp-server
+│   ├── bookstack-mcp/        # GIT SUBMODULE → pnocera/bookstack-mcp-server
+│   └── spotify-mcp/          # GIT SUBMODULE → marcelmarais/spotify-mcp-server
 └── assets/
 ```
 
@@ -949,7 +984,7 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   (a plain clone leaves the submodule dir empty until
   `git submodule update --init`).
 - **Two CI workflows, both on push to main:** `CI` (ruff+pytest, eslint+tsc —
-  no image builds) and   `Build and Push to GHCR`, which builds **ten**
+  no image builds) and   `Build and Push to GHCR`, which builds **eleven**
   images: `eepy-host-backend`, `eepy-host-frontend`, `eepy-host-happyfox`
   (sidecar, built from the submodule via `integrations/Dockerfile.happyfox`),
   `eepy-host-ebay` (sidecar, via `integrations/Dockerfile.ebay`),
@@ -958,14 +993,17 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   `eepy-host-proxmox` (sidecar, via `integrations/Dockerfile.proxmox`),
   `eepy-host-trmm` (sidecar, via `integrations/Dockerfile.trmm` — serves
   BOTH the trmm and trmm-exec templates; the mode is per-template env),
-  `eepy-host-clarity` (sidecar, via `integrations/Dockerfile.clarity`) and
+  `eepy-host-clarity` (sidecar, via `integrations/Dockerfile.clarity`),
   `eepy-host-bookstack` (sidecar, via `integrations/Dockerfile.bookstack` —
   digest-pinned oven/bun; the upstream is Bun-native, Node.js unsupported)
+  and `eepy-host-spotify` (sidecar, via `integrations/Dockerfile.spotify`
+  — per-user OAuth; the upstream's spotify-config.json is materialized
+  from the sidecar env at container start)
   — all sidecars built with the repo root as build context. So every push to
   main refreshes all deployed images.
   - **Seed roll-forward:** `seed_mcp_templates()` in `main.py` updates the
   existing seeded rows' (HappyFox, eBay, Portainer, Warden, Proxmox, Tactical
-  RMM read-only + command, Clarity, BookStack) `runtime`,
+  RMM read-only + command, Clarity, BookStack, Spotify) `runtime`,
   `runtime_config`, `config_schema`, `image_tag`, and approval flags on
   **every boot** (idempotent). That is how spec changes reach the live DB —
   pushing a backend change is enough; no manual DB edit needed.
@@ -974,7 +1012,8 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   `eepy-host-happyfox:latest` / `eepy-host-ebay:latest` /
   `eepy-host-portainer:latest` / `eepy-host-warden:latest` /
   `eepy-host-proxmox:latest` / `eepy-host-trmm:latest` /
-  `eepy-host-clarity:latest` / `eepy-host-bookstack:latest` images and
+  `eepy-host-clarity:latest` / `eepy-host-bookstack:latest` /
+  `eepy-host-spotify:latest` images and
   recreate the containers (sidecar
   images are pulled lazily by the bridge, so just make sure the backend has
   fresh access). `stack.env` values rarely change
@@ -1002,7 +1041,7 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
     (check the daemon line above / the Debug Log console).
   -    **Verify the docker sidecar path (production):** the dev machine has
      Docker, so the full compose stack CAN be exercised locally (build the
-     ten app+sidecar images with the GHCR tags, `docker compose --env-file
+     eleven app+sidecar images with the GHCR tags, `docker compose --env-file
     stack.env up -d`). After a deploy: hit the dashboard's connection test,
    then a real proxy tool call, and confirm in the backend logs (or the
    Debug Log console) that `mcp-bridge: started sidecar container ...

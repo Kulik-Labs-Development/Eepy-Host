@@ -1,0 +1,76 @@
+# Spotify MCP server sidecar image.
+#
+# SOURCE OF TRUTH: integrations/spotify-mcp (git submodule →
+# github.com/marcelmarais/spotify-mcp-server). This Dockerfile only builds
+# that code into an image; it is NOT where the server code lives.
+#
+# Build context must be the REPO ROOT (CI sets context: ./), so the
+# integrations/spotify-mcp/ paths below resolve to exactly the submodule
+# commit this repo pins.
+#
+# Transport: streamable-HTTP on :3000 at /mcp (the upstream's opt-in HTTP
+# transport, MCP_TRANSPORT=http — src/http.ts). The Eepy backend spawns this
+# image per user via the mcp-server sidecar runtime (api/mcp_bridge.py) and
+# speaks MCP to http://<container>:3000/mcp . The upstream has no
+# server-level auth; the sidecar is only reachable on the internal
+# eepy-sidecars docker network and the Eepy unified proxy is the auth layer
+# (same posture as the eBay sidecar).
+#
+# Credentials: the upstream reads a spotify-config.json FILE at the repo
+# root (next to build/ — path.join(__dirname, '../spotify-config.json')),
+# not env vars. The ENTRYPOINT below materializes that file from the
+# sidecar env on every start: clientId/clientSecret/redirectUri (the user's
+# own Spotify Developer app) plus the token blob the Eepy OAuth layer
+# exchanged per user (access_token + refresh_token + expires_at, epoch
+# seconds — converted to the milliseconds the upstream expects). The
+# upstream auto-refreshes every 45 minutes and persists rotated tokens
+# back to the file with mode 0600. The file is written to the WORKDIR
+# (/app) so the upstream's relative path resolves to it.
+#
+# Base: node:26-alpine — the submodule pins engines node >=26.8.1
+# (typescript ^7.0.2, @types/node ^26), which rules out node:22.
+FROM node:26-alpine AS builder
+
+WORKDIR /app
+
+# Copy package manifests first for better layer caching
+COPY integrations/spotify-mcp/package.json integrations/spotify-mcp/package-lock.json ./
+
+# Install the exact locked dependencies
+RUN npm ci --no-audit --no-fund
+
+# Copy source and build (tsc -> build/, chmod 755 build/index.js)
+COPY integrations/spotify-mcp/ ./
+RUN npm run build
+
+# Production stage
+FROM node:26-alpine
+
+WORKDIR /app
+
+# Copy package manifests
+COPY integrations/spotify-mcp/package.json integrations/spotify-mcp/package-lock.json ./
+
+# Install only production dependencies
+RUN npm ci --omit=dev --no-audit --no-fund
+
+# Copy built application from the builder
+COPY --from=builder /app/build ./build
+
+# Eepy sidecar transport config (see header): HTTP transport on :3000 at
+# /mcp. MCP_TRANSPORT=http switches the stdio default over to HTTP
+# (src/index.ts). MCP_HTTP_HOST must be explicit: the upstream binds
+# 127.0.0.1 when it is unset, which the bridge's container-IP dial could
+# not reach.
+ENV MCP_TRANSPORT=http
+ENV MCP_HTTP_HOST=0.0.0.0
+ENV MCP_HTTP_PORT=3000
+
+EXPOSE 3000
+
+# Materialize spotify-config.json from the sidecar env (the upstream's
+# file-based config contract), then exec the server. The one-liner maps the
+# Eepy token-blob keys onto the upstream's camelCase fields and converts
+# the epoch-seconds expiry to milliseconds; token fields are omitted when
+# absent (the upstream then boots app-only until a user token arrives).
+ENTRYPOINT ["sh", "-c", "node -e 'const fs=require(\"fs\");const e=(k)=>process.env[k]||\"\";const c={clientId:e(\"SPOTIFY_CLIENT_ID\"),clientSecret:e(\"SPOTIFY_CLIENT_SECRET\"),redirectUri:e(\"SPOTIFY_REDIRECT_URI\")};const t=e(\"SPOTIFY_ACCESS_TOKEN\");if(t)c.accessToken=t;const r=e(\"SPOTIFY_REFRESH_TOKEN\");if(r)c.refreshToken=r;const x=e(\"SPOTIFY_EXPIRES_AT\");if(/^[0-9]+$/.test(x))c.expiresAt=Number(x)*1000;fs.writeFileSync(\"spotify-config.json\",JSON.stringify(c,null,2),{mode:0o600});' && exec node build/index.js"]

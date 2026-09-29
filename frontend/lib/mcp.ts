@@ -34,6 +34,7 @@ export const APP_ICONS: Record<string, string> = {
   uber: '/app-icons/uber.png',
   ubereats: '/app-icons/ubereats.png',
   'microsoft-365': '/app-icons/microsoft.png',
+  spotify: '/app-icons/spotify.png',
 };
 
 export function templateIcon(templateId: string): string | null {

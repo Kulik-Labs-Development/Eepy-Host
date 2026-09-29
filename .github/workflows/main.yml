@@ -146,6 +146,20 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-bookstack:latest
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Build and push Spotify MCP sidecar image
+        # Built from the integrations/spotify-mcp submodule (upstream
+        # marcelmarais/spotify-mcp-server) so the deployed sidecar always
+        # matches the exact upstream commit this repo pins. Per-user OAuth:
+        # the upstream's spotify-config.json is materialized from the
+        # sidecar env at container start (see Dockerfile.spotify).
+        uses: docker/build-push-action@v5
+        with:
+          context: ./
+          file: ./integrations/Dockerfile.spotify
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-spotify:latest
+          labels: ${{ steps.meta.outputs.labels }}
+
       - name: Build and push Frontend image
         uses: docker/build-push-action@v5
         with:
