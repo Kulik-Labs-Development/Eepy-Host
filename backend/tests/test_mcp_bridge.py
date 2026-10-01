@@ -682,12 +682,43 @@ def test_seeded_ebay_template_shape(client):
     for field in ("EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_ENVIRONMENT",
                   "EBAY_REDIRECT_URI", "EBAY_MARKETPLACE_ID", "EBAY_USER_REFRESH_TOKEN"):
         assert mapping.get(field) == field, f"env_mapping must pass '{field}' through unchanged"
+    # Hosted per-user OAuth: the exchanged token blob rides the sidecar's
+    # paste-path env vars (a fresh OAuth refresh_token beats a stale pasted
+    # one — dict order).
+    assert mapping.get("refresh_token") == "EBAY_USER_REFRESH_TOKEN"
+    assert mapping.get("access_token") == "EBAY_USER_ACCESS_TOKEN"
     # Read-only probe for the connection test + non-empty spec seed.
     assert cfg["test_tool"] == {"name": "ebay_get_rate_limits", "arguments": {}}
     assert cfg["tool_names"] and all(n.startswith("ebay_") for n in cfg["tool_names"])
     # The upstream server exits at startup without client id/secret: those two
-    # (plus environment) are the required wizard fields.
-    assert t.config_schema["required"] == ["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_ENVIRONMENT"]
+    # (plus environment) are the required wizard fields, and the redirect URI
+    # is required too — it must be the Eepy hosted callback, registered
+    # verbatim in the portal (eBay rejects http/localhost RuNames).
+    assert t.config_schema["required"] == [
+        "EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_ENVIRONMENT", "EBAY_REDIRECT_URI"]
+    props = t.config_schema["properties"]
+    assert props["EBAY_CLIENT_SECRET"]["label"] == "Client Secret"
+    assert "Client ID" in props["EBAY_CLIENT_SECRET"]["help"], \
+        "eBay labels the OAuth secret 'Client ID', not the Cert ID"
+    assert props["EBAY_REDIRECT_URI"]["required"] is True
+    assert props["EBAY_REDIRECT_URI"]["placeholder"] == \
+        "https://api.eepy.host/api/mcp/oauth/callback"
+    # Hosted per-user OAuth (the Spotify/M365 shape): per-user client_id via
+    # client_id_field; production endpoints + production scope set (static —
+    # EBAY_ENVIRONMENT cannot switch them); no client_secret (it is per-user,
+    # and the gateway accepts only an admin-side static secret).
+    o = cfg["oauth"]
+    assert o["authorize_endpoint"] == "https://auth.ebay.com/oauth2/authorize"
+    assert o["token_endpoint"] == "https://api.ebay.com/identity/v1/oauth2/token"
+    assert o["client_id"] == ""
+    assert o["client_id_field"] == "EBAY_CLIENT_ID"
+    assert "client_secret" not in o
+    scopes = o["scopes"].split()
+    assert "https://api.ebay.com/oauth/api_scope" in scopes
+    assert "https://api.ebay.com/oauth/api_scope/sell.inventory" in scopes
+    assert "https://api.ebay.com/oauth/api_scope/sell.fulfillment" in scopes
+    assert "https://api.ebay.com/oauth/api_scope/commerce.message" in scopes
+    assert o["auth_label"] == "eBay"
 
 
 # ---------------------------------------------------------------------------

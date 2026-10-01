@@ -295,8 +295,12 @@ def seed_mcp_templates():
                 },
                 "EBAY_CLIENT_SECRET": {
                     "type": "password",
-                    "label": "Client Secret (Cert ID)",
-                    "help": "The Cert ID from the same Keys panel.",
+                    "label": "Client Secret",
+                    "help": (
+                        "The Client ID from the same Keys panel — eBay labels the OAuth "
+                        "secret 'Client ID' (the Cert ID / Private Key are NOT used by "
+                        "this server)."
+                    ),
                     "required": True,
                 },
                 "EBAY_ENVIRONMENT": {
@@ -308,9 +312,14 @@ def seed_mcp_templates():
                 },
                 "EBAY_REDIRECT_URI": {
                     "type": "string",
-                    "label": "Redirect URI (RuName)",
-                    "help": "Optional. The RuName from Developer Portal > User Tokens; enables the higher-limit user-token OAuth flow.",
-                    "required": False,
+                    "label": "Redirect URI",
+                    "placeholder": "https://api.eepy.host/api/mcp/oauth/callback",
+                    "help": (
+                        "Register this exact URL in the portal (My Apps → your app → User "
+                        "Tokens (eBay Sign-In) → Redirect URIs). It must match exactly; "
+                        "HTTPS is mandatory."
+                    ),
+                    "required": True,
                 },
                 "EBAY_MARKETPLACE_ID": {
                     "type": "string",
@@ -326,7 +335,10 @@ def seed_mcp_templates():
                     "required": False,
                 },
             },
-            "required": ["EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_ENVIRONMENT"],
+            "required": [
+                "EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_ENVIRONMENT",
+                "EBAY_REDIRECT_URI",
+            ],
         },
         image_tag="ghcr.io/kulik-labs-development/eepy-host-ebay",
         runtime="mcp-server",
@@ -361,6 +373,44 @@ def seed_mcp_templates():
                 "EBAY_REDIRECT_URI": "EBAY_REDIRECT_URI",
                 "EBAY_MARKETPLACE_ID": "EBAY_MARKETPLACE_ID",
                 "EBAY_USER_REFRESH_TOKEN": "EBAY_USER_REFRESH_TOKEN",
+                # Hosted per-user OAuth (the "oauth" section below): the
+                # exchanged token blob rides the same sidecar env as the
+                # manual paste path — dict order means a fresh OAuth
+                # refresh_token wins over a stale pasted one.
+                "refresh_token": "EBAY_USER_REFRESH_TOKEN",
+                "access_token": "EBAY_USER_ACCESS_TOKEN",
+            },
+            # Hosted per-user OAuth (the Spotify/M365 shape): the browser
+            # login runs authorization code + PKCE against the USER's own
+            # eBay app — the client_id comes from their stored EBAY_CLIENT_ID
+            # (client_id_field), and the exchanged tokens are merged into
+            # their credentials blob (env_mapping feeds the sidecar).
+            # Endpoints + scopes are the PRODUCTION set: this config is
+            # static per template, so a user's EBAY_ENVIRONMENT cannot switch
+            # it — sandbox users use the EBAY_USER_REFRESH_TOKEN paste path.
+            # No client_secret here: the gateway accepts only an admin-side
+            # static secret, and eBay's is per-user — the hosted exchange is
+            # PKCE-only, and the sidecar refreshes tokens on its own with the
+            # Basic-auth secret it receives via env (client id/secret).
+            "oauth": {
+                "authorize_endpoint": "https://auth.ebay.com/oauth2/authorize",
+                "token_endpoint": "https://api.ebay.com/identity/v1/oauth2/token",
+                "client_id": "",
+                "client_id_field": "EBAY_CLIENT_ID",
+                "scopes": (
+                    "https://api.ebay.com/oauth/api_scope "
+                    "https://api.ebay.com/oauth/api_scope/sell.account "
+                    "https://api.ebay.com/oauth/api_scope/sell.account.readonly "
+                    "https://api.ebay.com/oauth/api_scope/sell.inventory "
+                    "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly "
+                    "https://api.ebay.com/oauth/api_scope/sell.fulfillment "
+                    "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly "
+                    "https://api.ebay.com/oauth/api_scope/sell.marketing "
+                    "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly "
+                    "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly "
+                    "https://api.ebay.com/oauth/api_scope/commerce.message"
+                ),
+                "auth_label": "eBay",
             },
             # Read-only probe for POST /config/{id}/test: a rate-limits lookup
             # confirms credentials + API reachability without touching data.
