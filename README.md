@@ -171,6 +171,55 @@ docker compose --env-file stack.env up -d
 > container in Portainer's container list, it is an on-demand sidecar, not
 > part of the stack; a fresh backend boot sweeps any stale ones away.
 
+#### Deploying with Arcane
+
+[Arcane](https://getarcane.app) is a supported **alternate** deploy target
+for the same stack — `deploy/docker-compose.yml` runs in it unmodified.
+Portainer remains the primary path (production `api.eepy.host` runs there).
+
+1. **Install Arcane on the target host.** Single container:
+   [`ghcr.io/getarcaneapp/manager:latest`](https://getarcane.app/docs/get-started/installation)
+   with the UI on port 3552, the Docker socket (`/var/run/docker.sock`), and
+   its own `arcane-data` volume; generate an `ENCRYPTION_KEY` (32 bytes, e.g.
+   `openssl rand -hex 32`). For multiple hosts, keep the manager on one node
+   and pair the others as agents
+   ([remote environments](https://getarcane.app/docs/remote/environments)),
+   then pick the environment per project.
+2. **API key (optional, for unattended use).** Set `ADMIN_STATIC_API_KEY` on
+   the manager container (value format: `arc_` + 64 hex chars, e.g.
+   `printf 'arc_%s' "$(openssl rand -hex 32)"`); Arcane reconciles it into
+   the built-in admin account at every boot
+   ([API reference](https://getarcane.app/docs/reference/api)). Ad-hoc UI
+   keys work too (**Settings → API Keys**). Every API call sends the key as
+   the `X-Api-Key` header; the interactive spec lives at `/api/docs`.
+3. **Create the project.** Paste `deploy/docker-compose.yml` as the compose
+   content (**Projects → Create Project**), or wire a **Git Sync (Pull)** to
+   this repo with the compose path `deploy/docker-compose.yml`. Arcane's Git
+   sync is branch-based — it tracks the branch head, not a pinned commit.
+4. **Environment.** Paste the filled-in `stack.env` (the same `KEY=VALUE`
+   lines) into the project's **Environment (.env)** editor. No compose edits
+   are needed.
+
+> **Volume carry-over (same rule as the Portainer note above):** all durable
+> state lives in the named `postgres_data` volume, which Arcane creates as
+> `<projectname>_postgres_data` (the project name is the Arcane project, e.g.
+> `eepy-host_postgres_data`). A redeploy of the SAME project keeps it. If
+> you delete + re-create the project (or rename it), a NEW empty volume is
+> created and all data is gone — carry the volume over (Arcane's volume
+> rename copies its data, or `pg_dump`/`pg_restore` before recreating),
+> never recreate it. The backend prints `Boot data summary: users=N ...` on
+> every boot — zeros right after a redeploy mean the volume was not carried
+> over.
+>
+> **Redeploy semantics differ from Portainer:** updating the project (new
+> compose/env via the editor or `PUT /api/environments/{id}/projects/{pid}`)
+> only saves the files — it does NOT deploy. Deploying is a second call
+> (`POST .../redeploy` with `{"pullPolicy":"always"}` repulls the images),
+> and long operations stream NDJSON; treat `{"done": true}` as completion.
+> The backend's Docker-socket + `eepy-sidecars` network requirements are
+> unchanged — the compose file carries both, and a healthy boot logs
+> `mcp-bridge: docker daemon reachable`.
+
 | Service | URL |
 |---------|-----|
 | Frontend (Next.js) | http://localhost:8067 |

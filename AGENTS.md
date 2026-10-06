@@ -856,6 +856,21 @@ as a stack and paste the filled-in `stack.env` contents into the stack's
 Environment section. The file is named `stack.env` (not `.env`) on purpose —
 keeps stack secrets distinct from any host-level dotfiles.
 
+**Arcane is a supported alternate deploy target** (README: "Deploying with
+Arcane"): install the manager (single container + Docker socket +
+`arcane-data` volume; agents pair extra hosts), optionally bootstrap
+`ADMIN_STATIC_API_KEY` (value format `arc_` + 64 hex chars; Arcane
+reconciles it into the built-in admin at boot), create a project from the
+same `deploy/docker-compose.yml` (pasted, or a branch-based Git Sync on
+`deploy/` — Arcane's sync tracks the branch head, no commit pin), and paste
+the filled-in `stack.env` into the project's `.env` (same `KEY=VALUE` shape).
+Two deltas from Portainer: (a) project update and deploy are SEPARATE calls
+— `PUT /api/environments/{id}/projects/{pid}` saves compose/env only, then
+`POST .../redeploy` (`pullPolicy: always`) repulls and recreates, draining
+the NDJSON stream to `{"done": true}`; (b) the data volume is named
+`<projectname>_postgres_data` with the same carry-over rule as Portainer
+stacks.
+
 ### Testing
 ```bash
 cd backend && pytest tests/ -q || echo "Tests failed"
@@ -1018,6 +1033,13 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   images are pulled lazily by the bridge, so just make sure the backend has
   fresh access). `stack.env` values rarely change
   — only when a new secret is introduced.
+  - **Arcane rollout (alternate deploy path):** after a main push,
+    `PUT /api/environments/{id}/projects/{pid}` with the CURRENT
+    `deploy/docker-compose.yml` + `stack.env` contents (this only updates
+    the project files — it does not deploy), then `POST .../redeploy` with
+    `{"pullPolicy":"always"}` and drain the NDJSON to `{"done": true}`.
+    Same socket/`eepy-sidecars`/volume-carry requirements as the Portainer
+    path above (data volume: `<projectname>_postgres_data`).
   - **The backend needs the Docker socket or sidecars can never spawn:** with
     `EEPY_MCP_INSTANCE_BACKEND=docker` (the compose default) the backend
     spawns per-user sidecar containers THROUGH the host Docker socket, which
@@ -1105,10 +1127,11 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
    at boot AND on its next login (idempotent) — the login hook covers the case
    where the account is only created after the first boot. A missing
    superuser is why the Debug Log console 403s (it is superuser-only).
- - **Redeploys and data persistence (read before touching Portainer):**
-   users, saved credentials, and tool keys live ONLY in the `postgres_data`
-   volume (Portainer: `<stackname>_postgres_data`). A redeploy of the SAME
-   stack keeps it; deleting + re-adding the stack (or a name change) creates a
+ - **Redeploys and data persistence (read before touching Portainer or
+   Arcane):** users, saved credentials, and tool keys live ONLY in the
+   `postgres_data` volume (Portainer: `<stackname>_postgres_data`; Arcane:
+   `<projectname>_postgres_data`). A redeploy of the SAME stack/project
+   keeps it; deleting + re-adding the stack/project (or a name change) creates a
    NEW empty volume and all data is gone. The backend prints a
    `Boot data summary: users=N mcp_configs=M tool_keys=K ...` line to the
    Debug Log console on every boot — zeros right after a redeploy mean the
