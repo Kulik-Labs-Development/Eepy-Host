@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { usePathname } from 'next/navigation';
-import { LogOut, LayoutDashboard, Server, Library, UserCircle, Settings, Building2, Terminal, Menu, X } from 'lucide-react';
+import { LogOut, LayoutDashboard, Server, Library, UserCircle, Settings, Building2, Terminal, Activity, Menu, X } from 'lucide-react';
 import Link from 'next/link';
 import PixelMoon from '@/src/components/PixelMoon';
 
@@ -54,6 +54,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         icon: <Building2 size={18} />,
         label: 'Organization',
         path: '/dashboard/organization',
+      },
+      {
+        icon: <Activity size={18} />,
+        label: 'System Usage',
+        path: '/dashboard/system-usage',
       },
     );
   }

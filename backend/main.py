@@ -5,7 +5,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -2192,6 +2192,20 @@ def upload_avatar(file: UploadFile = File(...), current_user: User = Depends(get
     except Exception as e:
         logger.exception(f"Unexpected error uploading avatar for {current_user.username}")
         raise HTTPException(status_code=500, detail="Failed to upload avatar") from e
+
+@app.get("/superuser/system-usage")
+def get_system_usage(
+    environment_id: int | None = Query(default=None),
+    superuser: User = Depends(get_superuser),
+    db: Session = Depends(get_db),
+):
+    """System usage (superuser): eepy platform containers + every user's
+    spawned MCP sidecars with CPU / RAM / network. Data source = the
+    superuser's own Portainer connection (see api/system_usage.py)."""
+    from api import system_usage
+
+    return system_usage.fetch_usage(db, superuser, environment_id)
+
 
 @app.get("/superuser/users", response_model=list[dict])
 def list_all_users(superuser: User = Depends(get_superuser), db: Session = Depends(get_db)):
