@@ -27,7 +27,7 @@ engine = create_engine(database_url, echo=False)
 
 
 def run_migration() -> None:
-    """Execute all five MCP-table creation statements directly against Postgres."""
+    """Execute all six MCP-table creation statements directly against Postgres."""
 
     with engine.connect() as conn:
         print("🚀 Starting MCP tables migration... ✅⏺️❗💜🔒\n")
@@ -160,6 +160,24 @@ def run_migration() -> None:
         conn.execute(text(create_tool_keys_table))
         print("Created 'mcp_user_tool_keys' table - user-scoped Tool API keys (eekey_...)\n")
 
+        # Table 6: MCPClientRegistrations - one-time RFC 7591 Dynamic Client
+        # Registration per template (Mercury): the gateway registers a public
+        # (PKCE) client at boot; client_id stored Fernet-encrypted, no secret.
+        create_client_registrations_table = """
+            CREATE TABLE IF NOT EXISTS mcp_client_registrations (
+                id SERIAL PRIMARY KEY,
+                template_id VARCHAR UNIQUE NOT NULL,   -- one registration per template
+                client_id_enc TEXT NOT NULL,            -- Fernet token of the client_id (never plaintext)
+                client_secret_enc TEXT,                 -- stays NULL for public (PKCE) clients
+                registered_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_mcp_client_registrations_template_id ON mcp_client_registrations(template_id);
+        """
+
+        conn.execute(text(create_client_registrations_table))
+        print("Created 'mcp_client_registrations' table - RFC 7591 dynamic client registrations\n")
+
     # Commit transaction explicitly ✅✅✨
     with engine.connect() as conn:
         conn.commit()  # Apply all changes atomically 🔒❗💜
@@ -169,7 +187,7 @@ def run_migration() -> None:
 
 if __name__ == "__main__":
     try:
-            run_migration()  # Execute all five table creations in one go
+            run_migration()  # Execute all six table creations in one go
     except Exception as e:
         print(f"❌ Migration failed with error: {e}")
         sys.exit(1)

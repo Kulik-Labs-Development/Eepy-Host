@@ -240,6 +240,33 @@ docker container in production), short-lived and idle-reaped.
   it). Local-dev (subprocess) path: stdio is the upstream's default
   transport; Node 26 on PATH + one-time `npm ci && npm run build` in the
   submodule.
+ - Mercury Bank is Template #13, the first **gateway-registered OAuth**
+  integration: Mercury's own HOSTED remote MCP (mcp.mercury.com, streamable
+  HTTP at /mcp) — no sidecar, no submodule, no upstream repo (the docs page
+  is the `repo_url`). Per-user sign-in to the user's OWN Mercury business
+  banking account: the gateway performs a ONE-TIME RFC 7591 Dynamic Client
+  Registration at boot (POST mcp.mercury.com/register, public client —
+  `token_endpoint_auth_method: none`, no client_secret, PKCE proves identity
+  at the token endpoint; `client_name` "Eepy Host" per Mercury's naming
+  rule) and stores the client_id Fernet-encrypted in the new
+  `mcp_client_registrations` table; the hosted OAuth layer resolves it per
+  request (`oauth.dcr: true` in runtime_config). The DCR `redirect_uris`
+  entry is the layer's default callback (ONE source of truth: the same
+  `default_redirect_uri` the authorize URL computes from the request base
+  URL). The endpoints are Mercury's stable documented URLs — no discovery
+  (their 401 carries no resource_metadata): authorize
+  https://mcp.mercury.com/authorize, token https://mcp.mercury.com/token —
+  and the authorize URL additionally carries
+  `resource=https://mcp.mercury.com/mcp` (RFC 8707). DCR is idempotent (a
+  stored row skips the network call) and failure-tolerant: a DCR failure
+  logs ONE line and boot CONTINUES — the template still seeds and authorize
+  503s with an operator message (check the gateway boot log) until a boot
+  registers. Scope v1 = `read offline_access` (read access — payments and
+  transfers always require approval in Mercury); the token blob rides the
+  standard `access_token` → `MERCURY_ACCESS_TOKEN` env_mapping + Bearer
+  header (the Cloudflare hosted shape) and refreshes via the existing
+  offline_access path (the DCR client_id resolves from the registration
+  row, like the M365 per-tenant pattern).
  - The unified proxy (`/api/mcp/proxy/{template_id}/{tool_name}`) routes by
   template `runtime`: `mcp-server` → generic bridge (`api/mcp_bridge.py`),
   `native` → hardcoded `TEMPLATE_REGISTRY` (HappyFox reference path, kept for

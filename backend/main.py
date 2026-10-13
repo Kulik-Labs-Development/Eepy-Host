@@ -154,7 +154,7 @@ def seed_mcp_templates():
     """Seed the admin-approved templates (HappyFox #1, eBay #2, Portainer #3,
     Warden #4, Proxmox VE #5, Tactical RMM #6 read-only + #7 read/command,
     Microsoft Clarity #8, BookStack #9, Cloudflare #10 Code Mode + #11 Full
-    Endpoint Tools, Spotify #12) into the library.
+    Endpoint Tools, Spotify #12, Mercury Bank #13) into the library.
 
     Each integration's MCP server code lives OUTSIDE this backend, in its own
     git submodule under integrations/ (happyfox-mcp →
@@ -1717,10 +1717,60 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
+    # Mercury Bank — Mercury's own hosted remote MCP (mcp.mercury.com,
+    # streamable HTTP at /mcp): per-user sign-in to the user's OWN Mercury
+    # business-banking account, no sidecar. The gateway performs a ONE-TIME
+    # RFC 7591 Dynamic Client Registration at boot (POST mcp.mercury.com/
+    # register, public client: token_endpoint_auth_method "none" — no
+    # client_secret, PKCE proves identity at the token endpoint) and stores
+    # the client_id Fernet-encrypted in mcp_client_registrations; the hosted
+    # OAuth layer resolves it per request (oauth "dcr": true). The endpoints
+    # are Mercury's stable documented URLs (their 401 carries no
+    # resource_metadata — no discovery). v1 = read access (scope "read
+    # offline_access"); payments and transfers ALWAYS require approval in
+    # Mercury. No upstream repo: repo_url points at Mercury's docs page.
+    mercury = MCPTemplate(
+        id="mercury",
+        name="Mercury Bank",
+        repo_url="https://docs.mercury.com/docs/connecting-mercury-mcp",
+        description=(
+            "Read your own Mercury business-banking account (balances, "
+            "transactions, and account activity) through Mercury's hosted "
+            "remote MCP server. No sidecar to run and no API key to enter: "
+            "users sign in to their own Mercury account in the browser "
+            "(OAuth authorization code + PKCE) using a client the Eepy "
+            "gateway registered with Mercury once at boot; tokens are stored "
+            "encrypted and refreshed automatically. v1 is read access — "
+            "payments and transfers always require approval in Mercury."
+        ),
+        config_schema={},
+        runtime="mcp-server",
+        runtime_config={
+            "url": "https://mcp.mercury.com",
+            "endpoint": "/mcp",
+            "env_mapping": {"access_token": "MERCURY_ACCESS_TOKEN"},
+            "headers": {"Authorization": "Bearer {{MERCURY_ACCESS_TOKEN}}"},
+            "oauth": {
+                "authorize_endpoint": "https://mcp.mercury.com/authorize",
+                "token_endpoint": "https://mcp.mercury.com/token",
+                # Public (PKCE) client registered ONCE by the gateway at boot
+                # (RFC 7591 DCR — client_id stored in mcp_client_registrations
+                # and resolved per request; dcr: true). No client_secret.
+                "client_id": "",
+                "dcr": True,
+                "scopes": "read offline_access",
+                "auth_label": "Mercury Bank",
+                "resource": "https://mcp.mercury.com/mcp",
+            },
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
     db = SessionLocal()
     try:
         for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec, clarity, bookstack,
-                    cloudflare, cloudflare_full, uber, ubereats, microsoft365, spotify):
+                    cloudflare, cloudflare_full, uber, ubereats, microsoft365, spotify, mercury):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
                 existing.approved_by_admin = spec.approved_by_admin
@@ -1784,6 +1834,22 @@ def _init_database_with_retry(max_attempts: int = 10, delay_s: float = 3.0) -> N
             sync_database_schema()
             seed_mcp_templates()
             bootstrap_superuser()
+            # One-time RFC 7591 dynamic client registration for the Mercury
+            # template (public PKCE client). Idempotent (skips the network
+            # call when the row exists) and failure-tolerant: the template
+            # still seeds and its authorize 503s until a boot registers — a
+            # DCR failure must NEVER crash boot. base_url = the canonical
+            # production API host, so the DCR redirect_uris entry is exactly
+            # the callback the per-request flow computes in production (the
+            # OAuth layer's default redirect for that base URL).
+            try:
+                from api.mcp_oauth import ensure_mercury_client_registration
+                ensure_mercury_client_registration("https://api.eepy.host")
+            except Exception as e:
+                logger.warning(
+                    f"Mercury DCR at boot failed (non-fatal): "
+                    f"{e.__class__.__name__}: {str(e).splitlines()[0] if str(e) else e}"
+                )
             logger.info("Database initialized and synchronized.")
             _log_boot_data_summary()
             return

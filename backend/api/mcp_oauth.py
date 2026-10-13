@@ -31,6 +31,11 @@ OAuth config lives in the template's ``runtime_config["oauth"]``:
       "client_secret":      "...",               # optional; omit for public (PKCE) clients
       "client_id_field":    "CLIENT_ID",         # optional; read the client_id from the
                                                  # user's stored config (per-tenant apps)
+      "dcr":                true,                # optional; the client_id comes from the
+                                                 # gateway's one-time RFC 7591 dynamic client
+                                                 # registration (mcp_client_registrations)
+      "resource":           "https://mcp.example.com/mcp",  # optional; sent to the authorize
+                                                 # endpoint (RFC 8707 resource indicator)
       "scopes":             "openid offline_access ...",
       "auth_label":         "Provider",          # UI text
       "redirect_uri":       "https://.../api/mcp/oauth/callback"  # optional override
@@ -60,8 +65,8 @@ from sqlalchemy.orm import Session
 
 from auth import create_access_token, decode_access_token
 from database import SessionLocal, User
-from models.mcp_models import MCPTemplate, UserMCPConfig
-from utils.crypto import decrypt_credentials, encrypt_credentials
+from models.mcp_models import MCPClientRegistration, MCPTemplate, UserMCPConfig
+from utils.crypto import decrypt_credentials, decrypt_secret, encrypt_credentials, encrypt_secret
 from utils.logging_setup import logger
 from utils.upstream import assert_public_upstream
 
@@ -73,10 +78,28 @@ class OAuthError(Exception):
     """OAuth flow failure with a user-safe message (no tokens, no secrets)."""
 
 
+# The OAuth layer's default callback path - ONE source of truth for the
+# redirect URL: the authorize URL, the callback exchange, and the DCR
+# redirect_uris all derive the callback from it (per-request base URL).
+DEFAULT_CALLBACK_PATH = "/api/mcp/oauth/callback"
+
+# Mercury's stable hardcoded endpoints (their 401 carries no
+# resource_metadata and their PRM lives only at the root well-known path -
+# no discovery; see docs.mercury.com/docs/connecting-mercury-mcp).
+MERCURY_REGISTER_URL = "https://mcp.mercury.com/register"
+
+
+def default_redirect_uri(base_url: str) -> str:
+    """The layer's default OAuth redirect for a deployment base URL."""
+    return f"{base_url.rstrip('/')}{DEFAULT_CALLBACK_PATH}"
+
+
 def oauth_config(template: MCPTemplate) -> dict[str, Any] | None:
     """The template's OAuth config, or None if the template is not a complete
     OAuth login (missing section, missing authorize/token endpoints, or
-    neither an admin-registered client_id nor a per-user client_id_field)."""
+    neither an admin-registered client_id, a per-user client_id_field, nor a
+    dcr flag - a dcr template's client_id is resolved per request from the
+    gateway's one-time dynamic client registration)."""
     rc = template.runtime_config or {}
     cfg = rc.get("oauth")
     if not isinstance(cfg, dict):
@@ -84,7 +107,11 @@ def oauth_config(template: MCPTemplate) -> dict[str, Any] | None:
     for key in ("authorize_endpoint", "token_endpoint"):
         if not str(cfg.get(key) or "").strip():
             return None
-    if not str(cfg.get("client_id") or "").strip() and not str(cfg.get("client_id_field") or "").strip():
+    if (
+        not str(cfg.get("client_id") or "").strip()
+        and not str(cfg.get("client_id_field") or "").strip()
+        and not cfg.get("dcr")
+    ):
         return None
     return cfg
 
@@ -115,7 +142,7 @@ def build_authorize_url(template: MCPTemplate, user_id: int, base_url: str) -> s
     _guard_endpoint(str(cfg["authorize_endpoint"]))
     _guard_endpoint(str(cfg["token_endpoint"]))
 
-    redirect_uri = str(cfg.get("redirect_uri") or f"{base_url.rstrip('/')}/api/mcp/oauth/callback")
+    redirect_uri = str(cfg.get("redirect_uri") or default_redirect_uri(base_url))
     verifier = secrets.token_urlsafe(48)  # 64 urlsafe chars
     challenge = base64.urlsafe_b64encode(
         hashlib.sha256(verifier.encode("utf-8")).digest()
@@ -132,6 +159,7 @@ def build_authorize_url(template: MCPTemplate, user_id: int, base_url: str) -> s
         "state": state,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
+        "resource": str(cfg.get("resource") or "").strip(),
     }
     params = {k: v for k, v in params.items() if v}
     from urllib.parse import urlencode
@@ -174,12 +202,31 @@ def complete_config_for_user(template: MCPTemplate, user_id: int) -> dict[str, A
 
     Some hosted MCP servers take the client_id per-tenant: the tenant's IT
     admin registers one public (PKCE) app and every user pastes its client
-    ID into the named config field (``client_id_field``). Otherwise the
-    admin-registered client_id stands. Raises OAuthError when the needed
+    ID into the named config field (``client_id_field``). DCR templates
+    (Mercury) resolve it from the gateway's one-time dynamic client
+    registration - a missing registration row raises the same 503-class
+    OAuthError (an operator message: check the gateway boot log). Otherwise
+    the admin-registered client_id stands. Raises OAuthError when the needed
     client_id is absent."""
     cfg = oauth_config(template)
     if not cfg:
         raise OAuthError("Template has no complete OAuth config.")
+    if cfg.get("dcr"):
+        # Gateway-registered client (one-time RFC 7591 DCR at boot): the
+        # client_id lives in mcp_client_registrations, not in the template
+        # or the user's config.
+        reg = resolve_dcr_client(template.id)
+        if not reg or not str(reg.get("client_id") or "").strip():
+            raise OAuthError(
+                "This login's gateway client is not registered yet: the one-time "
+                "dynamic client registration at gateway boot has not succeeded. "
+                "An operator should check the gateway boot log for the DCR line "
+                "(it never crashes boot) and retry after a successful boot."
+            )
+        resolved = {**cfg, "client_id": reg["client_id"]}
+        if reg.get("client_secret"):
+            resolved["client_secret"] = reg["client_secret"]
+        return resolved
     field = str(cfg.get("client_id_field") or "").strip()
     if not field:
         return cfg
@@ -190,6 +237,111 @@ def complete_config_for_user(template: MCPTemplate, user_id: int) -> dict[str, A
             "your tenant — connect with it before signing in."
         )
     return {**cfg, "client_id": client_id}
+
+
+def resolve_dcr_client(template_id: str) -> dict[str, str | None] | None:
+    """The template's stored RFC 7591 registration, Fernet-decrypted IN
+    MEMORY. Returns {"client_id": ..., "client_secret": None} or None when
+    the gateway has not registered a client for the template yet. The values
+    are never logged and never returned in an API response body."""
+    db: Session = SessionLocal()
+    try:
+        row = (
+            db.query(MCPClientRegistration)
+            .filter(MCPClientRegistration.template_id == template_id)
+            .first()
+        )
+        if not row:
+            return None
+        try:
+            client_id = decrypt_secret(row.client_id_enc)
+        except Exception:
+            return None
+        client_secret = decrypt_secret(row.client_secret_enc) if row.client_secret_enc else None
+        return {"client_id": client_id, "client_secret": client_secret}
+    finally:
+        db.close()
+
+
+def ensure_mercury_client_registration(base_url: str, template_id: str = "mercury") -> None:
+    """One-time RFC 7591 Dynamic Client Registration for a hosted remote MCP
+    template (Mercury: POST https://mcp.mercury.com/register).
+
+    Public client: the request declares token_endpoint_auth_method "none",
+    so the response carries a client_id and NO secret - PKCE proves identity
+    at the token endpoint (exactly the M365/eBay shape this layer runs). The
+    redirect_uris entry is the layer's default callback for base_url (ONE
+    source of truth). Idempotent: a stored row means a previous boot already
+    registered, so no network call happens. Failure-tolerant by design: a
+    network/HTTP failure logs ONE line and returns - the template still
+    seeds and its authorize 503s until a boot registers the client; a DCR
+    failure must NEVER crash boot. If the response did contain a
+    client_secret it is noted (never its value) and ignored."""
+    if resolve_dcr_client(template_id) is not None:
+        return
+    body = {
+        "client_name": "Eepy Host",  # Mercury rule: must not begin with "Mercury"
+        "redirect_uris": [default_redirect_uri(base_url)],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }
+    _guard_endpoint(MERCURY_REGISTER_URL)
+    try:
+        with httpx.Client(timeout=20) as client:
+            r = client.post(MERCURY_REGISTER_URL, json=body)  # Content-Type: application/json
+    except httpx.HTTPError as exc:
+        logger.warning(
+            f"DCR for template {template_id} failed ({exc.__class__.__name__}); the template stays "
+            "seeded - authorize returns 503 until a boot registers the client."
+        )
+        return
+    if r.status_code not in (200, 201):
+        logger.warning(
+            f"DCR for template {template_id} returned HTTP {r.status_code}; the template stays "
+            "seeded - authorize returns 503 until a boot registers the client."
+        )
+        return
+    try:
+        data = r.json()
+    except Exception:
+        logger.warning(
+            f"DCR for template {template_id} returned a non-JSON response; the template stays "
+            "seeded - authorize returns 503 until a boot registers the client."
+        )
+        return
+    client_id = str(data.get("client_id") or "").strip()
+    if not client_id:
+        logger.warning(
+            f"DCR response for template {template_id} carried no client_id; the template stays "
+            "seeded - authorize returns 503 until a boot registers the client."
+        )
+        return
+    if str(data.get("client_secret") or "").strip():
+        # Public client: a returned secret is noted (never its value) and
+        # ignored - PKCE proves identity at the token endpoint.
+        logger.info(
+            f"DCR response for template {template_id} carried a client_secret; ignoring it (public client)."
+        )
+    db: Session = SessionLocal()
+    try:
+        row = (
+            db.query(MCPClientRegistration)
+            .filter(MCPClientRegistration.template_id == template_id)
+            .first()
+        )
+        if row:  # a parallel boot registered first - upsert, don't duplicate
+            row.client_id_enc = encrypt_secret(client_id)
+        else:
+            row = MCPClientRegistration(
+                template_id=template_id,
+                client_id_enc=encrypt_secret(client_id),
+            )
+            db.add(row)
+        db.commit()
+    finally:
+        db.close()
+    logger.info(f"DCR: stored client registration for template {template_id}.")
 
 
 def _token_request(cfg: dict[str, str], form: dict[str, str]) -> dict[str, Any]:
@@ -372,12 +524,20 @@ async def ensure_fresh_token(user: User, template: MCPTemplate,
         if not refresh_token:
             raise HTTPException(status_code=409, detail=_refresh_detail(template))
         # Per-tenant templates take the client_id from the user's stored
-        # config (client_id_field) — resolve it from the fresh blob.
+        # config (client_id_field) — resolve it from the fresh blob. DCR
+        # templates (Mercury) take it from the gateway's one-time dynamic
+        # client registration; otherwise the admin-registered client_id
+        # stands.
         field = str(cfg.get("client_id_field") or "").strip()
-        client_id = (
-            str(current.get(field) or "").strip() if field
-            else str(cfg.get("client_id") or "").strip()
-        )
+        if field:
+            client_id = str(current.get(field) or "").strip()
+        elif cfg.get("dcr"):
+            reg = resolve_dcr_client(template.id)
+            client_id = str((reg or {}).get("client_id") or "").strip()
+            if reg and reg.get("client_secret"):
+                cfg = {**cfg, "client_secret": reg["client_secret"]}
+        else:
+            client_id = str(cfg.get("client_id") or "").strip()
         if not client_id:
             raise HTTPException(status_code=409, detail=_refresh_detail(template))
         cfg = {**cfg, "client_id": client_id}

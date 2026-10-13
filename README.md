@@ -100,6 +100,7 @@ original author — follow the link for the full, current list of tools.
 |-------------|--------------|------------------|
 | **HappyFox Help Desk** | Read and act on support tickets (triage, reply, update status) via your HappyFox account. | [Glitch3dPenguin/happyfox-mcp](https://github.com/Glitch3dPenguin/happyfox-mcp) |
 | **eBay Sell** | 299 tools over eBay's Sell APIs: inventory, orders & fulfillment, promoted listings, seller analytics, messaging — sandbox or production. | [YosefHayim/ebay-mcp](https://github.com/YosefHayim/ebay-mcp) |
+| **Mercury Bank** | Read your own Mercury business-banking account (balances, transactions, account activity) through Mercury's hosted remote MCP. | [Mercury MCP docs](https://docs.mercury.com/docs/connecting-mercury-mcp) |
 
 **Connecting to HappyFox** requires three values from your HappyFox account:
 **domain**, **API key**, and **auth code** (found in *Settings → API* on your
@@ -111,6 +112,14 @@ Portal](https://developer.ebay.com/my/keys)) plus an **environment** choice
 (`sandbox` or `production`). Optionally, the RuName redirect URI and a user
 refresh token unlock the higher rate limits (10k–50k req/day). Unofficial
 third-party project — you remain responsible for eBay's API terms.
+
+**Connecting to Mercury Bank** needs no API key or client registration:
+users sign in to **their own** Mercury account in the browser (OAuth
+authorization code + PKCE). The Eepy gateway registers its OAuth client
+with Mercury exactly once — a one-time dynamic client registration at
+gateway boot (RFC 7591) — and the exchanged tokens stay encrypted at rest
+and refresh automatically (v1 = `read` scope + `offline_access`). Payments
+and transfers always require approval in Mercury.
 
 ### More on the way
 

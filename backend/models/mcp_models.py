@@ -154,3 +154,24 @@ class MCPTemplateRequest(Base):
 
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, onupdate=_utcnow)
+
+
+class MCPClientRegistration(Base):
+    """One-time RFC 7591 Dynamic Client Registration per template (Mercury).
+
+    The gateway registers a public (PKCE) client for the hosted remote MCP at
+    boot (token_endpoint_auth_method "none" — no client_secret: PKCE proves
+    identity at the token endpoint). The client_id is Fernet-encrypted at
+    rest and decrypted only in memory during request handling (never logged,
+    never returned in an API response body). client_secret_enc stays NULL for
+    public clients; the DCR path ignores a returned secret if one ever
+    appears.
+    """
+
+    __tablename__ = 'mcp_client_registrations'
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(String, unique=True, nullable=False)  # one registration per template
+    client_id_enc = Column(Text, nullable=False)  # Fernet token of the client_id
+    client_secret_enc = Column(Text, nullable=True)  # stays NULL for public (PKCE) clients
+    registered_at = Column(DateTime, default=_utcnow)
