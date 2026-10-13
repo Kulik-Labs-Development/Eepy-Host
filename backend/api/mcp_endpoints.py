@@ -749,7 +749,7 @@ def mcp_oauth_authorize(
             detail="OAuth login not fully configured yet (provider client_id missing).",
         )
     try:
-        url = mcp_oauth.build_authorize_url(template, current_user.id, str(request.base_url))
+        url = mcp_oauth.build_authorize_url(template, current_user.id, mcp_oauth.oauth_base_url())
     except mcp_oauth.OAuthError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"url": url}
@@ -791,8 +791,7 @@ async def mcp_oauth_callback(
         return _oauth_page(f"<b>Login failed.</b><br>{html.escape(str(exc))}", status=400)
     if not code:
         return _oauth_page("<b>Login failed: the provider did not return a code.</b>", status=400)
-    base = str(request.base_url).rstrip("/")
-    redirect_uri = str(cfg.get("redirect_uri") or f"{base}/api/mcp/oauth/callback")
+    redirect_uri = str(cfg.get("redirect_uri") or mcp_oauth.default_redirect_uri(mcp_oauth.oauth_base_url()))
     try:
         tokens = await asyncio.to_thread(
             mcp_oauth.exchange_code, cfg, code, payload["cv"], redirect_uri)

@@ -411,7 +411,7 @@ def test_authorize_url_carries_resource_dcr_client_and_pkce(client, mercury_env)
     assert q["resource"] == "https://mcp.mercury.com/mcp"
     assert q["scope"] == TOKEN_SCOPE
     assert q["response_type"] == "code"
-    assert q["redirect_uri"] == "http://testserver/api/mcp/oauth/callback"
+    assert q["redirect_uri"] == CANONICAL_REDIRECT
     assert q["code_challenge_method"] == "S256"
 
     state = mcp_oauth.decode_state(q["state"])
@@ -445,7 +445,7 @@ def test_callback_roundtrip_exchanges_dcr_code(client, mercury_env):
     assert "client_secret" not in form  # public client: secretless PKCE exchange
     assert form.get("code_verifier")  # PKCE verifier present
     assert form["code"] == GOOD_CODE
-    assert form["redirect_uri"] == "http://testserver/api/mcp/oauth/callback"
+    assert form["redirect_uri"] == CANONICAL_REDIRECT
 
     creds = _creds(u["username"])
     assert creds["access_token"] == "merc-1"

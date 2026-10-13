@@ -1838,13 +1838,14 @@ def _init_database_with_retry(max_attempts: int = 10, delay_s: float = 3.0) -> N
             # template (public PKCE client). Idempotent (skips the network
             # call when the row exists) and failure-tolerant: the template
             # still seeds and its authorize 503s until a boot registers — a
-            # DCR failure must NEVER crash boot. base_url = the canonical
-            # production API host, so the DCR redirect_uris entry is exactly
-            # the callback the per-request flow computes in production (the
-            # OAuth layer's default redirect for that base URL).
+            # DCR failure must NEVER crash boot. The base URL comes from
+            # oauth_base_url() (canonical by default, overridable via
+            # MCP_OAUTH_BASE_URL) - the same source the authorize URL and
+            # callback exchange use, so the registered redirect_uris entry
+            # is exactly the callback the sign-in flow presents.
             try:
-                from api.mcp_oauth import ensure_mercury_client_registration
-                ensure_mercury_client_registration("https://api.eepy.host")
+                from api.mcp_oauth import ensure_mercury_client_registration, oauth_base_url
+                ensure_mercury_client_registration(oauth_base_url())
             except Exception as e:
                 logger.warning(
                     f"Mercury DCR at boot failed (non-fatal): "

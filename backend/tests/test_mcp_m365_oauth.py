@@ -324,7 +324,7 @@ def test_authorize_url_uses_user_client_id(client, m365_env):
     assert q["client_id"] == CLIENT_ID
     assert q["scope"] == TOKEN_SCOPE
     assert q["response_type"] == "code"
-    assert q["redirect_uri"] == "http://testserver/api/mcp/oauth/callback"
+    assert q["redirect_uri"] == "https://api.eepy.host/api/mcp/oauth/callback"  # canonical base (oauth_base_url), not the test request base
     assert q["code_challenge_method"] == "S256"
 
     state = mcp_oauth.decode_state(q["state"])

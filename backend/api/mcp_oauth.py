@@ -54,6 +54,7 @@ Security notes:
 import asyncio
 import base64
 import hashlib
+import os
 import secrets
 import time
 from datetime import timedelta
@@ -80,13 +81,25 @@ class OAuthError(Exception):
 
 # The OAuth layer's default callback path - ONE source of truth for the
 # redirect URL: the authorize URL, the callback exchange, and the DCR
-# redirect_uris all derive the callback from it (per-request base URL).
+# redirect_uris all derive the callback from it (the canonical base URL
+# from oauth_base_url(); the per-request base URL is plain HTTP behind the
+# proxy and would diverge from the registered redirect).
 DEFAULT_CALLBACK_PATH = "/api/mcp/oauth/callback"
 
 # Mercury's stable hardcoded endpoints (their 401 carries no
 # resource_metadata and their PRM lives only at the root well-known path -
 # no discovery; see docs.mercury.com/docs/connecting-mercury-mcp).
 MERCURY_REGISTER_URL = "https://mcp.mercury.com/register"
+
+
+def oauth_base_url() -> str:
+    """The canonical public base URL for OAuth redirects - ONE source of
+    truth shared by the DCR registration, the authorize URL, and the code
+    exchange. request.base_url is NOT usable: behind the reverse proxy the
+    connection is plain HTTP, so per-request derivation diverges from the
+    registered redirect (Mercury rejects it: "Unregistered redirect_uri",
+    Max 10-13). Self-hosted instances override via MCP_OAUTH_BASE_URL."""
+    return os.environ.get("MCP_OAUTH_BASE_URL", "https://api.eepy.host").rstrip("/")
 
 
 def default_redirect_uri(base_url: str) -> str:
@@ -270,8 +283,9 @@ def ensure_mercury_client_registration(base_url: str, template_id: str = "mercur
     Public client: the request declares token_endpoint_auth_method "none",
     so the response carries a client_id and NO secret - PKCE proves identity
     at the token endpoint (exactly the M365/eBay shape this layer runs). The
-    redirect_uris entry is the layer's default callback for base_url (ONE
-    source of truth). Idempotent: a stored row means a previous boot already
+    redirect_uris entry is the layer's default callback for the canonical
+    base URL (ONE source of truth - the base_url param is legacy and
+    unused; see oauth_base_url()). Idempotent: a stored row means a previous boot already
     registered, so no network call happens. Failure-tolerant by design: a
     network/HTTP failure logs ONE line and returns - the template still
     seeds and its authorize 503s until a boot registers the client; a DCR
@@ -281,7 +295,7 @@ def ensure_mercury_client_registration(base_url: str, template_id: str = "mercur
         return
     body = {
         "client_name": "Eepy Host",  # Mercury rule: must not begin with "Mercury"
-        "redirect_uris": [default_redirect_uri(base_url)],
+        "redirect_uris": [default_redirect_uri(oauth_base_url())],
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
         "token_endpoint_auth_method": "none",
