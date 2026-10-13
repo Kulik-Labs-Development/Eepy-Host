@@ -1731,17 +1731,20 @@ def seed_mcp_templates():
     # Mercury. No upstream repo: repo_url points at Mercury's docs page.
     mercury = MCPTemplate(
         id="mercury",
-        name="Mercury Bank",
+        name="Mercury (First Party)",
         repo_url="https://docs.mercury.com/docs/connecting-mercury-mcp",
         description=(
-            "Read your own Mercury business-banking account (balances, "
-            "transactions, and account activity) through Mercury's hosted "
-            "remote MCP server. No sidecar to run and no API key to enter: "
-            "users sign in to their own Mercury account in the browser "
-            "(OAuth authorization code + PKCE) using a client the Eepy "
-            "gateway registered with Mercury once at boot; tokens are stored "
-            "encrypted and refreshed automatically. v1 is read access — "
-            "payments and transfers always require approval in Mercury."
+            "First-party MCP server hosted by Mercury Bank (mcp.mercury.com) "
+            "- not built or operated by Eepy; the gateway only brokers the "
+            "sign-in. Read-only access to your own Mercury business-banking "
+            "account: balances, transactions, statements, cards, invoices, "
+            "recipients, and treasury. No sidecar to run and no API key to "
+            "enter: users sign in to their own Mercury account in the "
+            "browser (OAuth authorization code + PKCE) using a client the "
+            "Eepy gateway registered with Mercury once at boot; tokens are "
+            "stored encrypted and refreshed automatically. No write "
+            "operations are available through this server - payments and "
+            "transfers must be initiated in Mercury."
         ),
         config_schema={},
         runtime="mcp-server",
@@ -1773,6 +1776,7 @@ def seed_mcp_templates():
                     cloudflare, cloudflare_full, uber, ubereats, microsoft365, spotify, mercury):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
+                existing.name = spec.name
                 existing.approved_by_admin = spec.approved_by_admin
                 existing.enabled_global = spec.enabled_global
                 existing.description = spec.description
