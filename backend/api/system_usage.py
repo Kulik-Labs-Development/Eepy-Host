@@ -128,7 +128,7 @@ def _portainer_config(db: Session, user_id: int) -> dict:
 def fetch_usage(db: Session, user, environment_id: int | None) -> dict:
     """The /superuser/system-usage payload (see the module docstring)."""
     cfg = _portainer_config(db, user.id)
-    headers = {"Authorization": f"Bearer {cfg['api_key']}"}
+    headers = {"X-API-KEY": cfg["api_key"]}
     try:
         with httpx.Client(base_url=cfg["base"], headers=headers,
                           verify=cfg["verify"], timeout=STATS_TIMEOUT_SECONDS) as client:
