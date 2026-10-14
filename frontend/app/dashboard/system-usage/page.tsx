@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, AlertTriangle, Lock, RefreshCw, Server, Users } from 'lucide-react';
+import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { getApiUrl } from '@/lib/api';
 
@@ -47,8 +48,13 @@ interface Rates {
   tx: number | null;
 }
 
+// Config-level prompts (rendered instead of the tables): the data source is
+// now configured in System Settings, not on this page.
+type Prompt =
+  | { kind: 'not_configured' }
+  | { kind: 'multiple'; envs: { id: string | number; name: string | null }[] };
+
 const POLL_MS = 10_000;
-const ENV_KEY = 'eepy_usage_env';
 
 function fmtBytes(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return '—';
@@ -101,54 +107,56 @@ export default function SystemUsagePage() {
 
   const [data, setData] = useState<UsageData | null>(null);
   const [rates, setRates] = useState<Map<string, Rates>>(new Map());
-  const [envs, setEnvs] = useState<EnvInfo[]>([]);
-  const [envId, setEnvId] = useState<number | null>(null);
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const inFlight = useRef(false);
   const prevRef = useRef<Map<string, { rx: number; tx: number; t: number }>>(new Map());
-  const envRestored = useRef(false);
-
-  // Restore the environment pick once on mount (client only).
-  useEffect(() => {
-    if (envRestored.current) return;
-    envRestored.current = true;
-    const stored = typeof window === 'undefined' ? null : window.localStorage.getItem(ENV_KEY);
-    if (stored && Number.isFinite(Number(stored))) setEnvId(Number(stored));
-  }, []);
 
   const load = useCallback(async () => {
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     try {
-      const qs = envId ? `?environment_id=${envId}` : '';
-      const res = await fetch(`${getApiUrl()}/superuser/system-usage${qs}`, {
+      const res = await fetch(`${getApiUrl()}/superuser/system-usage`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('eepy_token')}` },
       });
 
       if (res.status === 409) {
-        // More than one environment visible: adopt the selector list from the body.
+        // More than one environment visible to the token: the environment is
+        // pinned in System Settings now, so prompt there (with the list).
         const body = await res.json().catch(() => null);
-        const list = body?.detail?.environments;
-        if (Array.isArray(list) && list.length > 0) setEnvs(list);
-        setError('Multiple environments visible to this Portainer token — pick one above.');
-        return;
+        const detail = body?.detail;
+        if (detail?.error === 'multiple_environments') {
+          const list = Array.isArray(detail.environments) ? detail.environments : [];
+          setPrompt({ kind: 'multiple', envs: list });
+          return;
+        }
+        throw new Error(
+          typeof detail === 'string' ? detail : `System usage request failed (HTTP ${res.status})`,
+        );
       }
 
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         const detail = body?.detail;
+        if (
+          res.status === 400 &&
+          detail &&
+          typeof detail === 'object' &&
+          detail.error === 'not_configured'
+        ) {
+          setPrompt({ kind: 'not_configured' });
+          return;
+        }
         throw new Error(
           typeof detail === 'string' ? detail : `System usage request failed (HTTP ${res.status})`,
         );
       }
 
       const json: UsageData = await res.json();
-      if (Array.isArray(json.environments) && json.environments.length > 0) {
-        setEnvs(json.environments);
-      }
+      setPrompt(null);
 
       // Bandwidth = the delta between polls; first paint = average since the
       // container started (created epoch).
@@ -189,16 +197,15 @@ export default function SystemUsagePage() {
       inFlight.current = false;
       setBusy(false);
     }
-  }, [envId]);
+  }, []);
 
-  // 10s poll while a superuser is viewing; restarts on the environment pick.
+  // 10s poll while a superuser is viewing.
   useEffect(() => {
     if (!isSuper) return;
-    if (envId !== null) prevRef.current = new Map(); // fresh environment, fresh baseline
     void load();
     const id = setInterval(() => void load(), POLL_MS);
     return () => clearInterval(id);
-  }, [isSuper, envId, load]);
+  }, [isSuper, load]);
 
   if (!user) {
     return (
@@ -306,33 +313,10 @@ export default function SystemUsagePage() {
           <h2 className="font-pixel font-bold text-2xl sm:text-3xl text-ink text-px-sm">System Usage</h2>
           <p className="text-ink-dim font-body text-sm mt-1">
             {data?.environment?.name ? `Environment: ${data.environment.name} · ` : ''}
-            CPU / RAM / bandwidth from your Portainer connection.
+            CPU / RAM / bandwidth from your system data source.
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
-          {envs.length > 1 && (
-            <select
-              value={envId ?? ''}
-              onChange={(e) => {
-                const v = e.target.value;
-                const nextId = v ? Number(v) : null;
-                setEnvId(nextId);
-                if (nextId !== null && typeof window !== 'undefined') {
-                  window.localStorage.setItem(ENV_KEY, String(nextId));
-                }
-              }}
-              className="input-pixel py-2 text-sm"
-            >
-              <option value="" disabled>
-                Pick an environment...
-              </option>
-              {envs.map((env) => (
-                <option key={env.id} value={env.id}>
-                  {env.name}
-                </option>
-              ))}
-            </select>
-          )}
           <span className="chip chip-lilac">
             <Activity size={14} className="animate-led shrink-0" />
             10s poll
@@ -343,7 +327,48 @@ export default function SystemUsagePage() {
         </div>
       </header>
 
-      {error && (
+      {prompt &&
+        (prompt.kind === 'not_configured' ? (
+          <div className="panel pixel-caps p-8 text-center space-y-4 [--cap:theme('colors.eepy.ember')]">
+            <AlertTriangle size={28} className="text-eepy-ember mx-auto" />
+            <h3 className="font-pixel font-bold text-lg text-ink">No system data source configured</h3>
+            <p className="text-ink-dim font-body text-sm max-w-xl mx-auto">
+              System Usage reads from the connection in System Settings — connect Portainer or
+              Arcane (URL + API key) and pick the environment there.
+            </p>
+            <Link href="/dashboard/settings" className="btn btn-blush">
+              Open System Settings
+            </Link>
+          </div>
+        ) : (
+          <div className="panel pixel-caps p-8 space-y-4 [--cap:theme('colors.eepy.ember')]">
+            <div className="flex items-center gap-3">
+              <AlertTriangle size={24} className="text-eepy-ember shrink-0" />
+              <h3 className="font-pixel font-bold text-lg text-ink">Multiple environments visible</h3>
+            </div>
+            <p className="text-ink-dim font-body text-sm">
+              Pick which environment to monitor in System Settings.
+            </p>
+            <ul className="space-y-1.5">
+              {prompt.envs.map((e) => (
+                <li
+                  key={String(e.id)}
+                  className="card px-3 py-2 font-console text-[14px] text-ink-soft"
+                >
+                  {e.name || `environment ${e.id}`}
+                  <span className="text-ink-faint"> (id {e.id})</span>
+                </li>
+              ))}
+            </ul>
+            <div>
+              <Link href="/dashboard/settings" className="btn btn-blush">
+                Open System Settings
+              </Link>
+            </div>
+          </div>
+        ))}
+
+      {!prompt && error && (
         <div className="panel pixel-caps p-4 border-eepy-ember/50">
           <p className="text-eepy-ember font-body text-sm flex items-center gap-2">
             <AlertTriangle size={15} className="shrink-0" />
@@ -360,13 +385,13 @@ export default function SystemUsagePage() {
         </div>
       )}
 
-      {!data && !error ? (
+      {!prompt && !data && !error ? (
         <div className="p-12 text-center flex flex-col items-center gap-4">
           <RefreshCw size={32} className="text-eepy-lilac animate-spin" />
           <p className="text-ink-faint font-body text-sm italic">Sampling the environment...</p>
         </div>
       ) : (
-        data && (
+        !prompt && data && (
           <>
             <div className="panel overflow-hidden">
               <div className="p-4 sm:p-5 border-b-2 border-night-line bg-night-deep/40">
@@ -401,3 +426,4 @@ export default function SystemUsagePage() {
     </div>
   );
 }
+

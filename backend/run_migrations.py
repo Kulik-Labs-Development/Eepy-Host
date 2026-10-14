@@ -178,6 +178,27 @@ def run_migration() -> None:
         conn.execute(text(create_client_registrations_table))
         print("Created 'mcp_client_registrations' table - RFC 7591 dynamic client registrations\n")
 
+        # Table 7: SystemSettings - SINGLE ROW (id=1): where the System
+        # Usage page reads container stats from (Portainer today, Arcane as
+        # the planned successor). API keys ride Fernet tokens, never plaintext.
+        create_system_settings_table = """
+            CREATE TABLE IF NOT EXISTS system_settings (
+                id INTEGER PRIMARY KEY DEFAULT 1,             -- single-row table (always 1)
+                backend VARCHAR(16) NOT NULL DEFAULT 'portainer',  -- 'portainer' | 'arcane'
+                portainer_url TEXT,
+                portainer_api_key_enc TEXT,                   -- Fernet token of the API key (never plaintext)
+                portainer_tls_verify BOOLEAN NOT NULL DEFAULT TRUE,
+                arcane_url TEXT,
+                arcane_api_key_enc TEXT,                      -- Fernet token of the API key (never plaintext)
+                environment_id VARCHAR(32),                   -- string env id (Portainer ints arrive stringified; Arcane "0"/"1"); NULL = auto
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """
+
+        conn.execute(text(create_system_settings_table))
+        print("Created 'system_settings' table - single-row system data source config (Portainer / Arcane)\n")
+
     # Commit transaction explicitly ✅✅✨
     with engine.connect() as conn:
         conn.commit()  # Apply all changes atomically 🔒❗💜

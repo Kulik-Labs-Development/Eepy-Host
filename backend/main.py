@@ -5,7 +5,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -2195,16 +2195,65 @@ def upload_avatar(file: UploadFile = File(...), current_user: User = Depends(get
 
 @app.get("/superuser/system-usage")
 def get_system_usage(
-    environment_id: int | None = Query(default=None),
     superuser: User = Depends(get_superuser),
     db: Session = Depends(get_db),
 ):
     """System usage (superuser): eepy platform containers + every user's
-    spawned MCP sidecars with CPU / RAM / network. Data source = the
-    superuser's own Portainer connection (see api/system_usage.py)."""
+    spawned MCP sidecars with CPU / RAM / network. Data source = the system
+    settings row (Portainer / Arcane), falling back to the superuser's own
+    Portainer connection (see api/system_usage.py)."""
     from api import system_usage
 
-    return system_usage.fetch_usage(db, superuser, environment_id)
+    return system_usage.fetch_usage(db, superuser)
+
+
+class SystemSettingsIn(BaseModel):
+    backend: str | None = None  # "portainer" | "arcane"
+    portainer_url: str | None = None
+    portainer_api_key: str | None = None  # Fernet-encrypted on save; blank = keep
+    portainer_tls_verify: bool | None = None
+    arcane_url: str | None = None
+    arcane_api_key: str | None = None  # Fernet-encrypted on save; blank = keep
+    environment_id: str | int | None = None  # string env id (ints stored stringified); None = auto
+
+
+@app.get("/superuser/system-settings")
+def get_system_settings(
+    superuser: User = Depends(get_superuser),
+    db: Session = Depends(get_db),
+):
+    """System data source config (superuser): the single system_settings row.
+    API keys are never returned - only the *_api_key_set booleans."""
+    from api import system_settings
+
+    return system_settings.get_settings(db)
+
+
+@app.put("/superuser/system-settings")
+def put_system_settings(
+    body: SystemSettingsIn,
+    superuser: User = Depends(get_superuser),
+    db: Session = Depends(get_db),
+):
+    """Upsert the system data source config (superuser). Blank url/key =
+    keep the stored value; the ACTIVE backend must end up with both."""
+    from api import system_settings
+
+    return system_settings.put_settings(db, body.model_dump())
+
+
+@app.post("/superuser/system-settings/test")
+def test_system_settings(
+    body: SystemSettingsIn,
+    superuser: User = Depends(get_superuser),
+    db: Session = Depends(get_db),
+):
+    """Probe the (form-provided or stored) Portainer / Arcane connection and
+    return its visible environments (the dropdown options). Always 200 with
+    {"ok": ...} - never a 5xx from this route."""
+    from api import system_settings
+
+    return system_settings.test_settings(db, body.model_dump())
 
 
 @app.get("/superuser/users", response_model=list[dict])

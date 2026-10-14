@@ -38,7 +38,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { icon: <Library size={18} />, label: 'MCP Library', path: '/dashboard/servers/library' },
     { icon: <Server size={18} />, label: 'My MCP Servers', path: '/dashboard/servers' },
     { icon: <UserCircle size={18} />, label: 'Account', path: '/dashboard/account' },
-    { icon: <Settings size={18} />, label: 'System Settings', path: '/dashboard/settings' },
   ];
 
   // Superuser-only tabs: Organization admin + the backend Debug Log console
@@ -59,6 +58,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         icon: <Activity size={18} />,
         label: 'System Usage',
         path: '/dashboard/system-usage',
+      },
+      {
+        icon: <Settings size={18} />,
+        label: 'System Settings',
+        path: '/dashboard/settings',
       },
     );
   }
