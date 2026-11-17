@@ -160,6 +160,18 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-spotify:latest
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Build and push Ghost blog MCP sidecar image
+        # Built from the integrations/ghost-blog-mcp submodule (upstream
+        # Glitch3dPenguin/ghost-blog-mcp) so the deployed sidecar always
+        # matches the exact upstream commit this repo pins.
+        uses: docker/build-push-action@v5
+        with:
+          context: ./
+          file: ./integrations/Dockerfile.ghost
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-ghost:latest
+          labels: ${{ steps.meta.outputs.labels }}
+
       - name: Build and push Frontend image
         uses: docker/build-push-action@v5
         with:

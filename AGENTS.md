@@ -267,6 +267,25 @@ docker container in production), short-lived and idle-reaped.
   header (the Cloudflare hosted shape) and refreshes via the existing
   offline_access path (the DCR client_id resolves from the registration
   row, like the M365 per-tenant pattern).
+ - Ghost Blog is Template #14, same modular pattern from the
+  `integrations/ghost-blog-mcp` git submodule (github.com/Glitch3dPenguin/
+  ghost-blog-mcp — the Kulik Labs project this gateway hosts: a single-file
+  Python/FastMCP server, 18 tools over the Ghost content/admin APIs: posts,
+  pages, tags, authors). Bearer-gate class (BookStack/Proxmox/TRMM):
+  streamable-HTTP on :8000 at / (the module's `streamable_http_path="/"`),
+  and the module REFUSES to start on a non-loopback bind without
+  `MCP_AUTH_TOKEN` (fail-closed — it fronts a Ghost admin key), so the seed
+  declares `generated_secrets: ["MCP_AUTH_TOKEN"]` + the per-request
+  `Authorization` header exactly like them. User credentials ride env at
+  spawn (`GHOST_URL` + `GHOST_ADMIN_KEY`, optional `GHOST_CONTENT_KEY`
+  read-only mode); the module signs the Ghost 6 admin JWT itself (the key
+  is ID:HEXSECRET — HS256, kid/aud/exp-300s), so no per-request header
+  carries the Ghost key. No Host override needed (the module runs uvicorn
+  itself). The upstream requirements already pin mcp>=1.0.0,<2.0.0, so the
+  image needs no extra mcp pin. Connection test = `check_connection`
+  (read-only: admin mode + Ghost version). Local-dev (subprocess) path:
+  one-time `pip install -r integrations/ghost-blog-mcp/requirements.txt` in
+  the backend interpreter.
  - The unified proxy (`/api/mcp/proxy/{template_id}/{tool_name}`) routes by
   template `runtime`: `mcp-server` → generic bridge (`api/mcp_bridge.py`),
   `native` → hardcoded `TEMPLATE_REGISTRY` (HappyFox reference path, kept for
@@ -428,6 +447,8 @@ docker container in production), short-lived and idle-reaped.
 │   │                         #    node >=26.8.1; entrypoint materializes
 │   │                         #    spotify-config.json from the sidecar env;
 │   │                         #    HTTP mode on :3000 at /mcp)
+│   ├── Dockerfile.ghost      #   (mirrors the upstream Dockerfile; single-file
+│   │                         #    Python/FastMCP server; mcp 1.x pinned upstream)
 │   ├── happyfox-mcp/         # GIT SUBMODULE → Glitch3dPenguin/happyfox-mcp
 │   ├── ebay-mcp/             # GIT SUBMODULE → YosefHayim/ebay-mcp
 │   ├── portainer-mcp/        # GIT SUBMODULE → portainer/portainer-mcp
@@ -436,7 +457,8 @@ docker container in production), short-lived and idle-reaped.
 │   ├── trmm-mcp/             # GIT SUBMODULE → shin2344234/trmm-mcp
 │   ├── clarity-mcp/          # GIT SUBMODULE → microsoft/clarity-mcp-server
 │   ├── bookstack-mcp/        # GIT SUBMODULE → pnocera/bookstack-mcp-server
-│   └── spotify-mcp/          # GIT SUBMODULE → marcelmarais/spotify-mcp-server
+│   ├── spotify-mcp/          # GIT SUBMODULE → marcelmarais/spotify-mcp-server
+│   └── ghost-blog-mcp/       # GIT SUBMODULE → Glitch3dPenguin/ghost-blog-mcp
 └── assets/
 ```
 
@@ -1026,7 +1048,7 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   (a plain clone leaves the submodule dir empty until
   `git submodule update --init`).
 - **Two CI workflows, both on push to main:** `CI` (ruff+pytest, eslint+tsc —
-  no image builds) and   `Build and Push to GHCR`, which builds **eleven**
+  no image builds) and   `Build and Push to GHCR`, which builds **twelve**
   images: `eepy-host-backend`, `eepy-host-frontend`, `eepy-host-happyfox`
   (sidecar, built from the submodule via `integrations/Dockerfile.happyfox`),
   `eepy-host-ebay` (sidecar, via `integrations/Dockerfile.ebay`),
@@ -1038,14 +1060,16 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   `eepy-host-clarity` (sidecar, via `integrations/Dockerfile.clarity`),
   `eepy-host-bookstack` (sidecar, via `integrations/Dockerfile.bookstack` —
   digest-pinned oven/bun; the upstream is Bun-native, Node.js unsupported)
-  and `eepy-host-spotify` (sidecar, via `integrations/Dockerfile.spotify`
+  `eepy-host-spotify` (sidecar, via `integrations/Dockerfile.spotify`
   — per-user OAuth; the upstream's spotify-config.json is materialized
   from the sidecar env at container start)
+  and `eepy-host-ghost` (sidecar, via `integrations/Dockerfile.ghost` — built
+  from the integrations/ghost-blog-mcp submodule)
   — all sidecars built with the repo root as build context. So every push to
   main refreshes all deployed images.
   - **Seed roll-forward:** `seed_mcp_templates()` in `main.py` updates the
   existing seeded rows' (HappyFox, eBay, Portainer, Warden, Proxmox, Tactical
-  RMM read-only + command, Clarity, BookStack, Spotify) `runtime`,
+  RMM read-only + command, Clarity, BookStack, Spotify, Ghost Blog) `runtime`,
   `runtime_config`, `config_schema`, `image_tag`, and approval flags on
   **every boot** (idempotent). That is how spec changes reach the live DB —
   pushing a backend change is enough; no manual DB edit needed.
@@ -1055,7 +1079,7 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   `eepy-host-portainer:latest` / `eepy-host-warden:latest` /
   `eepy-host-proxmox:latest` / `eepy-host-trmm:latest` /
   `eepy-host-clarity:latest` / `eepy-host-bookstack:latest` /
-  `eepy-host-spotify:latest` images and
+  `eepy-host-spotify:latest` / `eepy-host-ghost:latest` images and
   recreate the containers (sidecar
   images are pulled lazily by the bridge, so just make sure the backend has
   fresh access). `stack.env` values rarely change
@@ -1090,7 +1114,7 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
     (check the daemon line above / the Debug Log console).
   -    **Verify the docker sidecar path (production):** the dev machine has
      Docker, so the full compose stack CAN be exercised locally (build the
-     eleven app+sidecar images with the GHCR tags, `docker compose --env-file
+     twelve app+sidecar images with the GHCR tags, `docker compose --env-file
     stack.env up -d`). After a deploy: hit the dashboard's connection test,
    then a real proxy tool call, and confirm in the backend logs (or the
    Debug Log console) that `mcp-bridge: started sidecar container ...

@@ -154,7 +154,7 @@ def seed_mcp_templates():
     """Seed the admin-approved templates (HappyFox #1, eBay #2, Portainer #3,
     Warden #4, Proxmox VE #5, Tactical RMM #6 read-only + #7 read/command,
     Microsoft Clarity #8, BookStack #9, Cloudflare #10 Code Mode + #11 Full
-    Endpoint Tools, Spotify #12, Mercury Bank #13) into the library.
+    Endpoint Tools, Spotify #12, Mercury Bank #13, Ghost Blog #14) into the library.
 
     Each integration's MCP server code lives OUTSIDE this backend, in its own
     git submodule under integrations/ (happyfox-mcp →
@@ -166,7 +166,8 @@ def seed_mcp_templates():
     github.com/shin2344234/trmm-mcp, clarity-mcp →
     github.com/microsoft/clarity-mcp-server, bookstack-mcp →
     github.com/pnocera/bookstack-mcp-server, spotify-mcp →
-    github.com/marcelmarais/spotify-mcp-server). These rows only register *how
+    github.com/marcelmarais/spotify-mcp-server, ghost-blog-mcp →
+    github.com/Glitch3dPenguin/ghost-blog-mcp). These rows only register *how
     to run* them:
 
     - docker backend (production/Portainer): CI builds each submodule into its
@@ -1353,6 +1354,111 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
+    # Ghost blog (Template #14): the modular pattern. Single-file
+    # Python/FastMCP upstream (18 tools: posts, pages, tags, authors).
+    ghost = MCPTemplate(
+        id="ghost",
+        name="Ghost Blog",
+        repo_url="https://github.com/Glitch3dPenguin/ghost-blog-mcp",
+        description=(
+            "Manage a Ghost blog across 18 tools: posts and pages "
+            "(list, read, create, update, delete, content with lexical or "
+            "html, publish/schedule status), tags, and authors. Runs "
+            "against YOUR Ghost site with your own Admin API key — the "
+            "module signs the Ghost 6 admin JWT itself, so the key is the "
+            "only secret a user supplies (credentials stay encrypted at "
+            "rest and are proxied through the Eepy unified proxy)."
+        ),
+        config_schema={
+            "category": "Content Management / Blogging",
+            "type": "object",
+            "properties": {
+                "GHOST_URL": {
+                    "type": "string",
+                    "label": "Ghost Site URL",
+                    "placeholder": "https://yoursite.com",
+                    "help": "The public URL of your Ghost site (e.g. https://klabsdev.com).",
+                    "required": True,
+                },
+                "GHOST_ADMIN_KEY": {
+                    "type": "password",
+                    "label": "Admin API Key",
+                    "placeholder": "key id:64-char hex secret",
+                    "help": "Ghost: Settings > API > Admin API. The key is ID:HEXSECRET; the module signs the Ghost 6 admin JWT itself.",
+                    "required": True,
+                },
+                "GHOST_CONTENT_KEY": {
+                    "type": "password",
+                    "label": "Content API Key (optional)",
+                    "placeholder": "key id:64-char hex secret",
+                    "help": "Optional read-only Content API key (Settings > API > Content API); enables the read-only mode.",
+                    "required": False,
+                },
+            },
+            "required": ["GHOST_URL", "GHOST_ADMIN_KEY"],
+        },
+        image_tag="ghcr.io/kulik-labs-development/eepy-host-ghost",
+        runtime="mcp-server",
+        # Modular sidecar spec (BookStack/Proxmox/TRMM bearer-gate class):
+        # transport = streamable-HTTP on :8000 at / (the module's
+        # streamable_http_path="/" — the MCP endpoint IS the root path).
+        # The module REFUSES to start on a non-loopback bind without
+        # MCP_AUTH_TOKEN (fail-closed — it fronts a Ghost admin key), so
+        # HOST=0.0.0.0 only ever boots with the bridge-minted token:
+        # generated_secrets mints a fresh per-spawn MCP_AUTH_TOKEN into the
+        # sidecar env and the per-request Authorization header resolves the
+        # same value — a headerless peer on the sidecar network gets 401
+        # and the gate token is never stored. Credentials ride env at spawn
+        # (GHOST_URL + GHOST_ADMIN_KEY + optional GHOST_CONTENT_KEY). No
+        # Host override needed: the module runs uvicorn itself (no mcp-SDK
+        # DNS-rebinding Host validation in the path), so the bridge's
+        # direct container-IP dial on eepy-sidecars passes as-is. The
+        # upstream requirements pin mcp>=1.0.0,<2.0.0, so the image needs
+        # no extra mcp pin. Local dev (subprocess): stdio transport via
+        # subprocess_env; one-time `pip install -r
+        # integrations/ghost-blog-mcp/requirements.txt` in the backend
+        # interpreter.
+        runtime_config={
+            "image": "ghcr.io/kulik-labs-development/eepy-host-ghost:latest",
+            "command": ["python", "ghost_blog_mcp.py"],
+            "cwd": "integrations/ghost-blog-mcp",
+            "env": {
+                "MCP_TRANSPORT": "streamable-http",
+                "HOST": "0.0.0.0",
+                "PORT": "8000",
+            },
+            "subprocess_env": {"MCP_TRANSPORT": "stdio"},
+            "endpoint": "/",
+            "port": "8000",
+            "env_mapping": {
+                "GHOST_URL": "GHOST_URL",
+                "GHOST_ADMIN_KEY": "GHOST_ADMIN_KEY",
+                "GHOST_CONTENT_KEY": "GHOST_CONTENT_KEY",
+            },
+            "generated_secrets": ["MCP_AUTH_TOKEN"],
+            "headers": {
+                "Authorization": "Bearer {{MCP_AUTH_TOKEN}}",
+            },
+            # Read-only probe for POST /config/{id}/test: reports admin
+            # mode + the Ghost version, so a bad key or URL fails loudly.
+            "test_tool": {"name": "check_connection", "arguments": {}},
+            # The full tool set (18 tools at submodule d8a776e, verified
+            # from the submodule source). Admin discovery overwrites this
+            # with the authoritative tools/list.
+            "tool_names": [
+                "check_connection",
+                "list_posts", "get_post", "get_post_content",
+                "list_pages", "get_page",
+                "list_tags", "list_authors",
+                "create_post", "update_post", "set_post_status", "delete_post",
+                "create_page", "update_page", "delete_page",
+                "create_tag", "update_tag", "delete_tag",
+            ],
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
     # Cloudflare (hosted remote upstreams — no sidecar, no image, no command):
     # the bridge registers the fixed upstream URL (runtime_config 'url') and
     # dials it with the user's per-request headers. The user's own Cloudflare
@@ -1773,7 +1879,7 @@ def seed_mcp_templates():
     db = SessionLocal()
     try:
         for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec, clarity, bookstack,
-                    cloudflare, cloudflare_full, uber, ubereats, microsoft365, spotify, mercury):
+                    cloudflare, cloudflare_full, uber, ubereats, microsoft365, spotify, mercury, ghost):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
                 existing.name = spec.name

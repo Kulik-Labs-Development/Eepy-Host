@@ -1,0 +1,53 @@
+# Ghost blog MCP server sidecar image (ghost-blog-mcp).
+#
+# SOURCE OF TRUTH: integrations/ghost-blog-mcp (git submodule →
+# github.com/Glitch3dPenguin/ghost-blog-mcp). This Dockerfile only builds that
+# code into an image; it is NOT where the server code lives.
+#
+# Build context must be the REPO ROOT (CI sets context: ./), so the
+# integrations/ghost-blog-mcp/ paths below resolve to exactly the submodule
+# commit this repo pins.
+#
+# Transport: streamable-HTTP on :8000 at / (the module's
+# streamable_http_path="/" — the MCP endpoint is the root path). The
+# per-sidecar MCP_AUTH_TOKEN bearer gate (generated_secrets) and the matching
+# Authorization header come from the template runtime_config at spawn time —
+# see seed_mcp_templates() in backend/main.py. The module refuses a
+# non-loopback bind without a token (fail-closed), so the HOST=0.0.0.0 env
+# below only ever boots with the bridge-minted token present. No Host header
+# override is needed: the module runs uvicorn itself (no mcp-SDK
+# DNS-rebinding Host validation in the path), so the bridge's direct
+# container-IP dial on the eepy-sidecars network passes as-is.
+#
+# The submodule's requirements.txt pins mcp>=1.0.0,<2.0.0, so the image
+# needs no extra mcp pin or force-reinstall.
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install deps first (better layer caching — re-runs only if requirements change)
+COPY integrations/ghost-blog-mcp/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Server code (single-file upstream repo)
+COPY integrations/ghost-blog-mcp/ghost_blog_mcp.py .
+
+# Non-root runtime user (mirrors the upstream Dockerfile — the container env
+# carries a Ghost admin key).
+RUN useradd --create-home --shell /usr/sbin/nologin mcp && chown -R mcp:mcp /app
+USER mcp
+
+# Streamable-HTTP defaults for container deployments; the template
+# runtime_config env repeats these so the seed is the single readable source
+# of the sidecar contract.
+ENV MCP_TRANSPORT=streamable-http \
+    HOST=0.0.0.0 \
+    PORT=8000 \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8000)); s.close()"
+
+CMD ["python", "ghost_blog_mcp.py"]
