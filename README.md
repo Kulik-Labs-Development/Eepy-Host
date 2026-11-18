@@ -2,9 +2,6 @@
   <img src="assets/images/eepy-chan.png" alt="Eepy-chan — the Eepy Host logo" width="640" />
 </p>
 
-
-<h1 align="center">Eepy Host</h1>
-
 <p align="center">
   <strong>The managed MCP gateway.</strong><br/>
   A unified platform that connects AI agents to external tools and services —<br/>
