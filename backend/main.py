@@ -1394,6 +1394,12 @@ def seed_mcp_templates():
                     "help": "Optional. Ghost: Settings > API > Content API - the plain hex key (no key id, unlike the Admin key). Enables the read-only mode.",
                     "required": False,
                 },
+                "GHOST_ALLOW_DELETE": {
+                    "type": "boolean",
+                    "label": "Allow deleting posts and pages",
+                    "help": "Optional. The module refuses its delete tools by default (destructive operations need an explicit opt-in). Check this to let the connection delete; create, update, and publish work either way.",
+                    "required": False,
+                },
             },
             "required": ["GHOST_URL", "GHOST_ADMIN_KEY"],
         },
@@ -1409,7 +1415,10 @@ def seed_mcp_templates():
         # sidecar env and the per-request Authorization header resolves the
         # same value — a headerless peer on the sidecar network gets 401
         # and the gate token is never stored. Credentials ride env at spawn
-        # (GHOST_URL + GHOST_ADMIN_KEY + optional GHOST_CONTENT_KEY). No
+        # (GHOST_URL + GHOST_ADMIN_KEY + optional GHOST_CONTENT_KEY + the
+        # GHOST_ALLOW_DELETE boolean, the wizard's delete-allow checkbox —
+        # the module's destructive gate, off unless the user checks it).
+        # No
         # Host override needed: the module runs uvicorn itself (no mcp-SDK
         # DNS-rebinding Host validation in the path), so the bridge's
         # direct container-IP dial on eepy-sidecars passes as-is. The
@@ -1434,6 +1443,7 @@ def seed_mcp_templates():
                 "GHOST_URL": "GHOST_URL",
                 "GHOST_ADMIN_KEY": "GHOST_ADMIN_KEY",
                 "GHOST_CONTENT_KEY": "GHOST_CONTENT_KEY",
+                "GHOST_ALLOW_DELETE": "GHOST_ALLOW_DELETE",
             },
             "generated_secrets": ["MCP_AUTH_TOKEN"],
             "headers": {

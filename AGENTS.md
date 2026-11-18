@@ -278,7 +278,10 @@ docker container in production), short-lived and idle-reaped.
   declares `generated_secrets: ["MCP_AUTH_TOKEN"]` + the per-request
   `Authorization` header exactly like them. User credentials ride env at
   spawn (`GHOST_URL` + `GHOST_ADMIN_KEY`, optional `GHOST_CONTENT_KEY`
-  read-only mode); the module signs the Ghost 6 admin JWT itself (the key
+  read-only mode, optional `GHOST_ALLOW_DELETE` — the wizard's "Allow
+  deleting posts and pages" checkbox; rides env as the string
+  `true`/`false` and lifts the module's destructive-op gate, off unless
+  checked); the module signs the Ghost 6 admin JWT itself (the key
   is ID:HEXSECRET — HS256, kid/aud/exp-300s), so no per-request header
   carries the Ghost key. No Host override needed (the module runs uvicorn
   itself). The upstream requirements already pin mcp>=1.0.0,<2.0.0, so the

@@ -47,6 +47,7 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
   const hasFields = Object.keys(properties).length > 0;
 
   const isPassword = (key: string) => properties[key]?.type === 'password';
+  const isBoolean = (key: string) => properties[key]?.type === 'boolean';
 
   // The schema-driven field list (shared by the plain form and the
   // OAuth-with-fields flow, e.g. Microsoft 365's tenant client ID).
@@ -58,6 +59,17 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
             {prop.label || key}
             {required.has(key) && <span className="w-2 h-2 bg-eepy-ember inline-block" title="Required" />}
           </label>
+          {isBoolean(key) ? (
+            <label className="flex items-center gap-2 text-sm font-body text-ink-soft cursor-pointer mt-1">
+              <input
+                type="checkbox"
+                checked={formData[key] === 'true'}
+                onChange={(e) => setField(key, e.target.checked ? 'true' : 'false')}
+                className="h-4 w-4 accent-eepy-blush"
+              />
+              {formData[key] === 'true' ? 'Enabled' : 'Disabled'}
+            </label>
+          ) : (
           <div className="relative">
             <KeyRound size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-dim" />
             <input
@@ -79,6 +91,7 @@ export default function MCPConnectionWizard({ templateId, templateName, schema, 
               </button>
             )}
           </div>
+          )}
           {prop.help && <p className="text-xs text-ink-dim mt-1.5 font-body">{prop.help}</p>}
         </div>
       ))}
