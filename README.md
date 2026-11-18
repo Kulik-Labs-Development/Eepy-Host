@@ -2,11 +2,6 @@
   <img src="assets/images/eepy-chan.png" alt="Eepy-chan — the Eepy Host logo" width="640" />
 </p>
 
-<p align="center">
-  <img src="assets/images/eepy.gif" alt="The original Eepy mark" width="96" />
-  <br />
-  <sub>the original mark — where we came from</sub>
-</p>
 
 <h1 align="center">Eepy Host</h1>
 
