@@ -426,3 +426,113 @@ def test_connection_test_fallback_discovers_tools(client, auth_user, url_env):
         finally:
             db.close()
         mcp_bridge.shutdown_all_instances()
+
+# ---------------------------------------------------------------------------
+# Per-user {{FIELD}} url templates (the Home Assistant shape)
+# ---------------------------------------------------------------------------
+def _ha_url_template(endpoint="/api/mcp"):
+    return _url_template({
+        "url": "{{HA_URL}}",
+        "endpoint": endpoint,
+        "env_mapping": {"HA_URL": "HA_URL", "HA_TOKEN": "HA_TOKEN"},
+        "headers": {"Authorization": "Bearer {{HA_TOKEN}}"},
+    }, template_id="fake-ha-mcp")
+
+
+def test_runtime_config_url_branch_accepts_placeholder_url():
+    from api import mcp_bridge
+
+    cfg = {"url": "{{HA_URL}}", "endpoint": "/api/mcp"}
+    assert mcp_bridge._runtime_config(_url_template(cfg)) == cfg
+
+
+def test_url_template_resolved_non_https_raises():
+    """The scheme check runs on the RESOLVED url (a placeholder skips it in
+    _runtime_config); this fires before the (networked) SSRF guard."""
+    from api import mcp_bridge
+
+    template = _ha_url_template()
+    cfg = mcp_bridge._runtime_config(template)
+    env = mcp_bridge._sidecar_env(
+        cfg, mcp_bridge.map_env(
+            cfg, {"HA_URL": "http://127.0.0.1:8443", "HA_TOKEN": FAKE_URL_TOKEN}))
+    with pytest.raises(mcp_bridge.BridgeError) as exc:
+        asyncio.run(mcp_bridge.spawn_instance(template, "key-plain-http", env))
+    assert "https" in str(exc.value)
+
+
+def test_url_template_placeholder_missing_var_raises():
+    """A placeholder for a credential the user never supplied fails loudly
+    (before the guard) - the same semantics as the header templates."""
+    from api import mcp_bridge
+
+    template = _ha_url_template()
+    cfg = mcp_bridge._runtime_config(template)
+    env = mcp_bridge._sidecar_env(cfg, mcp_bridge.map_env(cfg, {}))
+    with pytest.raises(mcp_bridge.BridgeError) as exc:
+        asyncio.run(mcp_bridge.spawn_instance(template, "key-no-creds", env))
+    assert "HA_URL" in str(exc.value)
+    assert "not set" in str(exc.value)
+
+
+def test_url_instance_per_user_url_roundtrip(url_env):
+    """The HA shape end-to-end: a url template + per-user creds -> the
+    instance dials the USER's url with the USER's bearer token."""
+    from api import mcp_bridge
+    from database import User
+
+    base_url = url_env["base_url"]
+    gate = url_env["gate"]
+    # The fake server listens on /mcp (the real /api/mcp endpoint string is
+    # pinned by the seed-shape test); what is under test here is the
+    # per-user url resolution + the bearer header.
+    template = _ha_url_template(endpoint="/mcp")
+    creds = {"HA_URL": base_url, "HA_TOKEN": FAKE_URL_TOKEN}
+    user = User(id=987655, username="ha-url-test",
+                email="ha-url-test@example.com")
+    cfg = mcp_bridge._runtime_config(template)
+    env = mcp_bridge._sidecar_env(cfg, mcp_bridge.map_env(cfg, creds))
+    headers = mcp_bridge._sidecar_headers(cfg, env)
+    key = mcp_bridge.key_for(user.id, template.id, creds)
+
+    async def run():
+        inst = await mcp_bridge.spawn_instance(template, key, env, headers=headers)
+        try:
+            assert inst.kind == "url"
+            assert inst.url == base_url + "/mcp"
+            data, is_error = await mcp_bridge.bridge_call(
+                user, template, creds, "list_items", {"limit": 2})
+            assert is_error is False
+            assert data == "items=item-1,item-2"
+            assert f"Bearer {FAKE_URL_TOKEN}" in gate.seen_auth
+        finally:
+            mcp_bridge.kill_instance(key)
+
+    asyncio.run(run())
+
+
+def test_seeded_homeassistant_template_shape(client):
+    from database import SessionLocal
+    from models.mcp_models import MCPTemplate
+
+    db = SessionLocal()
+    try:
+        t = db.query(MCPTemplate).filter(MCPTemplate.id == "home-assistant").first()
+    finally:
+        db.close()
+    assert t is not None, "home-assistant template was not seeded"
+    assert t.approved_by_admin and t.enabled_global
+    assert t.runtime == "mcp-server"
+    assert t.image_tag is None, "url templates have no sidecar image"
+    cfg = t.runtime_config
+    assert cfg["url"] == "{{HA_URL}}"
+    assert cfg["endpoint"] == "/api/mcp"
+    assert cfg["env_mapping"] == {"HA_URL": "HA_URL", "HA_TOKEN": "HA_TOKEN"}
+    assert cfg["headers"] == {"Authorization": "Bearer {{HA_TOKEN}}"}
+    assert "image" not in cfg and "command" not in cfg
+    assert "test_tool" not in cfg, "the test route falls back to tools/list"
+    assert "oauth" not in cfg, "long-lived token auth, not OAuth"
+    schema = t.config_schema
+    assert schema["required"] == ["HA_URL", "HA_TOKEN"]
+    assert schema["properties"]["HA_TOKEN"]["type"] == "password"
+

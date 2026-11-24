@@ -128,12 +128,14 @@ def _runtime_config(template: MCPTemplate) -> dict[str, Any]:
     if not isinstance(cfg, dict):
         raise BridgeError("Template runtime_config is malformed.")
     if cfg.get("url"):
-        # Hosted remote upstream (no sidecar to run): a fixed admin-registered
-        # URL is valid without image/command. Cheap scheme check only — the
+        # Hosted remote upstream (no sidecar to run): the URL is valid
+        # without image/command. It is either fixed (admin-registered) or
+        # a {{FIELD}} per-user template (resolved + scheme-checked in
+        # spawn_instance on the RESOLVED value). Cheap scheme check only — the
         # full DNS/public-IP guard runs once per registration, off-loop, in
         # spawn_instance (this helper is sync and runs on the event loop).
         url = str(cfg["url"]).strip()
-        if not url.lower().startswith("https://"):
+        if "{{" not in url and not url.lower().startswith("https://"):
             raise BridgeError("Template runtime_config 'url' must use https.")
         return cfg
     if INSTANCE_BACKEND == "docker" or cfg.get("image"):
@@ -599,10 +601,25 @@ async def spawn_instance(template: MCPTemplate, key: str,
     headers = headers or {}
 
     if cfg.get("url"):
-        # Hosted remote upstream (no sidecar to run): register the fixed URL.
-        # Per-user auth rides the per-request headers (see _sidecar_headers);
-        # the URL itself is admin-registered, not user-supplied.
+        # Hosted remote upstream (no sidecar to run): register the URL.
+        # Either fixed (admin-registered) or a {{FIELD}} template resolved
+        # per user from the sidecar env (the mapped credentials - same
+        # resolution + raise-if-missing as the header templates). Per-user
+        # auth rides the per-request headers (see _sidecar_headers).
         url = str(cfg["url"]).strip()
+        if _HEADER_PLACEHOLDER.search(url):
+            def _url_sub(match: re.Match[str]) -> str:
+                var = match.group(1)
+                if var not in env:
+                    raise BridgeError(
+                        f"Template url references env var '{var}', which is "
+                        f"not set on the sidecar (static env, env_mapping, "
+                        f"or generated_secrets)."
+                    )
+                return env[var]
+            url = _HEADER_PLACEHOLDER.sub(_url_sub, url).strip()
+        if not url.lower().startswith("https://"):
+            raise BridgeError("Resolved template url must use https.")
         endpoint = str(cfg.get("endpoint") or "/mcp")
         if not endpoint.startswith("/"):
             endpoint = "/" + endpoint

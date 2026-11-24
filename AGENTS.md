@@ -289,6 +289,19 @@ docker container in production), short-lived and idle-reaped.
   (read-only: admin mode + Ghost version). Local-dev (subprocess) path:
   one-time `pip install -r integrations/ghost-blog-mcp/requirements.txt` in
   the backend interpreter.
+ - Home Assistant is Template #15, the first **per-user URL** hosted remote
+  MCP: HA's own native `mcp_server` integration (HA 2025.2+) makes the
+  USER's HA instance the MCP server (/api/mcp), so there is no upstream
+  repo (repo_url points at the integration docs). The seed's url is the
+  {{HA_URL}} placeholder: the bridge resolves {{FIELD}} url placeholders
+  per user from the stored-credentials env (same resolution +
+  raise-if-missing as the header templates) and runs the standard SSRF
+  guard on the RESOLVED url once per registration - each user's URL must
+  be https + internet-reachable. Auth = the user's long-lived access token
+  (HA Profile > Security) as a Bearer header; no oauth key (HA's cloud
+  flow is CIDM - no RFC 7591 DCR - and self-hosted HA has no issuer). No
+  test_tool: the connection test falls back to handshake + tools/list (a
+  bad token 401s at MCP initialize).
  - The unified proxy (`/api/mcp/proxy/{template_id}/{tool_name}`) routes by
   template `runtime`: `mcp-server` → generic bridge (`api/mcp_bridge.py`),
   `native` → hardcoded `TEMPLATE_REGISTRY` (HappyFox reference path, kept for

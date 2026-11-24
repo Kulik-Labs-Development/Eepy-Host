@@ -1886,10 +1886,78 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
+    # Home Assistant - HA's own native MCP server: the `mcp_server`
+    # integration (HA 2025.2+) makes the user's HA instance the MCP
+    # server, so there is no upstream repo to pin (repo_url points at the
+    # integration docs). The first PER-USER hosted template: the url is a
+    # {{HA_URL}} placeholder resolved at registration from the user's
+    # stored credentials (the bridge's per-user url support), and auth is
+    # the user's long-lived access token (HA Profile > Security) as a
+    # Bearer header. No OAuth: HA's cloud flow is CIDM (no RFC 7591 DCR)
+    # and self-hosted HA has no issuer at all. The resolved URL must be
+    # https + internet-reachable (the standard SSRF guard runs on it once
+    # per registration). No test_tool: the connection test falls back to
+    # handshake + tools/list (a bad token 401s at MCP initialize).
+    homeassistant = MCPTemplate(
+        id="home-assistant",
+        name="Home Assistant",
+        repo_url="https://www.home-assistant.io/integrations/mcp_server/",
+        description=(
+            "Control your own Home Assistant instance through its native "
+            "MCP server (built into HA since 2025.2, at /api/mcp) - no "
+            "sidecar to run. Enter the URL of your internet-reachable "
+            "Home Assistant and a long-lived access token (created in HA "
+            "under Profile > Security); the token is stored encrypted and "
+            "sent as a Bearer header. Exposes your instance's MCP tool "
+            "sets: device control for the entities you expose to voice "
+            "assistants, and (with an admin token) the full Home Assistant "
+            "set - entities, history, and actions."
+        ),
+        config_schema={
+            "category": "Home / Automation",
+            "properties": {
+                "HA_URL": {
+                    "type": "string",
+                    "label": "Home Assistant URL",
+                    "placeholder": "https://ha.example.com",
+                    "help": (
+                        "The https base URL of your Home Assistant instance, "
+                        "reachable from the internet (your Nabu Casa domain "
+                        "or reverse proxy). Eepy dials it directly, so it "
+                        "must use https and resolve to a public address."
+                    ),
+                },
+                "HA_TOKEN": {
+                    "type": "password",
+                    "label": "Long-lived access token",
+                    "placeholder": "eyJ...",
+                    "help": (
+                        "Home Assistant > Profile > Security > Long-lived "
+                        "access tokens: create a token and paste it here. "
+                        "Admin accounts expose the full Home Assistant tool "
+                        "set. Stored encrypted; leave blank when editing to "
+                        "keep it."
+                    ),
+                },
+            },
+            "required": ["HA_URL", "HA_TOKEN"],
+        },
+        runtime="mcp-server",
+        runtime_config={
+            "url": "{{HA_URL}}",
+            "endpoint": "/api/mcp",
+            "env_mapping": {"HA_URL": "HA_URL", "HA_TOKEN": "HA_TOKEN"},
+            "headers": {"Authorization": "Bearer {{HA_TOKEN}}"},
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
     db = SessionLocal()
     try:
         for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec, clarity, bookstack,
-                    cloudflare, cloudflare_full, uber, ubereats, microsoft365, spotify, mercury, ghost):
+                    cloudflare, cloudflare_full, uber, ubereats, microsoft365, spotify, mercury, ghost,
+                    homeassistant):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
                 existing.name = spec.name
