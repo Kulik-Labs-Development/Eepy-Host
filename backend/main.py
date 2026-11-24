@@ -1452,7 +1452,7 @@ def seed_mcp_templates():
             # Read-only probe for POST /config/{id}/test: reports admin
             # mode + the Ghost version, so a bad key or URL fails loudly.
             "test_tool": {"name": "check_connection", "arguments": {}},
-            # The full tool set (19 tools at submodule 0971111, verified
+            # The full tool set (19 tools at submodule bc6f04a, verified
             # from the submodule source). Admin discovery overwrites this
             # with the authoritative tools/list.
             "tool_names": [
