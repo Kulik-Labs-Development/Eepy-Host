@@ -270,7 +270,7 @@ docker container in production), short-lived and idle-reaped.
  - Ghost Blog is Template #14, same modular pattern from the
   `integrations/ghost-blog-mcp` git submodule (github.com/Glitch3dPenguin/
   ghost-blog-mcp — the Kulik Labs project this gateway hosts: a single-file
-  Python/FastMCP server, 18 tools over the Ghost content/admin APIs: posts,
+  Python/FastMCP server, 19 tools over the Ghost content/admin APIs: posts,
   pages, tags, authors). Bearer-gate class (BookStack/Proxmox/TRMM):
   streamable-HTTP on :8000 at / (the module's `streamable_http_path="/"`),
   and the module REFUSES to start on a non-loopback bind without

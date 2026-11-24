@@ -1355,13 +1355,13 @@ def seed_mcp_templates():
     )
 
     # Ghost blog (Template #14): the modular pattern. Single-file
-    # Python/FastMCP upstream (18 tools: posts, pages, tags, authors).
+    # Python/FastMCP upstream (19 tools: posts, pages, tags, authors).
     ghost = MCPTemplate(
         id="ghost",
         name="Ghost Blog",
         repo_url="https://github.com/Glitch3dPenguin/ghost-blog-mcp",
         description=(
-            "Manage a Ghost blog across 18 tools: posts and pages "
+            "Manage a Ghost blog across 19 tools: posts and pages "
             "(list, read, create, update, delete, content with lexical or "
             "html, publish/schedule status), tags, and authors. Runs "
             "against YOUR Ghost site with your own Admin API key — the "
@@ -1452,13 +1452,13 @@ def seed_mcp_templates():
             # Read-only probe for POST /config/{id}/test: reports admin
             # mode + the Ghost version, so a bad key or URL fails loudly.
             "test_tool": {"name": "check_connection", "arguments": {}},
-            # The full tool set (18 tools at submodule d8a776e, verified
+            # The full tool set (19 tools at submodule 0971111, verified
             # from the submodule source). Admin discovery overwrites this
             # with the authoritative tools/list.
             "tool_names": [
                 "check_connection",
                 "list_posts", "get_post", "get_post_content",
-                "list_pages", "get_page",
+                "list_pages", "get_page", "get_page_content",
                 "list_tags", "list_authors",
                 "create_post", "update_post", "set_post_status", "delete_post",
                 "create_page", "update_page", "delete_page",
