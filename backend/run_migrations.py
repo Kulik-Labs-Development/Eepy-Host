@@ -27,7 +27,7 @@ engine = create_engine(database_url, echo=False)
 
 
 def run_migration() -> None:
-    """Execute all six MCP-table creation statements directly against Postgres."""
+    """Execute all seven MCP-table creation statements directly against Postgres."""
 
     with engine.connect() as conn:
         print("🚀 Starting MCP tables migration... ✅⏺️❗💜🔒\n")
@@ -199,9 +199,11 @@ def run_migration() -> None:
         conn.execute(text(create_system_settings_table))
         print("Created 'system_settings' table - single-row system data source config (Portainer / Arcane)\n")
 
-    # Commit transaction explicitly ✅✅✨
-    with engine.connect() as conn:
-        conn.commit()  # Apply all changes atomically 🔒❗💜
+        # Commit explicitly: SQLAlchemy 2.0 rolls back an open transaction
+        # when the connection closes, so without this every CREATE TABLE
+        # above is silently rolled back (an earlier version committed on
+        # a fresh, idle connection, which applied nothing).
+        conn.commit()
 
     print("🎉 Migration completed successfully! All MCP tables created. ✅✅⚠️❌ No rollback needed unless you DELETE the DB manually later!")
 

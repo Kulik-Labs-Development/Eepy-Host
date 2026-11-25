@@ -179,3 +179,31 @@ def test_system_usage_not_configured_400(client, superuser_token):
     detail = r.json()["detail"]
     assert isinstance(detail, dict)
     assert detail["error"] == "not_configured"
+
+def test_boot_registers_system_settings_for_create_all(tmp_path):
+    """Fresh-install regression (2026-11-25, ep20): the api modules import
+    models.system_settings lazily (inside endpoint functions), so a brand-new
+    process must already have the model on the shared Base when boot runs
+    create_all - otherwise the table is never created and
+    /superuser/system-usage 500s with UndefinedTable on a fresh database.
+    The check runs in a subprocess = fresh interpreter = the production boot
+    condition (in-process, sibling test modules would have imported the
+    model already and masked the regression)."""
+    import os
+    import subprocess
+    import sys
+
+    code = (
+        "import main  # noqa: F401\n"
+        "from database import Base\n"
+        "assert 'system_settings' in Base.metadata.tables\n"
+    )
+    env = dict(os.environ)
+    env["DATABASE_URL"] = "sqlite:///" + str(tmp_path / "boot.db")
+    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    r = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env, cwd=backend_dir, capture_output=True, text=True, timeout=120,
+    )
+    assert r.returncode == 0, (r.stdout or "") + (r.stderr or "")
+

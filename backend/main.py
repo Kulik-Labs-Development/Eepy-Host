@@ -21,6 +21,9 @@ from database import Base, SessionLocal, User, UserRole, engine, get_db
 from models import (
     mcp_models,  # noqa: F401  - register MCP tables on the shared Base so create_all builds them
 )
+from models import (
+    system_settings as _system_settings,  # noqa: F401  - same: boot create_all must see the table (the api modules import it lazily; the alias dodges their in-function from-imports)
+)
 from models.mcp_models import MCPTemplate
 from schemas import PasswordResetIn, UserCreate, UserLogin
 from utils.logging_setup import MemoryLogHandler, logger
