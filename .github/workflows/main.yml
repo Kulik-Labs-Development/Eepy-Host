@@ -173,9 +173,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Build and push Frontend image
+        # The public analytics ids (GA4 + Clarity) are baked into the client
+        # bundle as build args from repo secrets; unset = no analytics tags.
         uses: docker/build-push-action@v5
         with:
           context: ./frontend
+          build-args: |
+            NEXT_PUBLIC_GA_MEASUREMENT_ID=${{ secrets.GA_MEASUREMENT_ID }}
+            NEXT_PUBLIC_CLARITY_ID=${{ secrets.CLARITY_PROJECT_ID }}
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:latest
           labels: ${{ steps.meta.outputs.labels }}

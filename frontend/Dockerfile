@@ -1,5 +1,12 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
+
+# Public analytics identifiers (GA4 measurement id + Clarity project id),
+# inlined into the client bundle at build time. Empty by default = the page
+# ships no analytics tags; CI feeds them from repo secrets as build args.
+ARG NEXT_PUBLIC_GA_MEASUREMENT_ID
+ARG NEXT_PUBLIC_CLARITY_ID
+
 COPY package*.json ./
 RUN npm install
 COPY . .

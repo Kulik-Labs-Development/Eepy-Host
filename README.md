@@ -269,6 +269,8 @@ The backend creates missing tables on startup and seeds the approved template re
 | `EEPY_MCP_SIDECAR_MEM_LIMIT` | Memory cap for sidecar containers (docker `mem_limit` syntax, e.g. `512m`). Off by default: hosts whose cgroup tree lacks the memory controller refuse to start limit-bearing containers - enable it on hosts that can enforce limits. |
 | `EEPY_MCP_SIDECAR_CPU_LIMIT` | CPU cap for sidecar containers, in cores (e.g. `1.0`). Off by default, same host caveat as `EEPY_MCP_SIDECAR_MEM_LIMIT`. |
 | `NEXT_PUBLIC_API_URL` | Backend base URL used by the frontend |
+| `NEXT_PUBLIC_GA_MEASUREMENT_ID` | GA4 measurement id (`G-...`), baked into the frontend image at build time (CI: `GA_MEASUREMENT_ID` repo secret). Empty = no Google Analytics tag. |
+| `NEXT_PUBLIC_CLARITY_ID` | Microsoft Clarity project id, baked in at build time (CI: `CLARITY_PROJECT_ID` repo secret). Empty = no Clarity tag. Both are public identifiers — they end up in the page source. |
 
 See [deploy/stack.env.example](deploy/stack.env.example) for the full reference.
 
