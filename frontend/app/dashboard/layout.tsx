@@ -5,7 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { usePathname } from 'next/navigation';
 import { LogOut, LayoutDashboard, Server, Library, UserCircle, Settings, Building2, Terminal, Activity, Menu, X } from 'lucide-react';
 import Link from 'next/link';
-import PixelMoon from '@/src/components/PixelMoon';
+import ZzzLogo from '@/src/components/ZzzLogo';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
@@ -27,7 +27,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   if (!user) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-5">
-        <PixelMoon size={72} className="animate-twinkle" />
+        <ZzzLogo size={72} className="animate-twinkle" />
         <p className="font-pixel font-bold text-ink-faint text-px-sm">Loading cozy space...</p>
       </div>
     );
@@ -88,7 +88,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const logo = (
     <div className="flex items-center gap-3 px-1 mb-6">
-      <PixelMoon size={36} />
+      <ZzzLogo size={36} />
       <span className="font-pixel font-bold text-xl tracking-tight text-ink text-px-sm">
         Eepy <span className="text-eepy-blush">Host</span>
       </span>
@@ -116,7 +116,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* Mobile top bar */}
       <div className="md:hidden fixed top-0 inset-x-0 z-40 bg-night-surface/95 backdrop-blur-md border-b-2 border-night-border flex items-center justify-between px-4 h-14">
         <div className="flex items-center gap-2">
-          <PixelMoon size={30} />
+          <ZzzLogo size={30} />
           <span className="font-pixel font-bold text-lg tracking-tight text-ink">
             Eepy <span className="text-eepy-blush">Host</span>
           </span>

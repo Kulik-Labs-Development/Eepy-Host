@@ -5,7 +5,7 @@ import { Lock, User, Mail, Loader2, Eye, EyeOff, Sparkles } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { getApiUrl } from '@/lib/api';
 import { useRouter } from 'next/navigation';
-import PixelMoon from '@/src/components/PixelMoon';
+import ZzzLogo from '@/src/components/ZzzLogo';
 
 export default function AuthPage() {
   const [isLoginMode, setIsLoginMode] = useState(true);
@@ -67,7 +67,7 @@ export default function AuthPage() {
       <div className="z-10 w-full max-w-md space-y-6">
         <div className="text-center space-y-3">
           <div className="flex justify-center mb-2">
-            <PixelMoon size={72} />
+            <ZzzLogo size={72} />
           </div>
           <h1 className="font-pixel font-bold text-3xl sm:text-4xl text-px-sm">
             {isLoginMode ? (

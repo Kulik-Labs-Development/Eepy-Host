@@ -1,7 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { Zap, Sparkles, Globe, ShieldCheck } from 'lucide-react';
-import PixelMoon from '../src/components/PixelMoon';
+import ZzzLogo from '../src/components/ZzzLogo';
 
 export default function LandingPage() {
   return (
@@ -9,7 +9,7 @@ export default function LandingPage() {
       {/* Top Navigation */}
       <nav className="w-full max-w-6xl flex items-center justify-between p-4 z-20">
         <div className="flex items-center gap-3">
-          <PixelMoon size={40} />
+          <ZzzLogo size={40} />
           <span className="font-pixel font-bold text-xl tracking-tight text-ink text-px-sm">
             Eepy <span className="text-eepy-blush">Host</span>
           </span>
@@ -24,7 +24,13 @@ export default function LandingPage() {
         <div className="flex justify-center mb-2">
           <div className="relative panel pixel-caps p-8 sm:p-10 [--cap:theme('colors.eepy.pink')]">
             <div className="relative inline-block">
-              <PixelMoon size={128} />
+              <img
+                src="/eepy-chan.png"
+                alt="Eepy-chan"
+                width={224}
+                height={205}
+                style={{ imageRendering: 'pixelated' }}
+              />
               <span className="absolute -right-7 top-4 font-pixel font-bold text-eepy-lilac text-lg animate-float-z">z</span>
               <span className="absolute -right-12 top-0 font-pixel font-bold text-eepy-lilac/80 text-xl animate-float-z" style={{ animationDelay: '0.9s' }}>z</span>
               <span className="absolute -right-16 top-[-14px] font-pixel font-bold text-eepy-lilac/60 text-2xl animate-float-z" style={{ animationDelay: '1.8s' }}>z</span>

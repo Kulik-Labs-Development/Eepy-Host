@@ -6,7 +6,7 @@ import { Plug, PlugZap, Loader2, Wifi, Bot, Cpu } from 'lucide-react';
 import { getApiUrl } from '@/lib/api';
 import OpenWebUIExportPanel from '@/src/components/OpenWebUIExportPanel';
 import AIPlatformConnectorPanel from '@/src/components/AIPlatformConnectorPanel';
-import PixelMoon from '@/src/components/PixelMoon';
+import ZzzLogo from '@/src/components/ZzzLogo';
 
 interface ToolKey {
   id: number;
@@ -212,7 +212,7 @@ export default function OverviewPage() {
         {/* Main Stat Card */}
         <div className="md:col-span-2 panel pixel-caps p-4 sm:p-6 md:p-8 [--cap:theme('colors.eepy.blush')] overflow-hidden group hover:border-eepy-blush/60 transition-colors">
           <div className="absolute top-4 right-4 opacity-15 group-hover:opacity-25 transition-opacity">
-            <PixelMoon size={88} />
+            <ZzzLogo size={88} />
           </div>
           <h3 className="font-pixel font-bold text-xl mb-4 text-eepy-blush">Host Status</h3>
           <p className="text-ink-soft font-body text-sm leading-relaxed max-w-md">

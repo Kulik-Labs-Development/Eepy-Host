@@ -368,7 +368,9 @@ docker container in production), short-lived and idle-reaped.
   `eepy-pink` / `eepy-sage` / `eepy-amber` accents, chunky 2px borders, hard
   shadows, dithered sky + scanline textures). Fonts via next/font: Pixelify
   Sans (`font-pixel`), VT323 (`font-console`), Nunito (`font-body`). Lucide
-  React icons; a hand-drawn pixel moon mascot (`src/components/PixelMoon`).
+  React icons; brand marks = the Eepy-chan hero art
+  (`assets/images/eepy-chan.png`) + the pixel zzz favicon mark
+  (`src/components/ZzzLogo` over `public/favicon.png`).
 - **Backend:** FastAPI, PostgreSQL via SQLAlchemy (sync), schema bootstrap at
   boot (`Base.metadata.create_all` + `sync_database_schema()` in `main.py`,
   both idempotent; `alembic/` holds env scaffolding only — no version files —

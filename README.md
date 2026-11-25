@@ -79,9 +79,11 @@ corners, `steps()` animations, and dithered/scanline textures.
   `.label-pixel`, `.chip` (tinted variants), `.led` squared status lights,
   `.pixel-caps` corner rivets, `.tex-dither` / `.tex-bands` textures,
   `.text-px` hard text shadows, `.lift` stepped hover.
-- **Brand marks** — the sleepy pixel moon (`src/components/PixelMoon`) is the
-  mascot and favicon; the shared `CozyBackdrop` renders the banded night sky
-  with twinkling pixel stars behind every page.
+- **Brand marks** — Eepy-chan (`assets/images/eepy-chan.png`) is the brand
+  face: the landing-page hero and the README logo. The sleepy pixel zzz
+  (`frontend/public/favicon.png`, rendered by `src/components/ZzzLogo`) is
+  the favicon and the small in-UI mark; the shared `CozyBackdrop` renders
+  the banded night sky with twinkling pixel stars behind every page.
 
 Keep it consistent: when adding UI, pick from the existing tokens and
 component classes. The full ruleset for agents lives in
@@ -345,7 +347,7 @@ Security vulnerabilities should be reported privately — see [SECURITY.md](SECU
 │   ├── context/AuthContext.tsx
 │   ├── lib/api.ts
 │   └── src/components/       # MCPConnectionWizard, OpenWebUIExportPanel,
-│                             #   PixelMoon, CozyBackdrop
+│                             #   ZzzLogo, CozyBackdrop
 ├── backend/
 │   ├── main.py               # FastAPI app, router mounting, template seeding,
 │   │                         #   superuser routes, superuser bootstrap
