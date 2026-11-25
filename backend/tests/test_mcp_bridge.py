@@ -623,7 +623,19 @@ def test_real_happyfox_submodule_subprocess_path(client, auth_user):
 # ---------------------------------------------------------------------------
 # Sidecar containment: resource limits + non-root user opt-in
 # ---------------------------------------------------------------------------
-def test_sidecar_run_kwargs_default_limits(monkeypatch):
+def test_sidecar_run_kwargs_limits_off_by_default(monkeypatch):
+    from api import mcp_bridge
+
+    monkeypatch.setattr(mcp_bridge, "SIDECAR_MEM_LIMIT", None)
+    monkeypatch.setattr(mcp_bridge, "SIDECAR_CPU_LIMIT", None)
+    kwargs = mcp_bridge._sidecar_run_kwargs({})
+    assert "mem_limit" not in kwargs, "mem limit OFF by default"
+    assert "cpu_period" not in kwargs, "cpu limit OFF by default"
+    assert "cpu_quota" not in kwargs, "cpu limit OFF by default"
+    assert "user" not in kwargs, "no user override -> image default"
+
+
+def test_sidecar_run_kwargs_limits_when_enabled(monkeypatch):
     from api import mcp_bridge
 
     monkeypatch.setattr(mcp_bridge, "SIDECAR_MEM_LIMIT", "512m")

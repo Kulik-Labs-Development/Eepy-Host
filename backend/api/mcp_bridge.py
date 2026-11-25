@@ -40,9 +40,9 @@ Instance backends (``EEPY_MCP_INSTANCE_BACKEND``):
                   EEPY_MCP_DOCKER_HOST (only reliable when the backend runs
                   on the host itself).
 
-Sidecar containment: docker sidecars run with CPU/memory limits (env-tunable,
-see ``_sidecar_run_kwargs``) and may drop to a non-root user via the
-optional runtime_config ``user`` field.
+Sidecar containment: docker sidecars may run with CPU/memory limits
+(env-gated, OFF by default - see ``_sidecar_run_kwargs``) and may drop to a
+non-root user via the optional runtime_config ``user`` field.
 
 Every function that takes credentials keeps them in memory only.
 """
@@ -100,10 +100,17 @@ REAPER_INTERVAL_S = float(os.getenv("EEPY_MCP_INSTANCE_REAPER_INTERVAL", "30"))
 SIDECAR_READY_TIMEOUT_S = float(os.getenv("EEPY_MCP_SIDECAR_READY_TIMEOUT", "30"))
 
 # Sidecar resource containment. A sidecar runs third-party code holding a
-# user's decrypted credentials in its env, so bound its CPU/memory by default.
-# Override via env to match the host's budget (docker mem_limit syntax).
-SIDECAR_MEM_LIMIT = os.getenv("EEPY_MCP_SIDECAR_MEM_LIMIT", "512m")
-SIDECAR_CPU_LIMIT = float(os.getenv("EEPY_MCP_SIDECAR_CPU_LIMIT", "1.0"))
+# user's decrypted credentials in its env - bound its CPU/memory when the
+# host can enforce limits. BOTH DEFAULT OFF: a docker host whose cgroup tree
+# has no memory/cpu controllers (e.g. an LXC without delegated controllers)
+# refuses to START any container created with a limit - runc fails on the
+# missing memory.max/cpu.max file, so the default must be the one that starts
+# everywhere. On hosts that can enforce limits, enable them to match the
+# host's budget: MEM in docker mem_limit syntax ("512m", "1g"), CPU in cores
+# (float; 0/empty = off).
+SIDECAR_MEM_LIMIT = os.getenv("EEPY_MCP_SIDECAR_MEM_LIMIT", "").strip() or None
+_cpu_limit_raw = os.getenv("EEPY_MCP_SIDECAR_CPU_LIMIT", "").strip()
+SIDECAR_CPU_LIMIT = float(_cpu_limit_raw) if _cpu_limit_raw else None
 
 # Environment that a sidecar subprocess may inherit. Deliberately minimal:
 # the backend's own secrets (SECRET_KEY, DATABASE_URL, MCP_ENCRYPTION_KEY,
@@ -1030,15 +1037,19 @@ def _sidecar_run_kwargs(runtime_cfg: dict[str, Any]) -> dict[str, Any]:
     """Containment kwargs for sidecar containers.
 
     A sidecar runs third-party code holding a user's decrypted credentials in
-    its env: bound its CPU/memory by default (env-tunable) and drop it to a
+    its env: bound its CPU/memory when the operator opts in via
+    EEPY_MCP_SIDECAR_MEM_LIMIT / EEPY_MCP_SIDECAR_CPU_LIMIT (both OFF by
+    default - hosts whose cgroup tree lacks the memory/cpu controllers
+    refuse to start limit-bearing containers at all) and drop it to a
     non-root uid when the template opts in via runtime_config ``user``
     (e.g. "1000:1000" — the image must contain that uid).
     """
-    kwargs: dict[str, Any] = {
-        "mem_limit": str(SIDECAR_MEM_LIMIT),
-        "cpu_period": 100000,
-        "cpu_quota": int(SIDECAR_CPU_LIMIT * 100000),
-    }
+    kwargs: dict[str, Any] = {}
+    if SIDECAR_MEM_LIMIT:
+        kwargs["mem_limit"] = str(SIDECAR_MEM_LIMIT)
+    if SIDECAR_CPU_LIMIT:
+        kwargs["cpu_period"] = 100000
+        kwargs["cpu_quota"] = int(SIDECAR_CPU_LIMIT * 100000)
     if runtime_cfg.get("user"):
         kwargs["user"] = str(runtime_cfg["user"])
     return kwargs

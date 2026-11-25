@@ -266,6 +266,8 @@ The backend creates missing tables on startup and seeds the approved template re
 | `EEPY_MCP_INSTANCE_BACKEND` | How `mcp-server` runtime templates run: `docker` (compose default, pulls the integration image per user) or `subprocess` (local process). |
 | `EEPY_MCP_DOCKER_HOST` | Address used to reach sidecar containers' loopback ports. Compose sets this to `host.docker.internal` automatically. |
 | `EEPY_MCP_INSTANCE_IDLE_TIMEOUT` | Seconds before an idle MCP sidecar is reaped (default `300`). |
+| `EEPY_MCP_SIDECAR_MEM_LIMIT` | Memory cap for sidecar containers (docker `mem_limit` syntax, e.g. `512m`). Off by default: hosts whose cgroup tree lacks the memory controller refuse to start limit-bearing containers - enable it on hosts that can enforce limits. |
+| `EEPY_MCP_SIDECAR_CPU_LIMIT` | CPU cap for sidecar containers, in cores (e.g. `1.0`). Off by default, same host caveat as `EEPY_MCP_SIDECAR_MEM_LIMIT`. |
 | `NEXT_PUBLIC_API_URL` | Backend base URL used by the frontend |
 
 See [deploy/stack.env.example](deploy/stack.env.example) for the full reference.

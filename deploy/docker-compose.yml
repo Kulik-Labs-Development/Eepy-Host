@@ -63,10 +63,12 @@ services:
       # resolves to the Docker host via the host-gateway route (extra_hosts).
       - EEPY_MCP_DOCKER_HOST=host.docker.internal
       # Sidecar containment (third-party code holds the user's decrypted creds
-      # in its env): CPU/memory caps on every sidecar container. Override to
-      # match the host's budget.
-      - EEPY_MCP_SIDECAR_MEM_LIMIT=${EEPY_MCP_SIDECAR_MEM_LIMIT:-512m}
-      - EEPY_MCP_SIDECAR_CPU_LIMIT=${EEPY_MCP_SIDECAR_CPU_LIMIT:-1.0}
+      # in its env): CPU/memory caps on sidecar containers. OFF by default -
+      # hosts whose cgroup tree lacks the memory/cpu controllers refuse to
+      # start limit-bearing containers. Enable in stack.env on hosts that can
+      # enforce limits (MEM in docker mem_limit syntax, CPU in cores).
+      - EEPY_MCP_SIDECAR_MEM_LIMIT=${EEPY_MCP_SIDECAR_MEM_LIMIT:-}
+      - EEPY_MCP_SIDECAR_CPU_LIMIT=${EEPY_MCP_SIDECAR_CPU_LIMIT:-}
       # Optional: unique per-backend-process id for the sidecar orphan sweep.
       # Leave unset (default) and each backend self-identifies by its own
       # container name (stable across redeploys of this stack). Only set it

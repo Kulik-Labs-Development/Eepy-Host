@@ -862,8 +862,11 @@ tool-server connector, with the identical one-key contract.
 
 **Security note (sidecars run third-party code):** the `approved_by_admin` /
 `enabled_global` gate is the moderation layer. Containment in place today:
-docker sidecars run with CPU/memory limits (`EEPY_MCP_SIDECAR_MEM_LIMIT`
-default 512m, `EEPY_MCP_SIDECAR_CPU_LIMIT` default 1.0) and may drop to a
+docker sidecars may run with CPU/memory limits (`EEPY_MCP_SIDECAR_MEM_LIMIT`
+/ `EEPY_MCP_SIDECAR_CPU_LIMIT` - both OFF by default, because hosts whose
+cgroup tree lacks the memory/cpu controllers refuse to start
+limit-bearing containers; enable them in stack.env on hosts that can
+enforce limits) and may drop to a
 non-root uid via the optional runtime_config `user` field (e.g.
 `"1000:1000"` — the image must contain that uid; enable per-template once
 verified, since a wrong uid kills the container). Known trade-offs to close
@@ -893,6 +896,8 @@ source ../deploy/stack.env   # after filling it in
 # Optional sidecar-bridge tuning (defaults shown):
 #   EEPY_MCP_INSTANCE_BACKEND=subprocess   # or docker (needs Docker socket)
 #   EEPY_MCP_INSTANCE_IDLE_TIMEOUT=300
+#   EEPY_MCP_SIDECAR_MEM_LIMIT=512m   # sidecar memory cap (off by default; enable on hosts that can enforce limits)
+#   EEPY_MCP_SIDECAR_CPU_LIMIT=1.0    # sidecar CPU cap in cores (off by default)
 python run_migrations.py
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 curl http://localhost:8000/health
@@ -1183,8 +1188,10 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   a containerized backend can
    reach loopback-bound sidecar ports (fallback only; the primary dial is
    `EEPY_MCP_SIDECAR_NETWORK`, which the compose file sets itself). Optional
-   sidecar containment dials (env-overridable, sensible defaults):
-   `EEPY_MCP_SIDECAR_MEM_LIMIT`, `EEPY_MCP_SIDECAR_CPU_LIMIT`, and
+   sidecar containment dials (env-gated, OFF by default - hosts whose
+   cgroup tree lacks the memory/cpu controllers refuse to start
+   limit-bearing containers): `EEPY_MCP_SIDECAR_MEM_LIMIT`,
+   `EEPY_MCP_SIDECAR_CPU_LIMIT`, and
    per-template `user` / digest-pinned `image` in `runtime_config` (see the
    security note above).
    `SECRET_KEY` signs JWTs (also the Fernet fallback key) — see Key
