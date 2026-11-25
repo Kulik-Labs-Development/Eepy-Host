@@ -33,6 +33,8 @@ interface UsageRow {
   net: NetStats | null;
   owner?: string;
   template?: string;
+  last_used_at?: number | null;
+  expires_at?: number | null;
 }
 
 interface UsageData {
@@ -41,6 +43,7 @@ interface UsageData {
   environments: EnvInfo[];
   platform: UsageRow[];
   sidecars: UsageRow[];
+  sidecar_idle_timeout?: number;
 }
 
 interface Rates {
@@ -80,6 +83,16 @@ function fmtUptime(created: number | null): string {
   if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+}
+
+function fmtExpires(expires_at: number | null | undefined): string {
+  if (expires_at === null || expires_at === undefined) return '—';
+  const secs = Math.floor(expires_at - Date.now() / 1000);
+  if (secs <= 0) return 'due';
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
 }
 
 function rowKey(row: UsageRow): string {
@@ -240,6 +253,9 @@ export default function SystemUsagePage() {
           <>
             <td className="px-4 py-3 text-ink-soft font-body text-sm">{row.owner ?? '—'}</td>
             <td className="px-4 py-3 text-ink-soft font-body text-sm">{row.template ?? '—'}</td>
+            <td className="px-4 py-3 text-right font-console text-[14px] text-ink-soft whitespace-nowrap">
+              {fmtExpires(row.expires_at)}
+            </td>
           </>
         )}
         <td className="px-4 py-3">{statePill(row)}</td>
@@ -281,6 +297,7 @@ export default function SystemUsagePage() {
               <>
                 <th className="px-4 py-3 font-bold">Owner</th>
                 <th className="px-4 py-3 font-bold">Template</th>
+                <th className="px-4 py-3 font-bold text-right">Expires in</th>
               </>
             )}
             <th className="px-4 py-3 font-bold">State</th>
@@ -294,7 +311,7 @@ export default function SystemUsagePage() {
         <tbody className="divide-y divide-night-line">
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={showMeta ? 9 : 7} className="px-4 py-8 text-center text-ink-dim font-body text-sm italic">
+              <td colSpan={showMeta ? 10 : 7} className="px-4 py-8 text-center text-ink-dim font-body text-sm italic">
                 {empty}
               </td>
             </tr>
@@ -409,7 +426,8 @@ export default function SystemUsagePage() {
                   <Users size={18} className="text-eepy-sage" /> Sidecars (all users)
                 </h3>
                 <p className="text-ink-dim font-body text-xs mt-1">
-                  Every spawned MCP sidecar, from the spawn ledger. Rows without a live container show as gone.
+                  Every spawned MCP sidecar, from the spawn ledger. Idle sidecars are reaped after{' '}
+                  {data?.sidecar_idle_timeout ?? 300}s without a tool call. Rows without a live container show as gone.
                 </p>
               </div>
               {table(data.sidecars, true, 'No sidecars in the spawn ledger yet.')}

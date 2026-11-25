@@ -8,6 +8,7 @@ from api.system_usage import (
     compute_cpu_percent,
     compute_memory,
     compute_network,
+    sidecar_expiry,
 )
 
 # --- CPU ------------------------------------------------------------------
@@ -135,3 +136,14 @@ def test_classify_excludes_other_stacks():
     platform, sidecars = classify_containers(containers, set())
     assert [c["name"] for c in platform] == ["eepy-backend"]
     assert sidecars == []
+
+# --- Sidecar idle expiry ------------------------------------------------
+
+def test_sidecar_expiry_running_carries_a_deadline():
+    assert sidecar_expiry(1000.0, "running", idle_timeout=300.0) == (1000.0, 1300.0)
+
+
+def test_sidecar_expiry_non_running_keeps_stamp_no_deadline():
+    assert sidecar_expiry(1000.0, "gone", idle_timeout=300.0) == (1000.0, None)
+    assert sidecar_expiry(None, "gone", idle_timeout=300.0) == (None, None)
+

@@ -30,6 +30,7 @@ import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from api.mcp_bridge import IDLE_TIMEOUT_S, registry_snapshot
 from models.mcp_models import MCPSidecar, UserMCPConfig
 from models.system_settings import SystemSettings
 from utils.crypto import decrypt_credentials, decrypt_secret
@@ -37,6 +38,19 @@ from utils.crypto import decrypt_credentials, decrypt_secret
 STATS_TIMEOUT_SECONDS = 15
 STATS_WORKERS = 8
 EEPY_NAME_PREFIX = "eepy-"
+
+
+def sidecar_expiry(last_used: float | None, state: str,
+                   idle_timeout: float = IDLE_TIMEOUT_S) -> tuple[float | None, float | None]:
+    """(last_used_at, expires_at) for a sidecar row.
+
+    expires_at is only defined for running containers: last_used +
+    idle_timeout - the idle reaper kills the sidecar on the first pass
+    after that moment. Stopped/gone rows keep their last-use stamp but
+    carry no deadline."""
+    if last_used is None or state != "running":
+        return last_used, None
+    return last_used, last_used + idle_timeout
 # Arcane pages: at most 5 pages of 50, stop early on a short page.
 ARCANE_PAGE_SIZE = 50
 ARCANE_MAX_PAGES = 5
@@ -340,9 +354,16 @@ def fetch_usage(db: Session, user) -> dict:
     owner_ids = {row.owner_id for row in sidecar_rows}
     users = ({u.id: u.username for u in db.query(_User).filter(_User.id.in_(owner_ids)).all()}
              if owner_ids else {})
+    inst_by_name = {
+        i.container_name: i for i in registry_snapshot().values() if i.container_name
+    }
     sidecar_meta = {
         row.name: {"owner": users.get(row.owner_id, f"user #{row.owner_id}"),
-                   "template": row.template_id}
+                   "template": row.template_id,
+                   # Ledger last-use stamp (spawn/boot-sweep time) - the
+                   # in-memory registry is authoritative while the instance
+                   # is live in this process.
+                   "last_used_at": row.last_used_at.timestamp() if row.last_used_at else None}
         for row in sidecar_rows
     }
 
@@ -393,11 +414,16 @@ def fetch_usage(db: Session, user) -> dict:
             "net": metrics["net"] if metrics else None,
         }
 
-    sidecar_rows_out = [
-        {**row(c), "owner": sidecar_meta[c["name"]]["owner"],
-         "template": sidecar_meta[c["name"]]["template"]}
-        for c in live_sidecars
-    ]
+    sidecar_rows_out = []
+    for c in live_sidecars:
+        meta = sidecar_meta[c["name"]]
+        inst = inst_by_name.get(c["name"])
+        last_used = inst.last_used if inst is not None else meta["last_used_at"]
+        last_used_at, expires_at = sidecar_expiry(last_used, c["state"])
+        sidecar_rows_out.append(
+            {**row(c), "owner": meta["owner"], "template": meta["template"],
+             "last_used_at": last_used_at, "expires_at": expires_at}
+        )
     # Ledger rows with no live container (removed/stopped out from under us)
     # still show up so the admin sees the spawn history.
     live_names = {c["name"] for c in containers}
@@ -407,10 +433,12 @@ def fetch_usage(db: Session, user) -> dict:
                 "name": row_name, "id": None, "state": "gone", "status": "no live container",
                 "created": None, "cpu_percent": None, "ram": None, "net": None,
                 "owner": meta["owner"], "template": meta["template"],
+                "last_used_at": meta["last_used_at"], "expires_at": None,
             })
 
     return {
         "generated_at": time.time(),
+        "sidecar_idle_timeout": IDLE_TIMEOUT_S,
         "environment": env,
         "environments": environments,
         "platform": [row(c) for c in platform],

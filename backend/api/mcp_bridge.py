@@ -1134,6 +1134,12 @@ def shutdown_all_instances() -> None:
             kill_instance(key)
 
 
+def registry_snapshot() -> dict[str, Instance]:
+    """Read-only copy of the live instance table (the system-usage page
+    reads each sidecar's idle-expiry countdown off the in-memory last_used)."""
+    return dict(_REGISTRY)
+
+
 # ---------------------------------------------------------------------------
 # Acquire (spawn-or-reuse) + call helper
 # ---------------------------------------------------------------------------
