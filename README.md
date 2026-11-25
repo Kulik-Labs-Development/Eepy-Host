@@ -276,6 +276,22 @@ The backend creates missing tables on startup and seeds the approved template re
 
 See [deploy/stack.env.example](deploy/stack.env.example) for the full reference.
 
+### Platform monitoring (GA4 + Clarity) — native, optional
+
+The frontend ships native support for **Google Analytics 4** and
+**Microsoft Clarity** behind two build-time identifiers
+(`NEXT_PUBLIC_GA_MEASUREMENT_ID` / `NEXT_PUBLIC_CLARITY_ID` — the frontend is
+fully static, so the ids are baked into the client bundle at image build
+time; the CSP already allows the googletagmanager + Clarity origins):
+
+- **CI deploys:** set the `GA_MEASUREMENT_ID` / `CLARITY_PROJECT_ID` repo
+  secrets and the published GHCR frontend image carries them — a Build & Push
+  rerun bakes in new ids without a code change.
+- **Self-hosted builds:** pass the two build args (wired up in
+  [`deploy/docker-compose.yml`](deploy/docker-compose.yml) as
+  `${GA_MEASUREMENT_ID:-}` / `${CLARITY_PROJECT_ID:-}`).
+- **Unset/empty = zero tags** — nothing loads, nothing is sent.
+
 ### Testing & CI
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push/PR to `main`:

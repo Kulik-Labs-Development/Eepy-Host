@@ -105,6 +105,17 @@ services:
 
   frontend:
     image: ghcr.io/kulik-labs-development/eepy-host-frontend:latest
+    # Self-builds: the analytics ids are baked into the client bundle at
+    # image build time (the frontend is fully static - runtime env can't
+    # reach the page). Unset = no analytics tags. The GHCR images CI
+    # publishes are already pre-baked from the GA_MEASUREMENT_ID /
+    # CLARITY_PROJECT_ID repo secrets, so pulling the image needs nothing
+    # extra; this build block only matters for building locally.
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_GA_MEASUREMENT_ID: ${GA_MEASUREMENT_ID:-}
+        NEXT_PUBLIC_CLARITY_ID: ${CLARITY_PROJECT_ID:-}
     container_name: eepy-frontend
     restart: always
     environment:
