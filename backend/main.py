@@ -2394,6 +2394,21 @@ def get_system_usage(
     return system_usage.fetch_usage(db, superuser)
 
 
+@app.get("/user/sidecars")
+def get_user_sidecars(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Per-user sidecar status (any authenticated user): the sidecars the
+    user spawned, with the same stats row shape as the superuser's System
+    Usage page. Scoped server-side to owner_id = the caller; platform
+    containers and other users' sidecars are never included (the data
+    source is the platform's - see api/system_usage.fetch_user_sidecars)."""
+    from api import system_usage
+
+    return system_usage.fetch_user_sidecars(db, current_user)
+
+
 class SystemSettingsIn(BaseModel):
     backend: str | None = None  # "portainer" | "arcane"
     portainer_url: str | None = None

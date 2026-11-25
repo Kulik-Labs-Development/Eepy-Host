@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, AlertTriangle, Lock, RefreshCw, Server, Users } from 'lucide-react';
+import { Activity, AlertTriangle, RefreshCw, Server, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { getApiUrl } from '@/lib/api';
@@ -40,8 +40,8 @@ interface UsageRow {
 interface UsageData {
   generated_at: number;
   environment: EnvInfo;
-  environments: EnvInfo[];
-  platform: UsageRow[];
+  environments?: EnvInfo[];
+  platform?: UsageRow[];
   sidecars: UsageRow[];
   sidecar_idle_timeout?: number;
 }
@@ -132,7 +132,8 @@ export default function SystemUsagePage() {
     inFlight.current = true;
     setBusy(true);
     try {
-      const res = await fetch(`${getApiUrl()}/superuser/system-usage`, {
+      const endpoint = isSuper ? '/superuser/system-usage' : '/user/sidecars';
+      const res = await fetch(`${getApiUrl()}${endpoint}`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('eepy_token')}` },
       });
 
@@ -177,7 +178,7 @@ export default function SystemUsagePage() {
       const prev = prevRef.current;
       const next = new Map<string, { rx: number; tx: number; t: number }>();
       const newRates = new Map<string, Rates>();
-      for (const row of [...json.platform, ...json.sidecars]) {
+      for (const row of [...(json.platform ?? []), ...json.sidecars]) {
         if (!row.net) continue;
         const key = rowKey(row);
         const p = prev.get(key);
@@ -210,7 +211,7 @@ export default function SystemUsagePage() {
       inFlight.current = false;
       setBusy(false);
     }
-  }, []);
+  }, [isSuper]);
 
   // 10s poll while a superuser is viewing.
   useEffect(() => {
@@ -228,30 +229,19 @@ export default function SystemUsagePage() {
     );
   }
 
-  if (!isSuper) {
-    return (
-      <div className="max-w-xl mx-auto mt-16">
-        <div className="panel pixel-caps p-8 text-center space-y-4">
-          <Lock size={28} className="text-eepy-ember mx-auto" />
-          <h2 className="font-pixel font-bold text-xl text-ink">Superuser access required</h2>
-          <p className="text-ink-dim font-body text-sm">
-            The system usage console is only visible to organization superusers.
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   const rateFor = (row: UsageRow): Rates => rates.get(rowKey(row)) ?? { rx: null, tx: null };
 
-  const renderRow = (row: UsageRow, showMeta: boolean) => {
+  const renderRow = (row: UsageRow, kind: 'platform' | 'sidecars', showOwner: boolean) => {
     const r = rateFor(row);
     return (
       <tr key={rowKey(row)} className="hover:bg-eepy-blush/5 transition-colors">
         <td className="px-4 py-3 font-pixel text-[13px] tracking-wide text-ink break-all">{row.name}</td>
-        {showMeta && (
+        {kind === 'sidecars' && (
           <>
-            <td className="px-4 py-3 text-ink-soft font-body text-sm">{row.owner ?? '—'}</td>
+            {showOwner && (
+              <td className="px-4 py-3 text-ink-soft font-body text-sm">{row.owner ?? '—'}</td>
+            )}
             <td className="px-4 py-3 text-ink-soft font-body text-sm">{row.template ?? '—'}</td>
             <td className="px-4 py-3 text-right font-console text-[14px] text-ink-soft whitespace-nowrap">
               {fmtExpires(row.expires_at)}
@@ -287,15 +277,17 @@ export default function SystemUsagePage() {
     );
   };
 
-  const table = (rows: UsageRow[], showMeta: boolean, empty: string) => (
+  const table = (rows: UsageRow[], kind: 'platform' | 'sidecars', showOwner: boolean, empty: string) => (
     <div className="overflow-x-auto">
       <table className="w-full text-left font-body text-sm">
         <thead className="bg-night-deep/40 text-ink-dim uppercase text-[11px] font-pixel tracking-widest">
           <tr>
             <th className="px-4 py-3 font-bold">Container</th>
-            {showMeta && (
+            {kind === 'sidecars' && (
               <>
-                <th className="px-4 py-3 font-bold">Owner</th>
+                {showOwner && (
+                  <th className="px-4 py-3 font-bold">Owner</th>
+                )}
                 <th className="px-4 py-3 font-bold">Template</th>
                 <th className="px-4 py-3 font-bold text-right">Expires in</th>
               </>
@@ -311,12 +303,12 @@ export default function SystemUsagePage() {
         <tbody className="divide-y divide-night-line">
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={showMeta ? 10 : 7} className="px-4 py-8 text-center text-ink-dim font-body text-sm italic">
+              <td colSpan={kind === 'sidecars' ? (showOwner ? 10 : 9) : 7} className="px-4 py-8 text-center text-ink-dim font-body text-sm italic">
                 {empty}
               </td>
             </tr>
           ) : (
-            rows.map((row) => renderRow(row, showMeta))
+            rows.map((row) => renderRow(row, kind, showOwner))
           )}
         </tbody>
       </table>
@@ -327,10 +319,12 @@ export default function SystemUsagePage() {
     <div className="space-y-8 max-w-6xl mx-auto">
       <header className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h2 className="font-pixel font-bold text-2xl sm:text-3xl text-ink text-px-sm">System Usage</h2>
+          <h2 className="font-pixel font-bold text-2xl sm:text-3xl text-ink text-px-sm">{isSuper ? 'System Usage' : 'My Sidecars'}</h2>
           <p className="text-ink-dim font-body text-sm mt-1">
             {data?.environment?.name ? `Environment: ${data.environment.name} · ` : ''}
-            CPU / RAM / bandwidth from your system data source.
+            {isSuper
+              ? 'CPU / RAM / bandwidth from your system data source.'
+              : 'The MCP sidecars you have spawned.'}
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
@@ -409,7 +403,8 @@ export default function SystemUsagePage() {
         </div>
       ) : (
         !prompt && data && (
-          <>
+          isSuper ? (
+            <>
             <div className="panel overflow-hidden">
               <div className="p-4 sm:p-5 border-b-2 border-night-line bg-night-deep/40">
                 <h3 className="font-pixel font-bold text-lg flex items-center gap-2 text-ink">
@@ -417,7 +412,7 @@ export default function SystemUsagePage() {
                 </h3>
                 <p className="text-ink-dim font-body text-xs mt-1">The always-running eepy-* stack.</p>
               </div>
-              {table(data.platform, false, 'No platform containers found (nothing with the eepy- prefix in this environment).')}
+              {table(data.platform ?? [], 'platform', false, 'No platform containers found (nothing with the eepy- prefix in this environment).')}
             </div>
 
             <div className="panel overflow-hidden">
@@ -430,7 +425,7 @@ export default function SystemUsagePage() {
                   {data?.sidecar_idle_timeout ?? 300}s without a tool call. Rows without a live container show as gone.
                 </p>
               </div>
-              {table(data.sidecars, true, 'No sidecars in the spawn ledger yet.')}
+              {table(data.sidecars, 'sidecars', true, 'No sidecars in the spawn ledger yet.')}
             </div>
 
             <p className="text-ink-faint font-body text-xs">
@@ -438,7 +433,24 @@ export default function SystemUsagePage() {
               container started. A &ldquo;gone&rdquo; sidecar row means the ledger has it but the container
               is no longer in the environment.
             </p>
-          </>
+            </>
+          ) : (
+            <>
+            <div className="panel overflow-hidden">
+              <div className="p-4 sm:p-5 border-b-2 border-night-line bg-night-deep/40">
+                <h3 className="font-pixel font-bold text-lg flex items-center gap-2 text-ink">
+                  <Users size={18} className="text-eepy-sage" /> My Sidecars
+                </h3>
+                <p className="text-ink-dim font-body text-xs mt-1">
+                  Idle sidecars are reaped after{' '}
+                  {data?.sidecar_idle_timeout ?? 300}s without a tool call.
+                  Rows without a live container show as gone.
+                </p>
+              </div>
+              {table(data.sidecars, 'sidecars', false, 'No sidecars in the spawn ledger yet.')}
+            </div>
+            </>
+          )
         )
       )}
     </div>

@@ -10,6 +10,7 @@ from api.system_usage import (
     compute_network,
     sidecar_expiry,
 )
+from database import SessionLocal  # noqa: E402  (env is set by conftest at import time)
 
 # --- CPU ------------------------------------------------------------------
 
@@ -146,4 +147,72 @@ def test_sidecar_expiry_running_carries_a_deadline():
 def test_sidecar_expiry_non_running_keeps_stamp_no_deadline():
     assert sidecar_expiry(1000.0, "gone", idle_timeout=300.0) == (1000.0, None)
     assert sidecar_expiry(None, "gone", idle_timeout=300.0) == (None, None)
+
+
+
+
+# --- Per-user endpoint (GET /user/sidecars) ------------------------------
+
+def _signup_user(client, prefix):
+    import random
+
+    username = f"{prefix}{random.randint(10000, 99999)}"
+    r = client.post("/auth/signup", json={
+        "username": username, "email": f"{username}@example.com",
+        "password": "user-password-1"})
+    assert r.status_code == 200, r.text
+    r = client.post("/auth/login", json={
+        "username": username, "password": "user-password-1"})
+    assert r.status_code == 200, r.text
+    return r.json()["access_token"]
+
+
+def _delete_settings_row():
+    from models.system_settings import SystemSettings
+
+    db = SessionLocal()
+    try:
+        db.query(SystemSettings).filter(SystemSettings.id == 1).delete()
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_user_sidecars_no_platform_source_400(client):
+    """A regular user with NO platform data source (no settings row, no
+    superuser Portainer config) gets the same 400 not_configured body as
+    the superuser page - and never the caller's own connection."""
+    _delete_settings_row()
+    token = _signup_user(client, "usageslice")
+    r = client.get("/user/sidecars", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 400, r.text
+    detail = r.json()["detail"]
+    assert detail["error"] == "not_configured"
+
+
+def test_user_sidecars_uses_the_platform_settings_row(client):
+    """With a settings row (here a bogus one pointing at a closed local
+    port), the user endpoint resolves the PLATFORM source and fails at the
+    Portainer step with 502 - not 400 (source IS configured) and not the
+    caller's own MCP config."""
+    from models.system_settings import SystemSettings
+    from utils.crypto import encrypt_secret
+
+    _delete_settings_row()
+    db = SessionLocal()
+    try:
+        db.add(SystemSettings(
+            id=1, backend="portainer",
+            portainer_url="https://127.0.0.1:9",  # closed port: refuses fast
+            portainer_api_key_enc=encrypt_secret("bogus-platform-key"),
+            environment_id="20"))
+        db.commit()
+    finally:
+        db.close()
+    token = _signup_user(client, "usageslice2")
+    try:
+        r = client.get("/user/sidecars", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 502, r.text
+    finally:
+        _delete_settings_row()
 

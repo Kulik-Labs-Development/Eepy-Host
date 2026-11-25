@@ -212,8 +212,12 @@ def _resolve_environment(environments: list[dict], wanted: str | None) -> tuple[
     return int(environments[0]["id"]), environments[0]
 
 
-def fetch_usage(db: Session, user) -> dict:
-    """The /superuser/system-usage payload (see the module docstring)."""
+def fetch_usage(db: Session, user, owner_id: int | None = None) -> dict:
+    """The /superuser/system-usage payload (see the module docstring).
+
+    owner_id (per-user view): restrict the sidecar section to that user's
+    ledger rows. The platform section is computed either way (see
+    fetch_user_sidecars for the ceiling)."""
     cfg = _resolve_config(db, user.id)
     # The wanted environment now comes from the settings row (str or None);
     # a missing row / missing value = auto.
@@ -345,11 +349,10 @@ def fetch_usage(db: Session, user) -> dict:
                 detail=f"Could not reach Arcane ({exc.__class__.__name__}).",
             ) from exc
 
-    sidecar_rows = (
-        db.query(MCPSidecar)
-        .filter(MCPSidecar.name.is_not(None))
-        .all()
-    )
+    sidecar_query = db.query(MCPSidecar).filter(MCPSidecar.name.is_not(None))
+    if owner_id is not None:
+        sidecar_query = sidecar_query.filter(MCPSidecar.owner_id == owner_id)
+    sidecar_rows = sidecar_query.all()
     from database import User as _User  # local import: database pulls the whole app model set
     owner_ids = {row.owner_id for row in sidecar_rows}
     users = ({u.id: u.username for u in db.query(_User).filter(_User.id.in_(owner_ids)).all()}
@@ -444,3 +447,37 @@ def fetch_usage(db: Session, user) -> dict:
         "platform": [row(c) for c in platform],
         "sidecars": sidecar_rows_out,
     }
+
+
+
+def fetch_user_sidecars(db: Session, user) -> dict:
+    """Per-user slice of the System Usage page (GET /user/sidecars): only
+    the sidecars the user spawned (ledger rows owner_id = user.id), same
+    row shape as the superuser's sidecar table. The data source stays
+    platform-level - the system settings row, falling back to the
+    SUPERUSER's Portainer connection (the page's data source, never the
+    caller's) - so a regular user sees nobody else's sidecars and no
+    platform stats at all.
+
+    ponytail: ceiling - reuses fetch_usage with the owner filter, so the
+    platform containers' stats get sampled too (wasted, but bounded by the
+    stack's own container count; push the filter into the container list if
+    the sidecar fleet grows)."""
+    from database import User as _User
+    from database import UserRole as _UserRole
+
+    superuser = db.query(_User).filter(_User.role == _UserRole.SUPERUSER).first()
+    if superuser is None:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "not_configured",
+                    "detail": "No platform data source is configured yet."},
+        )
+    out = fetch_usage(db, superuser, owner_id=user.id)
+    return {
+        "generated_at": out["generated_at"],
+        "sidecar_idle_timeout": out["sidecar_idle_timeout"],
+        "environment": out["environment"],
+        "sidecars": out["sidecars"],
+    }
+
