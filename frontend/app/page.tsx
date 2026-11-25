@@ -20,34 +20,27 @@ export default function LandingPage() {
       </nav>
 
       <main className="z-10 text-center space-y-12 max-w-4xl flex-grow flex flex-col justify-center py-12 w-full">
-        {/* Hero mascot */}
+        {/* Hero mascot — the logo carries the wordmark, so it stands alone: no box, no heading */}
         <div className="flex justify-center mb-2">
-          <div className="relative panel pixel-caps p-8 sm:p-10 [--cap:theme('colors.eepy.pink')]">
-            <div className="relative inline-block">
-              <img
-                src="/eepy-chan.png"
-                alt="Eepy-chan"
-                width={224}
-                height={205}
-                style={{ imageRendering: 'pixelated' }}
-              />
-              <span className="absolute -right-7 top-4 font-pixel font-bold text-eepy-lilac text-lg animate-float-z">z</span>
-              <span className="absolute -right-12 top-0 font-pixel font-bold text-eepy-lilac/80 text-xl animate-float-z" style={{ animationDelay: '0.9s' }}>z</span>
-              <span className="absolute -right-16 top-[-14px] font-pixel font-bold text-eepy-lilac/60 text-2xl animate-float-z" style={{ animationDelay: '1.8s' }}>z</span>
-            </div>
+          <div className="relative inline-block">
+            <img
+              src="/eepy-chan.png"
+              alt="Eepy-chan"
+              width={224}
+              height={205}
+              style={{ imageRendering: 'pixelated' }}
+            />
+            <span className="absolute -right-7 top-4 font-pixel font-bold text-eepy-lilac text-lg animate-float-z">z</span>
+            <span className="absolute -right-12 top-0 font-pixel font-bold text-eepy-lilac/80 text-xl animate-float-z" style={{ animationDelay: '0.9s' }}>z</span>
+            <span className="absolute -right-16 top-[-14px] font-pixel font-bold text-eepy-lilac/60 text-2xl animate-float-z" style={{ animationDelay: '1.8s' }}>z</span>
           </div>
         </div>
 
-        <div className="space-y-5 sm:space-y-6">
-          <h1 className="font-pixel font-bold text-5xl sm:text-6xl md:text-7xl tracking-tight leading-tight text-px">
-            Eepy <span className="text-eepy-blush">Host</span>
-          </h1>
-          <p className="text-ink-soft text-lg sm:text-2xl max-w-2xl mx-auto leading-relaxed font-medium">
-            The cozy corner of the internet for the{' '}
-            <span className="text-eepy-pink font-bold">Vibe Coder</span>. Host your MCP
-            servers in a space built for focus, flow, and a good long nap.
-          </p>
-        </div>
+        <p className="text-ink-soft text-lg sm:text-2xl max-w-2xl mx-auto leading-relaxed font-medium">
+          The cozy corner of the internet for the{' '}
+          <span className="text-eepy-pink font-bold">Vibe Coder</span>. Host your MCP
+          servers in a space built for focus, flow, and a good long nap.
+        </p>
 
         <div className="flex gap-4 justify-center pt-2 flex-wrap">
           <Link href="/auth">
