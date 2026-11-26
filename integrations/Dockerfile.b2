@@ -1,0 +1,15 @@
+# Backblaze B2 MCP server sidecar image.
+#
+# SOURCE OF TRUTH: the official Backblaze image ghcr.io/backblaze-labs/b2-mcp
+# (github.com/backblaze-labs/b2-mcp, MIT). This Dockerfile adds NO build
+# steps - it re-tags the pinned official release so the sidecar runs exactly
+# the upstream version this repo pins, under the standard eepy-host-<name>
+# naming. Bump the version tag here to update; never vendor or fork the
+# upstream code.
+#
+# The published image defaults to the HTTP transport (a single /mcp endpoint
+# on port 3000) and reads configuration only from environment variables:
+# the user's application key rides the sidecar env at spawn (env_mapping in
+# backend/main.py), and the fixed policy env lives in the template's
+# runtime_config.
+FROM ghcr.io/backblaze-labs/b2-mcp:v0.2.2

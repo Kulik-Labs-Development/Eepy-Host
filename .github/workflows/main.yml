@@ -172,6 +172,18 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-ghost:latest
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Build and push Backblaze B2 MCP sidecar image
+        # Re-tags the pinned official Backblaze image
+        # (ghcr.io/backblaze-labs/b2-mcp) - zero build steps, so the
+        # sidecar always runs exactly the upstream release this repo pins.
+        uses: docker/build-push-action@v5
+        with:
+          context: ./
+          file: ./integrations/Dockerfile.b2
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-b2:latest
+          labels: ${{ steps.meta.outputs.labels }}
+
       - name: Build and push Frontend image
         # The public analytics ids (GA4 + Clarity) are baked into the client
         # bundle as build args from repo secrets; unset = no analytics tags.

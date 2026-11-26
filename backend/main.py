@@ -157,7 +157,7 @@ def seed_mcp_templates():
     """Seed the admin-approved templates (HappyFox #1, eBay #2, Portainer #3,
     Warden #4, Proxmox VE #5, Tactical RMM #6 read-only + #7 read/command,
     Microsoft Clarity #8, BookStack #9, Cloudflare #10 Code Mode + #11 Full
-    Endpoint Tools, Spotify #12, Mercury Bank #13, Ghost Blog #14) into the library.
+    Endpoint Tools, Spotify #12, Mercury Bank #13, Ghost Blog #14, Backblaze B2 #15) into the library.
 
     Each integration's MCP server code lives OUTSIDE this backend, in its own
     git submodule under integrations/ (happyfox-mcp →
@@ -1472,6 +1472,135 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
+    # Backblaze B2 (official upstream image - no submodule, no fork):
+    # the sidecar IS the pinned official ghcr.io/backblaze-labs/b2-mcp
+    # release, re-tagged by integrations/Dockerfile.b2 (zero build steps -
+    # CI re-tags the official image under the standard eepy-host-<name>
+    # naming). The published image defaults to the HTTP transport: a single
+    # /mcp endpoint on :3000, config from env only.
+    # B2_HTTP_CREDENTIAL_MODE=server = the user's application key rides the
+    # sidecar env at spawn (env_mapping), never the wire. The policy env
+    # pins the official hardened defaults: destructive ops blocked, secret
+    # sinks off (no durable-secret output), no local file access. No
+    # auth-token gate needed (unlike ghost-blog-mcp): the sidecar is not
+    # internet-facing (internal eepy-sidecars network), so no
+    # B2_ALLOWED_HOSTS allowlist either.
+    b2 = MCPTemplate(
+        id="b2",
+        name="Backblaze B2",
+        repo_url="https://github.com/backblaze-labs/b2-mcp",
+        description=(
+            "Manage Backblaze B2 storage across 40 tools: buckets, files "
+            "(list, upload, download, presigned URLs, multipart), "
+            "application keys, Object Lock holds/retention, S3-compatible "
+            "access, and storage analytics (growth, egress, largest files, "
+            "abandoned uploads). Runs against YOUR B2 account with your own "
+            "application key, on the official Backblaze b2-mcp image "
+            "(pinned) - destructive operations are blocked at the sidecar "
+            "by default, and credentials stay encrypted at rest, proxied "
+            "through the Eepy unified proxy."
+        ),
+        config_schema={
+            "category": "Storage / Backup",
+            "type": "object",
+            "properties": {
+                "B2_APPLICATION_KEY_ID": {
+                    "type": "string",
+                    "label": "Application Key ID",
+                    "placeholder": "key id",
+                    "help": "Backblaze B2: Settings > Keys > Application Keys > Create a New Application Key. A non-master key covers normal storage work.",
+                    "required": True,
+                },
+                "B2_APPLICATION_KEY": {
+                    "type": "password",
+                    "label": "Application Key (Secret)",
+                    "help": "The secret half of the same application key.",
+                    "required": True,
+                },
+                "B2_REGION": {
+                    "type": "string",
+                    "label": "Region (optional)",
+                    "placeholder": "us-east-005",
+                    "help": "Optional. Fallback S3-compatible endpoint region (default us-west-004). Authorized B2 responses override this where available.",
+                    "required": False,
+                },
+                "B2_MASTER_KEY_ID": {
+                    "type": "string",
+                    "label": "Master Key ID (optional)",
+                    "help": "Optional. Master credential for the Partner/Groups tools (Partner API entitlement). The 3 Partner tools are hidden without it.",
+                    "required": False,
+                },
+                "B2_MASTER_KEY": {
+                    "type": "password",
+                    "label": "Master Key (optional)",
+                    "help": "Optional. Secret half of the master credential.",
+                    "required": False,
+                },
+            },
+            "required": ["B2_APPLICATION_KEY_ID", "B2_APPLICATION_KEY"],
+        },
+        image_tag="ghcr.io/kulik-labs-development/eepy-host-b2",
+        runtime="mcp-server",
+        runtime_config={
+            "image": "ghcr.io/kulik-labs-development/eepy-host-b2:latest",
+            # Local dev (subprocess backend): run the pinned official npm
+            # package over stdio (there is no in-repo code for this one).
+            "command": ["npx", "-y", "@backblaze-labs/b2-mcp@0.2.2"],
+            "env": {
+                "PORT": "3000",
+                "B2_HTTP_CREDENTIAL_MODE": "server",
+                "B2_DESTRUCTIVE_POLICY": "block",
+                "B2_SECRET_SINK": "off",
+                "B2_ALLOW_INLINE_SECRETS": "false",
+                "B2_ALLOW_LOCAL_FILES": "false",
+            },
+            "subprocess_env": {"B2_MCP_TRANSPORT": "stdio"},
+            "endpoint": "/mcp",
+            "port": "3000",
+            "env_mapping": {
+                "B2_APPLICATION_KEY_ID": "B2_APPLICATION_KEY_ID",
+                "B2_APPLICATION_KEY": "B2_APPLICATION_KEY",
+                "B2_REGION": "B2_REGION",
+                "B2_MASTER_KEY_ID": "B2_MASTER_KEY_ID",
+                "B2_MASTER_KEY": "B2_MASTER_KEY",
+            },
+            # Read-only probe for POST /config/{id}/test: verifies the
+            # application key and returns account info, so a bad key fails
+            # loudly.
+            "test_tool": {"name": "b2_authorize_account", "arguments": {}},
+            # Best-effort tool list (40 tools at v0.2.2, from the official
+            # README). Admin discovery overwrites this with the
+            # authoritative tools/list; capability-aware registration
+            # trims it per key (37 without a master key).
+            "tool_names": [
+                "b2_authorize_account",
+                "b2_list_buckets", "b2_create_bucket", "b2_delete_bucket",
+                "b2_update_bucket",
+                "b2_get_bucket_notification_rules",
+                "b2_set_bucket_notification_rules",
+                "b2_list_keys", "b2_delete_key", "b2_create_key",
+                "b2_update_file_legal_hold", "b2_update_file_retention",
+                "b2_list_groups", "b2_eject_group_member",
+                "b2_list_group_members", "b2_create_group_member",
+                "b2_reserve_trial_create_account",
+                "s3_put_object", "s3_get_object", "s3_delete_object",
+                "s3_delete_objects", "s3_head_object", "s3_copy_object",
+                "s3_list_objects_v2", "s3_list_object_versions",
+                "s3_create_multipart_upload",
+                "s3_get_presigned_upload_part_url",
+                "s3_complete_multipart_upload", "s3_abort_multipart_upload",
+                "s3_list_parts", "s3_list_multipart_uploads",
+                "s3_upload_part_copy", "s3_get_presigned_url",
+                "s3_head_bucket", "s3_get_bucket_location",
+                "s3_put_bucket_lifecycle",
+                "b2_report_usage_growth", "b2_rank_egress_leaders",
+                "b2_list_largest_files", "b2_unfinished_uploads",
+            ],
+        },
+        approved_by_admin=True,
+        enabled_global=True,
+    )
+
     # Cloudflare (hosted remote upstreams — no sidecar, no image, no command):
     # the bridge registers the fixed upstream URL (runtime_config 'url') and
     # dials it with the user's per-request headers. The user's own Cloudflare
@@ -1959,7 +2088,7 @@ def seed_mcp_templates():
     db = SessionLocal()
     try:
         for spec in (happyfox, ebay, portainer, warden, proxmox, trmm, trmm_exec, clarity, bookstack,
-                    cloudflare, cloudflare_full, uber, ubereats, microsoft365, spotify, mercury, ghost,
+                    cloudflare, cloudflare_full, uber, ubereats, microsoft365, spotify, mercury, ghost, b2,
                     homeassistant):
             existing = db.query(MCPTemplate).filter(MCPTemplate.id == spec.id).first()
             if existing:
