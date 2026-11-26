@@ -26,8 +26,8 @@ export default function LandingPage() {
             <img
               src="/eepy-chan.png"
               alt="Eepy-chan"
-              width={224}
-              height={205}
+              width={448}
+              height={410}
               style={{ imageRendering: 'pixelated' }}
             />
             <span className="absolute -right-7 top-4 font-pixel font-bold text-eepy-lilac text-lg animate-float-z">z</span>
