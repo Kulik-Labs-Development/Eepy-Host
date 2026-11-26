@@ -1,11 +1,14 @@
 # Backblaze B2 MCP server sidecar image.
 #
 # SOURCE OF TRUTH: the official Backblaze image ghcr.io/backblaze-labs/b2-mcp
-# (github.com/backblaze-labs/b2-mcp, MIT). This Dockerfile adds NO build
-# steps - it re-tags the pinned official release so the sidecar runs exactly
-# the upstream version this repo pins, under the standard eepy-host-<name>
-# naming. Bump the version tag here to update; never vendor or fork the
-# upstream code.
+# (github.com/backblaze-labs/b2-mcp, MIT). The pinned upstream release is
+# re-tagged under the standard eepy-host-<name> naming; no upstream code is
+# vendored or forked. Bump the version tag here to update.
+#
+# One shim on top of upstream: eepy-entrypoint.sh allows the sidecar's own
+# container IP in b2-mcp's B2_ALLOWED_HOSTS (its Host/Origin gate defaults
+# to loopback-only, but the Eepy bridge dials the sidecar by container IP -
+# without this every MCP handshake 403s). See the script for the full why.
 #
 # The published image defaults to the HTTP transport (a single /mcp endpoint
 # on port 3000) and reads configuration only from environment variables:
@@ -13,3 +16,6 @@
 # backend/main.py), and the fixed policy env lives in the template's
 # runtime_config.
 FROM ghcr.io/backblaze-labs/b2-mcp:v0.2.2
+COPY --chown=node:node integrations/eepy-entrypoint.sh /app/eepy-entrypoint.sh
+RUN chmod 755 /app/eepy-entrypoint.sh
+ENTRYPOINT ["/app/eepy-entrypoint.sh"]

@@ -1483,8 +1483,11 @@ def seed_mcp_templates():
     # pins the official hardened defaults: destructive ops blocked, secret
     # sinks off (no durable-secret output), no local file access. No
     # auth-token gate needed (unlike ghost-blog-mcp): the sidecar is not
-    # internet-facing (internal eepy-sidecars network), so no
-    # B2_ALLOWED_HOSTS allowlist either.
+    # internet-facing (internal eepy-sidecars network). The Host/Origin
+    # allowlist is NOT set here - b2-mcp's gate defaults to loopback-only
+    # while the bridge dials the sidecar by container IP, so the image's
+    # entrypoint shim (integrations/eepy-entrypoint.sh) self-allows the
+    # container's own IP at start.
     b2 = MCPTemplate(
         id="b2",
         name="Backblaze B2",
