@@ -38,6 +38,7 @@ export const APP_ICONS: Record<string, string> = {
   mercury: '/app-icons/mercury.png',
   ghost: '/app-icons/ghost.png',
   'home-assistant': '/app-icons/homeassistant.png',
+  b2: '/app-icons/b2.png',
 };
 
 export function templateIcon(templateId: string): string | null {
