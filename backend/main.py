@@ -2415,7 +2415,12 @@ def signup(
             | (func.lower(User.email) == user_in.email.lower())
         ).first()
         if existing_user:
-            raise HTTPException(status_code=400, detail="Username or email already registered (usernames are case-insensitive)")
+            # Generic message: the specific cause stays in the server log,
+            # not the response (a distinct 400 body here lets an
+            # unauthenticated client enumerate registered usernames/emails,
+            # while /auth/login stays enumeration-resistant).
+            logger.info(f"Signup rejected: username or email already registered (username={user_in.username})")
+            raise HTTPException(status_code=400, detail="Could not create the account. Please try again.")
 
         # SECURITY: role is NOT accepted from the client. Every account starts
         # as USER; superuser status comes only from the SUPERUSER_USERNAME
