@@ -55,6 +55,7 @@ from api.mcp_endpoints import (
 )
 from database import SessionLocal, User
 from models.mcp_models import MCPTemplate, UserMCPConfig
+from utils import rate_limit
 from utils.logging_setup import logger
 
 # The authenticated caller for the in-flight /api/mcp/mcp request. Set by the
@@ -351,6 +352,16 @@ class MCPStreamAuthMiddleware:
             user, status_code, detail = await asyncio.to_thread(self._resolve_user_sync, scope)
             if user is None:
                 await self._send_json(send, status_code, {"detail": detail})
+                return
+            # Same per-user budget as the proxy routes: one shared instance,
+            # so a client cannot split the budget across the two MCP
+            # surfaces (see utils/rate_limit.py).
+            try:
+                rate_limit.mcp_tool_call_limiter.hit(user.id)
+            except rate_limit.McpRateLimited:
+                await self._send_json(send, 429, {
+                    "detail": "MCP request budget exceeded. Try again in a minute.",
+                })
                 return
             token = _current_mcp_user.set(user)
             started = False

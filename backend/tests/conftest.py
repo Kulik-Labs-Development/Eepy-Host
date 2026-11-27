@@ -134,13 +134,15 @@ def auth_user(client, fake_template_id):
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
-    """Reset the in-memory slowapi storage between tests.
+    """Reset the in-memory rate-limit stores between tests.
 
     All test traffic shares one client identity ('testclient'), so without
     this the 5/hour signup limit fires on the 6th signup across the whole
     session and every later fixture setup 429s.
     """
     import main
+    from utils import rate_limit
 
     main.limiter.reset()
+    rate_limit.mcp_tool_call_limiter.reset()
     yield

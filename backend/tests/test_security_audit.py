@@ -3,6 +3,7 @@
 - SSRF guard on the legacy native proxy path (backend dials user-supplied hosts)
 - request body size cap (unauthenticated /auth/* routes)
 - rate limiter key function behind trusted reverse proxies
+- per-user MCP tool-call budget (native stream + proxy share one counter)
 - avatar content-type allowlist (no SVG)
 - UserLogin identifier length bound
 - admin data-source guard (System Usage Portainer/Arcane URLs: LAN allowed,
@@ -205,6 +206,42 @@ def test_rate_limit_key_ignores_xff_from_untrusted_peer(monkeypatch):
         "headers": [(b"x-forwarded-for", b"1.2.3.4")],
     }
     assert main.rate_limit_key(Request(scope)) == "203.0.113.9"
+
+
+# ---------------------------------------------------------------------------
+# Per-user MCP tool-call budget (native stream + proxy share one counter)
+# ---------------------------------------------------------------------------
+def test_mcp_tool_call_limiter_window(monkeypatch):
+    import utils.rate_limit as rl
+
+    lim = rl.McpToolCallLimiter(limit_per_window=2)
+    now = [1000.0]
+    monkeypatch.setattr(rl.time, "monotonic", lambda: now[0])
+    lim.hit(7)
+    lim.hit(7)
+    with pytest.raises(rl.McpRateLimited):
+        lim.hit(7)
+    # A different user has their own bucket.
+    lim.hit(8)
+    # A new window (60s+) starts the count over.
+    now[0] += 61.0
+    lim.hit(7)
+    lim.reset()
+
+
+def test_mcp_stream_rate_limit_429_per_user(client, auth_user, monkeypatch):
+    """The native stream 429s the budget+1th request of one user; the check
+    sits in the auth middleware, before the MCP session manager (a
+    malformed body still yields the rate-limit response, not a 400)."""
+    import utils.rate_limit as rl
+
+    monkeypatch.setattr(rl.mcp_tool_call_limiter, "limit", 3)
+    headers = {"Authorization": f"Bearer {auth_user['eekey']}"}
+    body = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+    codes = [client.post("/api/mcp/mcp", json=body, headers=headers).status_code
+             for _ in range(4)]
+    assert 429 not in codes[:3], codes
+    assert codes[3] == 429
 
 
 # ---------------------------------------------------------------------------

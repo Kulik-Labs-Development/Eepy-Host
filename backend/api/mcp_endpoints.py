@@ -44,6 +44,7 @@ from api import (
 from auth import decode_access_token, verify_password
 from database import User, get_db
 from models.mcp_models import MCPTemplate, MCPUserToolKey, UserMCPConfig
+from utils import rate_limit
 from utils.crypto import decrypt_credentials, decrypt_secret, encrypt_credentials, encrypt_secret
 from utils.logging_setup import logger
 from utils.upstream import assert_public_upstream
@@ -273,6 +274,18 @@ def get_proxy_context(
     for the proxy / connection-test routes. Accepts JWT or Tool API Key via
     get_current_user_or_key (eekey route scoping is enforced there).
     """
+    # Per-user MCP budget (default 120/min, MCP_TOOL_CALLS_PER_MINUTE):
+    # this dependency is the single shared guard for every proxy-shaped
+    # tool call + the connection-test route (see utils/rate_limit.py).
+    # Fail before the template lookup / credential decryption.
+    try:
+        rate_limit.mcp_tool_call_limiter.hit(current_user.id)
+    except rate_limit.McpRateLimited:
+        raise HTTPException(
+            status_code=429,
+            detail="MCP request budget exceeded. Try again in a minute.",
+            headers={"Retry-After": "60"},
+        ) from None
     template = db.query(MCPTemplate).filter(MCPTemplate.id == template_id).first()
     if not template or not template.approved_by_admin or not template.enabled_global:
         raise HTTPException(status_code=404, detail=f"Unknown template '{template_id}'.")
