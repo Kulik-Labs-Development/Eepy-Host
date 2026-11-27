@@ -2446,8 +2446,13 @@ def login(
 ):
     try:
         # The identifier may be the username OR the account's email address;
-        # both are matched case-insensitively.
-        logger.info(f"Login request received for identifier: {credentials.username}")
+        # both are matched case-insensitively. The logged copy has control
+        # characters replaced: the line lands in the Debug Log console that
+        # the superuser page renders, and a multi-line identifier would
+        # otherwise forge console lines (the lookup below uses the raw
+        # value, unchanged).
+        safe_identifier = "".join(ch if 32 <= ord(ch) < 127 else "?" for ch in credentials.username)
+        logger.info(f"Login request received for identifier: {safe_identifier}")
         identifier = credentials.username
         user = db.query(User).filter(
             (func.lower(User.username) == identifier.lower())
