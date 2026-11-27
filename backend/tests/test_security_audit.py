@@ -5,6 +5,8 @@
 - rate limiter key function behind trusted reverse proxies
 - avatar content-type allowlist (no SVG)
 - UserLogin identifier length bound
+- admin data-source guard (System Usage Portainer/Arcane URLs: LAN allowed,
+  loopback/link-local/metadata blocked)
 """
 
 import random
@@ -14,7 +16,40 @@ from pydantic import ValidationError
 
 from api.mcp_endpoints import _happyfox_base
 from schemas import UserLogin
-from utils.upstream import assert_public_upstream
+from utils.upstream import assert_admin_upstream, assert_public_upstream
+
+
+# ---------------------------------------------------------------------------
+# SSRF guard, admin data-source variant: the System Usage page dials the
+# superuser-configured Portainer/Arcane URL. RFC1918/ULA LAN hosts are the
+# INTENDED target (a LAN Portainer), so this guard is looser than
+# assert_public_upstream - but loopback, link-local (incl. the cloud
+# metadata endpoint), and reserved targets stay blocked.
+# ---------------------------------------------------------------------------
+class TestAdminUpstreamGuard:
+    @pytest.mark.parametrize("url", [
+        "http://10.0.0.5",                  # plain http: API key in the clear
+        "https://127.0.0.1",                # loopback
+        "https://169.254.169.254",          # link-local: cloud metadata endpoint
+        "https://0.0.0.0",                  # unspecified
+        "https://[::1]:8443",               # IPv6 loopback
+    ])
+    def test_rejects_internal_targets(self, url):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc:
+            assert_admin_upstream(url)
+        assert exc.value.status_code == 400
+
+    @pytest.mark.parametrize("url", [
+        "https://10.1.2.3",                 # RFC1918 (LAN Portainer = intended target)
+        "https://192.168.1.10",             # RFC1918
+        "https://172.16.0.5",               # RFC1918
+        "https://[fd00::5]",                # IPv6 ULA (LAN)
+        "https://93.184.216.34",            # public IP literal
+    ])
+    def test_allows_lan_and_public_targets(self, url):
+        assert_admin_upstream(url)  # does not raise
 
 
 # ---------------------------------------------------------------------------

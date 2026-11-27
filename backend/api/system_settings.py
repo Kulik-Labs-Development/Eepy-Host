@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from models.system_settings import SystemSettings
 from utils.crypto import decrypt_secret, encrypt_secret
+from utils.upstream import assert_admin_upstream
 
 TEST_TIMEOUT_SECONDS = 15
 _PAGE_SIZE = 50
@@ -98,6 +99,13 @@ def put_settings(db: Session, payload: dict) -> dict:
     # The ACTIVE backend must be complete (stored or just set).
     url = row.portainer_url if active == "portainer" else row.arcane_url
     key_enc = row.portainer_api_key_enc if active == "portainer" else row.arcane_api_key_enc
+    # The stored URLs are dialed by the backend itself on every usage call:
+    # enforce the admin-upstream range policy at write time, not only when
+    # testing the connection (a bad URL stored here would keep re-dialing).
+    for stored_url in (row.portainer_url, row.arcane_url):
+        if stored_url:
+            assert_admin_upstream(str(stored_url))
+
     missing = []
     if not url:
         missing.append("URL")
@@ -139,6 +147,15 @@ def test_settings(db: Session, payload: dict) -> dict:
         base = str(payload[f"{backend}_url"])
     if payload.get(f"{backend}_api_key"):
         key = str(payload[f"{backend}_api_key"])
+
+    # The backend dials this URL itself: enforce the admin-upstream policy
+    # (https + no loopback/link-local/metadata targets) before the probe.
+    # An empty base falls through to the missing-field report below.
+    if base:
+        try:
+            assert_admin_upstream(base)
+        except HTTPException as exc:
+            return {"ok": False, "detail": exc.detail}
 
     missing = []
     if not base:

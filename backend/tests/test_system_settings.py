@@ -73,7 +73,7 @@ def test_put_roundtrip_encrypts_and_never_echoes_key(client, superuser_token):
     _delete_row()
     r = client.put("/superuser/system-settings", headers=_auth(superuser_token), json={
         "backend": "portainer",
-        "portainer_url": "https://pt.example",
+        "portainer_url": "https://10.9.8.7",
         "portainer_api_key": "sekrit-key",
         "environment_id": "7",
     })
@@ -81,7 +81,7 @@ def test_put_roundtrip_encrypts_and_never_echoes_key(client, superuser_token):
     body = r.json()
     assert body["configured"] is True
     assert body["backend"] == "portainer"
-    assert body["portainer_url"] == "https://pt.example"
+    assert body["portainer_url"] == "https://10.9.8.7"
     assert body["portainer_api_key_set"] is True
     assert body["environment_id"] == "7"
     # The plaintext key is NOWHERE in the response (raw text, every field).
@@ -106,7 +106,7 @@ def test_put_blank_keeps_stored_values(client, superuser_token):
     _delete_row()
     r = client.put("/superuser/system-settings", headers=_auth(superuser_token), json={
         "backend": "portainer",
-        "portainer_url": "https://pt.example",
+        "portainer_url": "https://10.9.8.7",
         "portainer_api_key": "keep-me-123",
     })
     assert r.status_code == 200, r.text
@@ -118,7 +118,7 @@ def test_put_blank_keeps_stored_values(client, superuser_token):
     })
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["portainer_url"] == "https://pt.example"
+    assert body["portainer_url"] == "https://10.9.8.7"
     assert body["portainer_api_key_set"] is True
 
     db = SessionLocal()
@@ -148,7 +148,7 @@ def test_put_arcane_without_key_rejected(client, superuser_token):
     # (arcane) must end up with BOTH url and key, else 400.
     r = client.put("/superuser/system-settings", headers=_auth(superuser_token), json={
         "backend": "arcane",
-        "arcane_url": "https://arc.example",
+        "arcane_url": "https://10.9.8.8",
     })
     assert r.status_code == 400, r.text
     # The incomplete row must not have been persisted.

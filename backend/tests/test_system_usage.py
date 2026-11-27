@@ -191,10 +191,10 @@ def test_user_sidecars_no_platform_source_400(client):
 
 
 def test_user_sidecars_uses_the_platform_settings_row(client):
-    """With a settings row (here a bogus one pointing at a closed local
-    port), the user endpoint resolves the PLATFORM source and fails at the
-    Portainer step with 502 - not 400 (source IS configured) and not the
-    caller's own MCP config."""
+    """With a settings row (here a bogus one pointing at a closed port on a
+    public host), the user endpoint resolves the PLATFORM source and fails
+    at the Portainer step with 502 - not 400 (source IS configured) and not
+    the caller's own MCP config."""
     from models.system_settings import SystemSettings
     from utils.crypto import encrypt_secret
 
@@ -203,7 +203,7 @@ def test_user_sidecars_uses_the_platform_settings_row(client):
     try:
         db.add(SystemSettings(
             id=1, backend="portainer",
-            portainer_url="https://127.0.0.1:9",  # closed port: refuses fast
+            portainer_url="https://93.184.216.34:9",  # closed port on a public host: refuses fast
             portainer_api_key_enc=encrypt_secret("bogus-platform-key"),
             environment_id="20"))
         db.commit()

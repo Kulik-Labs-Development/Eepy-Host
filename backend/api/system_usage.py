@@ -34,6 +34,7 @@ from api.mcp_bridge import IDLE_TIMEOUT_S, registry_snapshot
 from models.mcp_models import MCPSidecar, UserMCPConfig
 from models.system_settings import SystemSettings
 from utils.crypto import decrypt_credentials, decrypt_secret
+from utils.upstream import assert_admin_upstream
 
 STATS_TIMEOUT_SECONDS = 15
 STATS_WORKERS = 8
@@ -219,6 +220,11 @@ def fetch_usage(db: Session, user, owner_id: int | None = None) -> dict:
     ledger rows. The platform section is computed either way (see
     fetch_user_sidecars for the ceiling)."""
     cfg = _resolve_config(db, user.id)
+    # Stored data source, dialed by the backend itself: enforce the same
+    # range policy as the write path (a URL stored before the guard landed
+    # must not keep dialing from every usage call).
+    if cfg.get("base"):
+        assert_admin_upstream(str(cfg["base"]))
     # The wanted environment now comes from the settings row (str or None);
     # a missing row / missing value = auto.
     row = db.query(SystemSettings).filter(SystemSettings.id == 1).first()
