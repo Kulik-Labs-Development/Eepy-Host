@@ -1270,26 +1270,27 @@ async def open_session(inst: Instance) -> McpSession:
                               _stack=stack)
         else:
             assert inst.url
-            http_client = None
-            if inst.headers:
-                # Per-request headers for this sidecar: e.g. the gate bearer
-                # + the caller's own API-key header the Portainer MCP server
-                # requires in HTTP mode, or a fixed Host override its
-                # DNS-rebinding allowlist (PORTAINER_MCP_ALLOWED_HOSTS)
-                # expects. The mcp SDK's streamable_http_client no longer
-                # accepts a headers kwarg, so hand it a pre-configured httpx
-                # client with the SDK's default timeouts (mirrors
-                # mcp.shared._httpx_utils.create_mcp_http_client). httpx
-                # honours an explicit Host header over the one it would
-                # derive from the dial URL. The SDK does not close a
-                # provided client, so it rides on the session for teardown.
-                import httpx
+            # Always hand the SDK a pre-configured client (the mcp SDK's
+            # streamable_http_client no longer accepts a headers kwarg): the
+            # per-request headers (gate bearer, the caller's own API-key
+            # header, or a fixed Host override the sidecar's DNS-rebinding
+            # allowlist expects) ride on it. follow_redirects=False is
+            # load-bearing: the SSRF guard only saw the original URL, so a
+            # 3xx to an internal target would otherwise be dialed with the
+            # sidecar's context (httpx strips the auth header cross-host, so
+            # this is at worst an internal-dial oracle - and no seeded
+            # template depends on redirect-following). Timeouts mirror
+            # mcp.shared._httpx_utils.create_mcp_http_client; httpx honours
+            # an explicit Host header over the one it would derive from the
+            # dial URL. The SDK does not close a provided client, so it
+            # rides on the session for teardown.
+            import httpx
 
-                http_client = httpx.AsyncClient(
-                    headers=inst.headers,
-                    follow_redirects=True,
-                    timeout=httpx.Timeout(30.0, read=300.0),
-                )
+            http_client = httpx.AsyncClient(
+                headers=inst.headers or {},
+                follow_redirects=False,
+                timeout=httpx.Timeout(30.0, read=300.0),
+            )
             streams = await stack.enter_async_context(
                 streamable_http_client(inst.url, http_client=http_client))
             sess = McpSession(kind="http", url=inst.url, _stack=stack, _client=http_client)
