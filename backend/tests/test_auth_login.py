@@ -64,7 +64,9 @@ def test_signup_rejects_username_clash_only_by_case(client):
         "username": f"clashuser{n}", "email": f"clashb{n}@example.com", "password": PASSWORD,
     })
     assert r.status_code == 400, r.text
-    assert "case-insensitive" in r.json()["detail"].lower()
+    # Generic message: naming the specific cause (registered username or
+    # email) would let an unauthenticated client enumerate accounts.
+    assert "case-insensitive" not in r.json()["detail"].lower()
 
 
 def test_signup_rejects_email_clash_only_by_case(client):
