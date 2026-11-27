@@ -1,21 +1,82 @@
 # Backblaze B2 MCP server sidecar image.
 #
-# SOURCE OF TRUTH: the official Backblaze image ghcr.io/backblaze-labs/b2-mcp
-# (github.com/backblaze-labs/b2-mcp, MIT). The pinned upstream release is
-# re-tagged under the standard eepy-host-<name> naming; no upstream code is
-# vendored or forked. Bump the version tag here to update.
+# SOURCE OF TRUTH: integrations/b2-mcp (git submodule →
+# github.com/backblaze-labs/b2-mcp, the official Backblaze server, MIT).
+# This Dockerfile only builds that code into an image; it is NOT where the
+# server code lives. Updating the integration = bumping the submodule ref
+# (the pinned release commit lives in this repo's index).
+#
+# Build context must be the REPO ROOT (CI sets context: ./), so the
+# integrations/b2-mcp/ paths below resolve to exactly the submodule
+# commit this repo pins (CI checks the submodule out with
+# submodules: recursive — see .github/workflows/main.yml).
+#
+# Stage structure mirrors the upstream v0.2.2 Dockerfile (same base-image
+# digest pin). One deliberate deviation: upstream stamps
+# dist/release-version.json from an ARG its CI passes (empty on untagged
+# builds); here the version is derived from the pinned source's own
+# package.json, so a submodule bump cannot drift the runtime channel marker.
 #
 # One shim on top of upstream: eepy-entrypoint.sh allows the sidecar's own
 # container IP in b2-mcp's B2_ALLOWED_HOSTS (its Host/Origin gate defaults
 # to loopback-only, but the Eepy bridge dials the sidecar by container IP -
-# without this every MCP handshake 403s). See the script for the full why.
+# without this every MCP handshake 403s). It is the only code delta.
 #
-# The published image defaults to the HTTP transport (a single /mcp endpoint
-# on port 3000) and reads configuration only from environment variables:
-# the user's application key rides the sidecar env at spawn (env_mapping in
-# backend/main.py), and the fixed policy env lives in the template's
-# runtime_config.
-FROM ghcr.io/backblaze-labs/b2-mcp:v0.2.2
+# Transport: HTTP on :3000 (a single /mcp endpoint) — the Eepy backend
+# spawns this image per user via the mcp-server sidecar runtime
+# (api/mcp_bridge.py) and speaks MCP to http://<container>:3000/mcp.
+# The user's application key rides the sidecar env at spawn
+# (env_mapping in backend/main.py); the fixed policy env lives in the
+# template's runtime_config.
+#
+# node:22.23.1-bookworm-slim, resolved and reviewed 2026-08-07 (upstream pin).
+FROM node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS base
+
+WORKDIR /app
+ENV PNPM_HOME=/pnpm
+ENV PATH="${PNPM_HOME}:${PATH}"
+
+FROM base AS dependencies
+
+ENV NODE_ENV=development
+COPY integrations/b2-mcp/package.json integrations/b2-mcp/pnpm-lock.yaml integrations/b2-mcp/pnpm-workspace.yaml ./
+RUN corepack enable pnpm \
+  && node -e 'const { execFileSync } = require("node:child_process"); const { packageManager } = require("./package.json"); if (!packageManager?.startsWith("pnpm@")) throw new Error("packageManager must pin pnpm"); execFileSync("corepack", ["prepare", packageManager, "--activate"], { stdio: "inherit" });' \
+  && pnpm install --frozen-lockfile --ignore-scripts
+
+FROM dependencies AS build
+
+COPY integrations/b2-mcp/tsconfig.json integrations/b2-mcp/tsconfig.typecheck.json ./
+COPY integrations/b2-mcp/src ./src
+RUN pnpm run build \
+  && node -e "const pkg=require('./package.json'); if(!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(pkg.version)) throw new Error('package version '+pkg.version+' is not a stable semver'); require('node:fs').writeFileSync('dist/release-version.json', JSON.stringify({name:pkg.name,releaseChannel:'published',version:pkg.version},null,2)+'\n');" \
+  && pnpm prune --prod
+
+# node:22.23.1-bookworm-slim, resolved and reviewed 2026-08-07 (upstream pin).
+FROM node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS runtime
+
+WORKDIR /app
+ENV NODE_ENV=production
+ENV B2_MCP_TRANSPORT=http
+ENV PORT=3000
+
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --chown=node:node integrations/b2-mcp/package.json integrations/b2-mcp/README.md integrations/b2-mcp/CHANGELOG.md integrations/b2-mcp/SECURITY.md integrations/b2-mcp/LICENSE ./
+# The image keeps operator-facing docs for in-container help/debugging. It does
+# not mirror the npm packlist fixtures because they are not read at runtime.
+COPY --chown=node:node integrations/b2-mcp/docs/CLIENTS.md integrations/b2-mcp/docs/DEPLOY.md ./docs/
+COPY --chown=node:node integrations/b2-mcp/docs/generated/tool-profile-contract.json integrations/b2-mcp/docs/generated/tool-profiles.md ./docs/generated/
+COPY --chown=node:node integrations/b2-mcp/docs/deployment ./docs/deployment
+COPY --chown=node:node integrations/b2-mcp/docs/product-specs/clients.md ./docs/product-specs/clients.md
+COPY --chown=node:node integrations/b2-mcp/docs/references/deployment ./docs/references/deployment
+# The Eepy delta: the entrypoint shim self-allowlists the container IP for
+# b2-mcp's Host/Origin gate (see the header above).
 COPY --chown=node:node integrations/eepy-entrypoint.sh /app/eepy-entrypoint.sh
 RUN chmod 755 /app/eepy-entrypoint.sh
+
+USER node
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "require('node:http').get({host:'127.0.0.1',port:Number(process.env.PORT)||3000,path:'/health'},(res)=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 ENTRYPOINT ["/app/eepy-entrypoint.sh"]

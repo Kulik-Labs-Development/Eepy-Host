@@ -28,3 +28,6 @@
 [submodule "integrations/ghost-blog-mcp"]
 	path = integrations/ghost-blog-mcp
 	url = https://github.com/Glitch3dPenguin/ghost-blog-mcp
+[submodule "integrations/b2-mcp"]
+	path = integrations/b2-mcp
+	url = https://github.com/backblaze-labs/b2-mcp

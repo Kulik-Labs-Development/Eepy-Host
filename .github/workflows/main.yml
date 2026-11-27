@@ -173,10 +173,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Build and push Backblaze B2 MCP sidecar image
-        # Re-tags the pinned official Backblaze image
-        # (ghcr.io/backblaze-labs/b2-mcp), plus the eepy-entrypoint shim
-        # (self-allowlists the container IP for b2-mcp's Host/Origin gate).
-        # The sidecar always runs exactly the upstream release this repo pins.
+        # Built from the integrations/b2-mcp submodule (upstream
+        # backblaze-labs/b2-mcp, the official Backblaze server) so the
+        # deployed sidecar always matches the exact upstream commit this
+        # repo pins. The eepy-entrypoint shim self-allowlists the container
+        # IP for b2-mcp's Host/Origin gate.
         uses: docker/build-push-action@v5
         with:
           context: ./
