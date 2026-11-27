@@ -913,11 +913,11 @@ NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev
 npm run build && npm start
 ```
 
-Analytics (GA4 + Clarity) is optional and BUILD-TIME: `NEXT_PUBLIC_GA_MEASUREMENT_ID` /
-`NEXT_PUBLIC_CLARITY_ID` are read in `app/layout.tsx` and inlined into the static
-bundle during `npm run build` (the app is fully static — runtime container env never
-reaches the page). CI passes them as Docker build args from the repo secrets
-`GA_MEASUREMENT_ID` / `CLARITY_PROJECT_ID`; unset secrets = no tags. The CSP in
+Analytics (GA4 + Clarity) is optional and RUNTIME: `GA_MEASUREMENT_ID` /
+`CLARITY_PROJECT_ID` are read in `app/layout.tsx` from the frontend container's
+environment at request time (the layout is force-dynamic and the container runs
+`next start` — a stack-env change takes effect on container restart, no image
+rebuild). Empty/unset = no tags. The CSP in
 `next.config.mjs` already allows the googletagmanager/clarity origins.
 
 ### Docker deployment (compose file lives in `deploy/`)

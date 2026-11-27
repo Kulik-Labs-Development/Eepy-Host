@@ -105,23 +105,19 @@ services:
 
   frontend:
     image: ghcr.io/kulik-labs-development/eepy-host-frontend:latest
-    # Self-builds: the analytics ids are baked into the client bundle at
-    # image build time (the frontend is fully static - runtime env can't
-    # reach the page). Unset = no analytics tags. The GHCR images CI
-    # publishes are already pre-baked from the GA_MEASUREMENT_ID /
-    # CLARITY_PROJECT_ID repo secrets, so pulling the image needs nothing
-    # extra; this build block only matters for building locally.
+    # The build block exists for self-hosted builds; CI publishes the GHCR
+    # image. The analytics ids are read from the container environment at
+    # runtime (the Next.js server renders the layout per request), so no
+    # image rebuild is ever needed for them.
     build:
       context: ./frontend
-      args:
-        NEXT_PUBLIC_GA_MEASUREMENT_ID: ${GA_MEASUREMENT_ID:-}
-        NEXT_PUBLIC_CLARITY_ID: ${CLARITY_PROJECT_ID:-}
     container_name: eepy-frontend
     restart: always
     environment:
-      # NEXT_PUBLIC_* values are baked into the Next.js build at image-build
-      # time, so this container env does not change the client URL. It is kept
-      # for parity and documentation.
+      # Analytics ids: read by app/layout.tsx at request time. Empty = no
+      # tags; a value added to the stack env takes effect on container start.
+      - GA_MEASUREMENT_ID=${GA_MEASUREMENT_ID:-}
+      - CLARITY_PROJECT_ID=${CLARITY_PROJECT_ID:-}
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8068}
     ports:
       - "8067:3000"

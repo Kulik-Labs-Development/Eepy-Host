@@ -25,6 +25,12 @@ const bodyFont = Nunito({
   display: 'swap',
 });
 
+// Analytics ids are read from the container environment at request time
+// (force-dynamic: next start re-renders the layout per request, so a value
+// added to the stack env takes effect on container start - no image rebuild).
+// Empty = no analytics tags.
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: 'Eepy Host',
   description: 'Cozy retro hosting for MCP servers',
@@ -38,8 +44,8 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const gaMeasurementId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID || '';
-  const clarityProjectId = process.env.NEXT_PUBLIC_CLARITY_ID || '';
+  const gaMeasurementId = process.env.GA_MEASUREMENT_ID || '';
+  const clarityProjectId = process.env.CLARITY_PROJECT_ID || '';
 
   return (
     <html lang="en" className={`${pixelFont.variable} ${consoleFont.variable} ${bodyFont.variable}`}>

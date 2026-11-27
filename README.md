@@ -271,25 +271,23 @@ The backend creates missing tables on startup and seeds the approved template re
 | `EEPY_MCP_SIDECAR_MEM_LIMIT` | Memory cap for sidecar containers (docker `mem_limit` syntax, e.g. `512m`). Off by default: hosts whose cgroup tree lacks the memory controller refuse to start limit-bearing containers - enable it on hosts that can enforce limits. |
 | `EEPY_MCP_SIDECAR_CPU_LIMIT` | CPU cap for sidecar containers, in cores (e.g. `1.0`). Off by default, same host caveat as `EEPY_MCP_SIDECAR_MEM_LIMIT`. |
 | `NEXT_PUBLIC_API_URL` | Backend base URL used by the frontend |
-| `NEXT_PUBLIC_GA_MEASUREMENT_ID` | GA4 measurement id (`G-...`), baked into the frontend image at build time (CI: `GA_MEASUREMENT_ID` repo secret). Empty = no Google Analytics tag. |
-| `NEXT_PUBLIC_CLARITY_ID` | Microsoft Clarity project id, baked in at build time (CI: `CLARITY_PROJECT_ID` repo secret). Empty = no Clarity tag. Both are public identifiers — they end up in the page source. |
+| `GA_MEASUREMENT_ID` | GA4 measurement id (`G-...`), read by the frontend at runtime from the container environment. Empty = no Google Analytics tag. |
+| `CLARITY_PROJECT_ID` | Microsoft Clarity project id, read by the frontend at runtime from the container environment. Empty = no Clarity tag. Both are public identifiers — they end up in the page source. |
 
 See [deploy/stack.env.example](deploy/stack.env.example) for the full reference.
 
 ### Platform monitoring (GA4 + Clarity) — native, optional
 
 The frontend ships native support for **Google Analytics 4** and
-**Microsoft Clarity** behind two build-time identifiers
-(`NEXT_PUBLIC_GA_MEASUREMENT_ID` / `NEXT_PUBLIC_CLARITY_ID` — the frontend is
-fully static, so the ids are baked into the client bundle at image build
-time; the CSP already allows the googletagmanager + Clarity origins):
+**Microsoft Clarity** behind two runtime identifiers
+(`GA_MEASUREMENT_ID` / `CLARITY_PROJECT_ID` — read from the frontend
+container's environment at request time; the CSP already allows the
+googletagmanager + Clarity origins):
 
-- **CI deploys:** set the `GA_MEASUREMENT_ID` / `CLARITY_PROJECT_ID` repo
-  secrets and the published GHCR frontend image carries them — a Build & Push
-  rerun bakes in new ids without a code change.
-- **Self-hosted builds:** pass the two build args (wired up in
-  [`deploy/docker-compose.yml`](deploy/docker-compose.yml) as
-  `${GA_MEASUREMENT_ID:-}` / `${CLARITY_PROJECT_ID:-}`).
+- **Deploys:** set the `GA_MEASUREMENT_ID` / `CLARITY_PROJECT_ID` values in
+  the stack environment ([`deploy/docker-compose.yml`](deploy/docker-compose.yml)
+  passes them to the frontend container). Changing a value needs no image
+  rebuild — restart the frontend container and the new tags are served.
 - **Unset/empty = zero tags** — nothing loads, nothing is sent.
 
 ### Testing & CI

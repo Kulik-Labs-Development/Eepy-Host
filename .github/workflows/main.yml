@@ -191,9 +191,6 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./frontend
-          build-args: |
-            NEXT_PUBLIC_GA_MEASUREMENT_ID=${{ secrets.GA_MEASUREMENT_ID }}
-            NEXT_PUBLIC_CLARITY_ID=${{ secrets.CLARITY_PROJECT_ID }}
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:latest
           labels: ${{ steps.meta.outputs.labels }}
