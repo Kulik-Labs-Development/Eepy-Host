@@ -53,17 +53,18 @@ WORKDIR /app
 RUN npm install -g pnpm@10.14.0
 
 # Copy package manifests
-COPY integrations/ebay-mcp/package.json integrations/ebay-mcp/pnpm-lock.yaml ./
+COPY --chown=node:node integrations/ebay-mcp/package.json integrations/ebay-mcp/pnpm-lock.yaml ./
 
 # Install only production dependencies (ignore lifecycle scripts)
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts
+RUN chown -R node:node /app
 
 # Copy built application and runtime assets from builder
-COPY --from=builder /app/build ./build
+COPY --chown=node:node --from=builder /app/build ./build
 # Icon assets (used by stdio and served by the HTTP transport at /icons);
 # upstream v2.0.x moved public/ -> assets/ and ships no runtime docs/
 # (mirrors the upstream Dockerfile's copy set)
-COPY --from=builder /app/assets ./assets
+COPY --chown=node:node --from=builder /app/assets ./assets
 
 # Eepy sidecar transport config (see header). MCP_HOST must be set explicitly:
 # upstream binds localhost when PORT is unset, which the docker port mapping
@@ -72,6 +73,10 @@ ENV OAUTH_ENABLED=false
 ENV MCP_HOST=0.0.0.0
 ENV MCP_PORT=3000
 
+# Non-root runtime: the sidecar carries the user's decrypted credentials in
+# its process env; if it ever breaks out of the container it should not
+# start with root context (node:24-alpine ships the 'node' user).
+USER node
 EXPOSE 3000
 
 # HTTP transport entrypoint for container deploys

@@ -49,13 +49,14 @@ FROM node:26-alpine
 WORKDIR /app
 
 # Copy package manifests
-COPY integrations/spotify-mcp/package.json integrations/spotify-mcp/package-lock.json ./
+COPY --chown=node:node integrations/spotify-mcp/package.json integrations/spotify-mcp/package-lock.json ./
 
 # Install only production dependencies
 RUN npm ci --omit=dev --no-audit --no-fund
+RUN chown -R node:node /app
 
 # Copy built application from the builder
-COPY --from=builder /app/build ./build
+COPY --chown=node:node --from=builder /app/build ./build
 
 # Eepy sidecar transport config (see header): HTTP transport on :3000 at
 # /mcp. MCP_TRANSPORT=http switches the stdio default over to HTTP
@@ -66,6 +67,11 @@ ENV MCP_TRANSPORT=http
 ENV MCP_HTTP_HOST=0.0.0.0
 ENV MCP_HTTP_PORT=3000
 
+# Non-root runtime: the sidecar carries the user's decrypted credentials in
+# its process env; if it ever breaks out of the container it should not
+# start with root context (node:26-alpine ships the 'node' user). The
+# chown above covers the ENTRYPOINT's spotify-config.json write into /app.
+USER node
 EXPOSE 3000
 
 # Materialize spotify-config.json from the sidecar env (the upstream's

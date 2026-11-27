@@ -36,4 +36,11 @@ ENV PORT=8000
 
 EXPOSE 8000
 
+# Non-root runtime: the sidecar carries the user's decrypted credentials in
+# its process env; if it ever breaks out of the container it should not
+# start with root context.
+RUN useradd -m -u 10001 mcp
+RUN chown -R mcp:mcp /app
+USER mcp
+
 CMD ["python", "happyfox_mcp.py"]
