@@ -267,7 +267,10 @@ class TestAdminUserDeletion:
     def test_deletes_mcp_tenancy_rows(self, client, delete_sweeper_token):
         from database import SessionLocal, User
         from models.mcp_models import (
-            MCPSidecar, MCPTemplateRequest, MCPUserToolKey, UserMCPConfig,
+            MCPSidecar,
+            MCPTemplateRequest,
+            MCPUserToolKey,
+            UserMCPConfig,
         )
         from utils.crypto import encrypt_secret
 

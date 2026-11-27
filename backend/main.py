@@ -2672,7 +2672,10 @@ def delete_user_by_admin(user_id: int, superuser: User = Depends(get_superuser),
         # process env - tear them down before the config rows go, same
         # standard as the per-config delete route (api/mcp_endpoints.py:681).
         from models.mcp_models import (
-            MCPSidecar, MCPTemplateRequest, MCPUserToolKey, UserMCPConfig,
+            MCPSidecar,
+            MCPTemplateRequest,
+            MCPUserToolKey,
+            UserMCPConfig,
         )
         for cfg in db.query(UserMCPConfig).filter(UserMCPConfig.owner_id == target_user.id).all():
             mcp_bridge.kill_instances_for_user(target_user.id, cfg.template_name)
