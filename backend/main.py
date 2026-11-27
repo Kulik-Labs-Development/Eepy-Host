@@ -2394,7 +2394,9 @@ def health():
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return {"status": "unhealthy", "database": "disconnected", "error": str(e)}
+        # Fixed error string: the DB error embeds host/port/db/user and the
+        # route is unauthenticated (the detail stays in the log line above).
+        return {"status": "unhealthy", "database": "disconnected"}
 
 @app.post("/auth/signup")
 @limiter.limit("5/hour")
