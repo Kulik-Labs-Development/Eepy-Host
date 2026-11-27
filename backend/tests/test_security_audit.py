@@ -230,3 +230,77 @@ def test_userlogin_username_bounded():
 
     m = UserLogin(username="a" * 255, password="whatever-123")
     assert m.username == "a" * 255
+
+# ---------------------------------------------------------------------------
+# S-02 admin user deletion: the account's MCP tenancy must be cleaned up
+# explicitly. Before the fix the users FKs had no ON DELETE CASCADE: on
+# Postgres any user who ever connected an integration was undeletable
+# (IntegrityError -> 500), and on SQLite the config rows (with their
+# encrypted credentials) were orphaned while the user vanished. The route
+# must also tear down the user's live sidecars, which carry the user's
+# DECRYPTED credentials in their process env.
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def delete_sweeper_token(client):
+    """A fresh superuser account for the deletion tests (same shape as
+    test_system_settings.superuser_token)."""
+    from database import SessionLocal, User, UserRole
+
+    username = f"sweepdeladmin{random.randint(10000, 99999)}"
+    r = client.post("/auth/signup", json={
+        "username": username, "email": f"{username}@example.com", "password": "sweep-password-1"})
+    assert r.status_code == 200, r.text
+    r = client.post("/auth/login", json={"username": username, "password": "sweep-password-1"})
+    assert r.status_code == 200, r.text
+    token = r.json()["access_token"]
+    db = SessionLocal()
+    try:
+        u = db.query(User).filter(User.username == username).first()
+        u.role = UserRole.SUPERUSER
+        db.commit()
+    finally:
+        db.close()
+    return token
+
+
+class TestAdminUserDeletion:
+    def test_deletes_mcp_tenancy_rows(self, client, delete_sweeper_token):
+        from database import SessionLocal, User
+        from models.mcp_models import (
+            MCPSidecar, MCPTemplateRequest, MCPUserToolKey, UserMCPConfig,
+        )
+        from utils.crypto import encrypt_secret
+
+        username = f"sweepdelvictim{random.randint(10000, 99999)}"
+        r = client.post("/auth/signup", json={
+            "username": username, "email": f"{username}@example.com",
+            "password": "sweep-password-1"})
+        assert r.status_code == 200, r.text
+        db = SessionLocal()
+        try:
+            victim = db.query(User).filter(User.username == username).first()
+            uid = victim.id
+            db.add(UserMCPConfig(owner_id=uid, template_name="sweepdel-tmpl",
+                                 credentials_json=encrypt_secret("sweep-del-creds")))
+            db.add(MCPUserToolKey(owner_id=uid, key_hash="a" * 64, key_prefix="aabbccdd"))
+            db.add(MCPSidecar(key=f"{uid}|sweepdel-tmpl|" + "0" * 64,
+                              owner_id=uid, template_id="sweepdel-tmpl", kind="docker"))
+            db.add(MCPTemplateRequest(requester_id=uid, requested_name="sweepdel-tmpl",
+                                      description_purpose="sweep test row"))
+            db.commit()
+        finally:
+            db.close()
+
+        r = client.delete(f"/superuser/users/{uid}",
+                          headers={"Authorization": f"Bearer {delete_sweeper_token}"})
+        assert r.status_code == 200, r.text
+
+        db = SessionLocal()
+        try:
+            assert db.query(User).filter(User.id == uid).first() is None
+            assert db.query(UserMCPConfig).filter(UserMCPConfig.owner_id == uid).count() == 0
+            assert db.query(MCPUserToolKey).filter(MCPUserToolKey.owner_id == uid).count() == 0
+            assert db.query(MCPSidecar).filter(MCPSidecar.owner_id == uid).count() == 0
+            assert db.query(MCPTemplateRequest).filter(MCPTemplateRequest.requester_id == uid).count() == 0
+        finally:
+            db.close()

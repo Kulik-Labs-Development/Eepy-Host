@@ -58,7 +58,7 @@ class UserMCPConfig(Base):
     __tablename__ = 'user_mcp_configs'
 
     id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey('users.id'), nullable=False)  # Reference to User table
+    owner_id = Column(Integer, ForeignKey('users.id', ondelete="CASCADE"), nullable=False)  # Reference to User table
 
     template_name = Column(String, nullable=False)  # e.g., "happyfox", "gcal" etc. (FK reference as string for flexibility)
 
@@ -99,7 +99,7 @@ class MCPUserToolKey(Base):
     __tablename__ = 'mcp_user_tool_keys'
 
     id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    owner_id = Column(Integer, ForeignKey('users.id', ondelete="CASCADE"), nullable=False)
 
     name = Column(String, nullable=False, default='Open WebUI')  # Label shown in the Eepy UI
 
@@ -127,7 +127,7 @@ class MCPSidecar(Base):
     __tablename__ = 'mcp_sidecars'
 
     key = Column(String, primary_key=True)  # bridge key: user|template|sha256(creds)
-    owner_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    owner_id = Column(Integer, ForeignKey('users.id', ondelete="CASCADE"), nullable=False)
     template_id = Column(String, nullable=False)
     kind = Column(String, nullable=False)  # "docker" (only tracked kind today)
     container_id = Column(String, nullable=True)
@@ -144,7 +144,7 @@ class MCPTemplateRequest(Base):
     __tablename__ = 'mcp_template_requests'
 
     id = Column(Integer, primary_key=True, index=True)
-    requester_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    requester_id = Column(Integer, ForeignKey('users.id', ondelete="CASCADE"), nullable=False)
 
     requested_name = Column(String, nullable=False)
     description_purpose = Column(Text, nullable=False)

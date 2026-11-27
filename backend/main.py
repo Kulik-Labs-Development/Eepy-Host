@@ -117,6 +117,28 @@ def sync_database_schema():
                 logger.info("Adding missing column key_encrypted to mcp_user_tool_keys table...")
                 conn.execute(text("ALTER TABLE mcp_user_tool_keys ADD COLUMN key_encrypted TEXT"))
 
+            # FK cascade roll-forward: the models now declare ON DELETE CASCADE
+            # on the users FKs, but tables created before that declaration
+            # still carry the original NO ACTION FK (live-verified on the ep20
+            # prod DB 2026-11-27: confdeltype 'a' on all four). Without this,
+            # a user who ever connected an integration is undeletable through
+            # the admin API (IntegrityError -> 500).
+            for _table, _conname, _col in (
+                ("user_mcp_configs", "user_mcp_configs_owner_id_fkey", "owner_id"),
+                ("mcp_user_tool_keys", "mcp_user_tool_keys_owner_id_fkey", "owner_id"),
+                ("mcp_sidecars", "mcp_sidecars_owner_id_fkey", "owner_id"),
+                ("mcp_template_requests", "mcp_template_requests_requester_id_fkey", "requester_id"),
+            ):
+                _fk = conn.execute(text(
+                    "SELECT confdeltype FROM pg_constraint WHERE conname = :n"
+                ), {"n": _conname}).fetchone()
+                if _fk is None:
+                    continue  # table not created yet
+                if _fk[0] != "c":
+                    logger.info(f"Rolling {_table}.{_conname} forward to ON DELETE CASCADE...")
+                    conn.execute(text(f"ALTER TABLE {_table} DROP CONSTRAINT {_conname}"))
+                    conn.execute(text(f"ALTER TABLE {_table} ADD CONSTRAINT {_conname} "
+                                      f"FOREIGN KEY ({_col}) REFERENCES users (id) ON DELETE CASCADE"))
             conn.commit()
             logger.info("Database columns synchronized.")
     except Exception as e:
@@ -2632,9 +2654,30 @@ def delete_user_by_admin(user_id: int, superuser: User = Depends(get_superuser),
         raise HTTPException(status_code=404, detail="User not found")
     if target_user.id == superuser.id:
         raise HTTPException(status_code=400, detail="You cannot delete your own superuser account")
-    db.delete(target_user)
-    db.commit()
-    return {"message": f"User {target_user.username} has been removed from the system"}
+    username = target_user.username
+    try:
+        # The user's live sidecars carry their DECRYPTED credentials in the
+        # process env - tear them down before the config rows go, same
+        # standard as the per-config delete route (api/mcp_endpoints.py:681).
+        from models.mcp_models import (
+            MCPSidecar, MCPTemplateRequest, MCPUserToolKey, UserMCPConfig,
+        )
+        for cfg in db.query(UserMCPConfig).filter(UserMCPConfig.owner_id == target_user.id).all():
+            mcp_bridge.kill_instances_for_user(target_user.id, cfg.template_name)
+        db.query(MCPTemplateRequest).filter(MCPTemplateRequest.requester_id == target_user.id).delete(synchronize_session=False)
+        db.query(MCPSidecar).filter(MCPSidecar.owner_id == target_user.id).delete(synchronize_session=False)
+        db.query(MCPUserToolKey).filter(MCPUserToolKey.owner_id == target_user.id).delete(synchronize_session=False)
+        db.query(UserMCPConfig).filter(UserMCPConfig.owner_id == target_user.id).delete(synchronize_session=False)
+        db.delete(target_user)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        logger.exception(f"User deletion failed for user {user_id}")
+        raise HTTPException(status_code=500, detail="User deletion failed during integration cleanup; the account was not deleted.") from None
+    return {"message": f"User {username} has been removed from the system"}
 
 class AdminUserUpdateIn(BaseModel):
     full_name: str | None = None
