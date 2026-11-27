@@ -1078,7 +1078,7 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   (a plain clone leaves the submodule dir empty until
   `git submodule update --init`).
 - **Two CI workflows, both on push to main:** `CI` (ruff+pytest, eslint+tsc —
-  no image builds) and   `Build and Push to GHCR`, which builds **twelve**
+  no image builds) and   `Build and Push to GHCR`, which builds **thirteen**
   images: `eepy-host-backend`, `eepy-host-frontend`, `eepy-host-happyfox`
   (sidecar, built from the submodule via `integrations/Dockerfile.happyfox`),
   `eepy-host-ebay` (sidecar, via `integrations/Dockerfile.ebay`),
@@ -1095,6 +1095,8 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
   from the sidecar env at container start)
   and `eepy-host-ghost` (sidecar, via `integrations/Dockerfile.ghost` — built
   from the integrations/ghost-blog-mcp submodule)
+  and `eepy-host-b2` (sidecar, via `integrations/Dockerfile.b2` — built from
+  the integrations/b2-mcp submodule)
   — all sidecars built with the repo root as build context. So every push to
   main refreshes all deployed images.
   - **Seed roll-forward:** `seed_mcp_templates()` in `main.py` updates the
@@ -1144,7 +1146,7 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
     (check the daemon line above / the Debug Log console).
   -    **Verify the docker sidecar path (production):** the dev machine has
      Docker, so the full compose stack CAN be exercised locally (build the
-     twelve app+sidecar images with the GHCR tags, `docker compose --env-file
+     thirteen app+sidecar images with the GHCR tags, `docker compose --env-file
     stack.env up -d`). After a deploy: hit the dashboard's connection test,
    then a real proxy tool call, and confirm in the backend logs (or the
    Debug Log console) that `mcp-bridge: started sidecar container ...
