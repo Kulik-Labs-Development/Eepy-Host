@@ -551,6 +551,19 @@ source of truth.
   client-supplied role at signup, SHA-256-hashed tool keys with a strict
   route-scope check, Fernet-at-rest credentials decrypted only in memory,
   minimal sidecar env allowlist, secret redaction in sidecar diagnostics.
+- **Initial superuser via `SUPERUSER_USERNAME` (kept by decision,
+  documented 2026-11-27):** the only promotion path that does not go
+  through an existing superuser's admin endpoints. The env var is set by
+  the operator in `stack.env` only (clients can never supply a role:
+  `UserCreate` has no role field, every account starts as USER) and names
+  ONE username; a matching account (case-insensitive) is promoted at boot
+  and, if it was created after the last boot, at its next login. Unset =
+  the path is inert. Accepted residual risk: anyone who signs up with that
+  exact username becomes superuser at login, so treat the value like a
+  credential — use a non-guessable name, and if it is ever compromised,
+  demote the account via `PATCH /superuser/users/{user_id}/role` and
+  change the env value. (Pre-launch sweep decision item "keep or
+  document" — Max, 2026-11-27: keep, documented here.)
 - **Known open trade-offs** (pre-launch, see also the sidecar security note
   above): sidecar images deploy as `:latest` (digest-pin before trusting
   community repos); sidecar egress is unrestricted (egress proxy/allowlist
@@ -1212,6 +1225,7 @@ proxies each `tools/call` to `POST /api/mcp/proxy/{template}/{tool}`):
    at boot AND on its next login (idempotent) — the login hook covers the case
    where the account is only created after the first boot. A missing
    superuser is why the Debug Log console 403s (it is superuser-only).
+   Security model + keep decision: see Security posture.
  - **Redeploys and data persistence (read before touching Portainer or
    Arcane):** users, saved credentials, and tool keys live ONLY in the
    `postgres_data` volume (Portainer: `<stackname>_postgres_data`; Arcane:
