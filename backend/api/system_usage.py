@@ -213,12 +213,16 @@ def _resolve_environment(environments: list[dict], wanted: str | None) -> tuple[
     return int(environments[0]["id"]), environments[0]
 
 
-def fetch_usage(db: Session, user, owner_id: int | None = None) -> dict:
+def fetch_usage(db: Session, user, owner_id: int | None = None,
+                user_view: bool = False) -> dict:
     """The /superuser/system-usage payload (see the module docstring).
 
     owner_id (per-user view): restrict the sidecar section to that user's
-    ledger rows. The platform section is computed either way (see
-    fetch_user_sidecars for the ceiling)."""
+    ledger rows. user_view: on top of owner_id - skip the platform
+    containers' stats sampling and leave the admin's environment
+    id/name out of the response (a regular user's poll must not pay for
+    the whole stack's one-shot /stats calls, and the environment metadata
+    is admin-only)."""
     cfg = _resolve_config(db, user.id)
     # Stored data source, dialed by the backend itself: enforce the same
     # range policy as the write path (a URL stored before the guard landed
@@ -379,6 +383,10 @@ def fetch_usage(db: Session, user, owner_id: int | None = None) -> dict:
     platform, live_sidecars = classify_containers(containers, set(sidecar_meta))
     live_ids = {c["id"] for c in containers if c["state"] == "running"}
     targets = [c for c in platform + live_sidecars if c["id"] in live_ids]
+    if user_view:
+        # Per-user view: no platform stats sampling (a regular user's poll
+        # must not pay for the whole stack's one-shot /stats calls).
+        targets = [c for c in live_sidecars if c["id"] in live_ids]
 
     if cfg["backend"] == "portainer":
         def one_sample(cid: str) -> tuple[str, dict | None]:
@@ -445,14 +453,19 @@ def fetch_usage(db: Session, user, owner_id: int | None = None) -> dict:
                 "last_used_at": meta["last_used_at"], "expires_at": None,
             })
 
-    return {
+    out = {
         "generated_at": time.time(),
         "sidecar_idle_timeout": IDLE_TIMEOUT_S,
-        "environment": env,
-        "environments": environments,
         "platform": [row(c) for c in platform],
         "sidecars": sidecar_rows_out,
     }
+    if not user_view:
+        # The admin's environment id/name is admin metadata: it never rides
+        # in a regular user's response (the frontend renders the environment
+        # chip as optional - page.tsx:324 already optional-chains it).
+        out["environment"] = env
+        out["environments"] = environments
+    return out
 
 
 
@@ -465,10 +478,10 @@ def fetch_user_sidecars(db: Session, user) -> dict:
     caller's) - so a regular user sees nobody else's sidecars and no
     platform stats at all.
 
-    ponytail: ceiling - reuses fetch_usage with the owner filter, so the
-    platform containers' stats get sampled too (wasted, but bounded by the
-    stack's own container count; push the filter into the container list if
-    the sidecar fleet grows)."""
+    ponytail: the user view still dials the platform data source (the
+    container list is what scopes their rows) but skips the platform stats
+    sampling (fetch_usage user_view), and the admin's environment id/name
+    never rides in the user's response."""
     from database import User as _User
     from database import UserRole as _UserRole
 
@@ -479,11 +492,20 @@ def fetch_user_sidecars(db: Session, user) -> dict:
             detail={"error": "not_configured",
                     "detail": "No platform data source is configured yet."},
         )
-    out = fetch_usage(db, superuser, owner_id=user.id)
+    try:
+        out = fetch_usage(db, superuser, owner_id=user.id, user_view=True)
+    except HTTPException as exc:
+        # The admin data source is broken: the user gets a generic 502,
+        # never the admin connection's error text (400s pass through -
+        # they carry the structured not_configured detail the page handles).
+        if exc.status_code == 400:
+            raise
+        raise HTTPException(
+            status_code=502, detail="The platform data source is currently unreachable."
+        ) from exc
     return {
         "generated_at": out["generated_at"],
         "sidecar_idle_timeout": out["sidecar_idle_timeout"],
-        "environment": out["environment"],
         "sidecars": out["sidecars"],
     }
 
