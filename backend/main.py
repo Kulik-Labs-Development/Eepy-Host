@@ -1494,12 +1494,12 @@ def seed_mcp_templates():
         enabled_global=True,
     )
 
-    # Backblaze B2 (official upstream image - no submodule, no fork):
-    # the sidecar IS the pinned official ghcr.io/backblaze-labs/b2-mcp
-    # release, re-tagged by integrations/Dockerfile.b2 (zero build steps -
-    # CI re-tags the official image under the standard eepy-host-<name>
-    # naming). The published image defaults to the HTTP transport: a single
-    # /mcp endpoint on :3000, config from env only.
+    # Backblaze B2 (official upstream code, pinned via the
+    # integrations/b2-mcp submodule - no fork): the image is built FROM
+    # THAT SUBMODULE by integrations/Dockerfile.b2 (repo-root build
+    # context, CI checks submodules out recursively), so a submodule bump
+    # is the only version lever. The image defaults to the HTTP transport:
+    # a single /mcp endpoint on :3000, config from env only.
     # B2_HTTP_CREDENTIAL_MODE=server = the user's application key rides the
     # sidecar env at spawn (env_mapping), never the wire. The policy env
     # pins the official hardened defaults: destructive ops blocked, secret
@@ -1568,9 +1568,16 @@ def seed_mcp_templates():
         runtime="mcp-server",
         runtime_config={
             "image": "ghcr.io/kulik-labs-development/eepy-host-b2:latest",
-            # Local dev (subprocess backend): run the pinned official npm
-            # package over stdio (there is no in-repo code for this one).
-            "command": ["npx", "-y", "@backblaze-labs/b2-mcp@0.2.2"],
+            # Local dev (subprocess backend): run the PINNED SUBMODULE
+            # build over stdio - a submodule bump changes local dev the
+            # same way it changes the image (the old npx -y
+            # @backblaze-labs/b2-mcp@0.2.2 pin kept running the npm
+            # registry version after a bump, silently decoupling local dev
+            # from the pin). One-time local build:
+            #   pnpm -C integrations/b2-mcp install --frozen-lockfile
+            #   pnpm -C integrations/b2-mcp build
+            "cwd": "integrations/b2-mcp",
+            "command": ["node", "./dist/index.js"],
             "env": {
                 "PORT": "3000",
                 "B2_HTTP_CREDENTIAL_MODE": "server",
