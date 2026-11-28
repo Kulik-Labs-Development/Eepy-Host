@@ -584,6 +584,20 @@ The integration's MCP server is published as a container image (or a local
 do not read, vendor, or maintain its tool code. Tool schemas are captured at
 admin-discovery time from the upstream server's own `tools/list`.
 
+**Before step 1 — bring in the upstream code (every sidecar, no exceptions;
+these are the items that get skipped):**
+   - `git submodule add <upstream repo> integrations/<name>-mcp`, then
+     immediately check out an EXPLICIT tag or commit. The gitlink stays
+     version-pinned for the life of the integration: upstream feature updates
+     then land as deliberate manual update passes (see Maintenance below),
+     never a silent ride on a branch tip.
+   - `integrations/Dockerfile.<name>` + its GHCR build job in
+     `.github/workflows/main.yml` (same shape as the other sidecars — the
+     image count in Current State includes it).
+   - The service's ACTUAL logo (the real brand mark, not a placeholder) in
+     `frontend/public/app-icons/` + the template id → file entry in
+     `frontend/lib/mcp.ts`. The library card renders that icon.
+
 1. **Register the template** — add an `MCPTemplate` row (seed in `main.py`
    like HappyFox, or via the superuser runtime endpoint) with:
    - `runtime = "mcp-server"`
@@ -667,7 +681,9 @@ admin-discovery time from the upstream server's own `tools/list`.
 submodule under `integrations/` — update its ref
 (`cd integrations/happyfox-mcp && git fetch && git checkout <new-commit>`
 then `git add integrations/happyfox-mcp`), push, and CI rebuilds the sidecar
-image from that exact commit. Re-run discovery. No Eepy backend code changes
+image from that exact commit. Re-run discovery. Keep the gitlink on an
+explicit tag or commit at all times — a floating branch ref defeats the
+pinning. No Eepy backend code changes
 — that is the whole point of the modular path.
 
 ### B. Legacy/reference: `runtime=native` (hardcoded, only for HappyFox today)
