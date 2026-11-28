@@ -5,6 +5,30 @@
 > are archived references only — where they disagree with this file or the code,
 > the code wins.
 
+## Keeping AGENTS.md Current
+
+This file is the onboarding contract for every agent that works in this
+repo, and it rots fast. Agents MUST update AGENTS.md in the same commit as
+any major change to the project — a doc that misleads a future agent is
+worse than no doc.
+
+"Major change" = anything a future agent needs to know to work correctly:
+
+- New or removed integrations, sidecars, CI images, or templates →
+  `Current State` (the per-template bullets, the image list in
+  `Operational Notes`, the Repository Layout tree).
+- Changes to the API surface, auth, roles, or deployment → the matching
+  section (`MCP API Surface`, `Security posture`, `Key Architecture
+  Decisions`, `Operational Notes`).
+- New conventions, gotchas, or hard-learned rules → `Critical Developer
+  Nuances` / `Code Style Guidelines`.
+- Changes to how integrations are added, updated, or maintained → the
+  `Adding a New Integration (runbook)` section.
+
+The test: an agent that picks up the project tomorrow and follows
+AGENTS.md as written must not be misled by your change. If the doc would
+mislead, the change is not done until the doc is updated with it.
+
 ## Project Overview
 
 Eepy Host (https://github.com/Kulik-Labs-Development/Eepy-Host) is a managed
