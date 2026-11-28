@@ -1380,15 +1380,19 @@ def seed_mcp_templates():
     )
 
     # Ghost blog (Template #14): the modular pattern. Single-file
-    # Python/FastMCP upstream (19 tools: posts, pages, tags, authors).
+    # Python/FastMCP upstream (44 tools: posts, pages, tags, authors +
+    # the admin-only groups newsletters/tiers/offers/members/webhooks,
+    # plus 2 MCP prompts).
     ghost = MCPTemplate(
         id="ghost",
         name="Ghost Blog",
         repo_url="https://github.com/Glitch3dPenguin/ghost-blog-mcp",
         description=(
-            "Manage a Ghost blog across 19 tools: posts and pages "
+            "Manage a Ghost blog across 44 tools: posts and pages "
             "(list, read, create, update, delete, content with lexical or "
-            "html, publish/schedule status), tags, and authors. Runs "
+            "html, publish/schedule status), tags, authors, newsletters, "
+            "membership tiers, offers, members, and webhooks, plus two MCP "
+            "prompts (summarize_post, newsletter_draft). Runs "
             "against YOUR Ghost site with your own Admin API key — the "
             "module signs the Ghost 6 admin JWT itself, so the key is the "
             "only secret a user supplies (credentials stay encrypted at "
@@ -1421,7 +1425,7 @@ def seed_mcp_templates():
                 },
                 "GHOST_ALLOW_DELETE": {
                     "type": "boolean",
-                    "label": "Allow deleting posts and pages",
+                    "label": "Allow deleting content",
                     "help": "Optional. The module refuses its delete tools by default (destructive operations need an explicit opt-in). Check this to let the connection delete; create, update, and publish work either way.",
                     "required": False,
                 },
@@ -1477,7 +1481,7 @@ def seed_mcp_templates():
             # Read-only probe for POST /config/{id}/test: reports admin
             # mode + the Ghost version, so a bad key or URL fails loudly.
             "test_tool": {"name": "check_connection", "arguments": {}},
-            # The full tool set (19 tools at submodule bc6f04a, verified
+            # The full tool set (44 tools at submodule e76dbd3, verified
             # from the submodule source). Admin discovery overwrites this
             # with the authoritative tools/list.
             "tool_names": [
@@ -1485,9 +1489,19 @@ def seed_mcp_templates():
                 "list_posts", "get_post", "get_post_content",
                 "list_pages", "get_page", "get_page_content",
                 "list_tags", "list_authors",
+                "list_newsletters", "get_newsletter",
+                "list_tiers", "get_tier",
+                "list_offers", "get_offer",
+                "list_members", "get_member",
+                "list_webhooks", "get_webhook",
                 "create_post", "update_post", "set_post_status", "delete_post",
                 "create_page", "update_page", "delete_page",
                 "create_tag", "update_tag", "delete_tag",
+                "create_newsletter", "update_newsletter", "delete_newsletter",
+                "create_tier", "update_tier", "delete_tier",
+                "create_offer", "update_offer", "delete_offer",
+                "create_member", "update_member", "delete_member",
+                "create_webhook", "update_webhook", "delete_webhook",
             ],
         },
         approved_by_admin=True,

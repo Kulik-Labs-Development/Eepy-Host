@@ -294,8 +294,10 @@ docker container in production), short-lived and idle-reaped.
  - Ghost Blog is Template #14, same modular pattern from the
   `integrations/ghost-blog-mcp` git submodule (github.com/Glitch3dPenguin/
   ghost-blog-mcp — the Kulik Labs project this gateway hosts: a single-file
-  Python/FastMCP server, 19 tools over the Ghost content/admin APIs: posts,
-  pages, tags, authors). Bearer-gate class (BookStack/Proxmox/TRMM):
+  Python/FastMCP server, 44 tools over the Ghost content/admin APIs: posts,
+  pages, tags, authors, plus the admin-only groups newsletters, tiers,
+  offers, members, webhooks (no Content API surface — content-key mode
+  returns the GHOST_ADMIN_KEY config error) + 2 MCP prompts). Bearer-gate class (BookStack/Proxmox/TRMM):
   streamable-HTTP on :8000 at / (the module's `streamable_http_path="/"`),
   and the module REFUSES to start on a non-loopback bind without
   `MCP_AUTH_TOKEN` (fail-closed — it fronts a Ghost admin key), so the seed
@@ -303,7 +305,7 @@ docker container in production), short-lived and idle-reaped.
   `Authorization` header exactly like them. User credentials ride env at
   spawn (`GHOST_URL` + `GHOST_ADMIN_KEY`, optional `GHOST_CONTENT_KEY`
   read-only mode, optional `GHOST_ALLOW_DELETE` — the wizard's "Allow
-  deleting posts and pages" checkbox; rides env as the string
+  deleting content" checkbox; rides env as the string
   `true`/`false` and lifts the module's destructive-op gate, off unless
   checked); the module signs the Ghost 6 admin JWT itself (the key
   is ID:HEXSECRET — HS256, kid/aud/exp-300s), so no per-request header
