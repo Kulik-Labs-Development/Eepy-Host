@@ -393,27 +393,27 @@ Security vulnerabilities should be reported privately — see [SECURITY.md](SECU
 
 ## Adding a New Integration
 
-Two runtimes exist — prefer `mcp-server` (the modular path; no per-integration
-code in this repo):
+Adding an integration is maintainer work, not end-user work. The full
+step-by-step runbook — upstream submodule pinned to an explicit tag or
+commit, the sidecar Dockerfile and its CI build job, the real service
+logo, template registration, admin discovery — lives in
+[AGENTS.md](AGENTS.md) under "Adding a New Integration (runbook)". End
+users never add integrations: they connect the ones the admin has
+approved through the dashboard wizard, and the deploy docs above are all
+an end user needs.
 
-1. **`runtime=mcp-server` (recommended)** — bring the integration's MCP server repo into `integrations/` as a git submodule, add a `Dockerfile.<name>` next to it (build context = repo root) plus a build step in `.github/workflows/main.yml`, and register an `MCPTemplate` with its `runtime_config` (image, `env_mapping` of user credential fields → upstream env vars, `test_tool`) and its `config_schema`. Approve it (`approved_by_admin=True`, `enabled_global=True`), then as superuser connect it once and call `POST /superuser/mcp/templates/{id}/discover` to capture the upstream's real tool schemas. **Updating the integration later = update the submodule ref and push** — CI rebuilds the sidecar image from exactly that commit; re-run discovery after the bump.
-2. **`runtime=native` (legacy/reference)** — add the template's tool map to
-   `TEMPLATE_REGISTRY` in `backend/api/mcp_endpoints.py`. Only HappyFox uses
-   this path today (kept for rollback).
-
-Either way, the connect wizard renders from `config_schema`, and because the
-OpenAPI export is unified, the new tools appear in every user's existing Open
-WebUI connection automatically — no re-import.
+Because the OpenAPI export is unified, new integrations appear in every
+existing Open WebUI connection automatically — no re-import, no second
+connection.
 
 ## Development Notes
 
-A few hard-learned conventions for this codebase:
-
-- **Absolute imports in the backend.** `backend/main.py` runs as a top-level module under Uvicorn, so relative imports (`from .models…`) fail with `ImportError`. Always import absolutely (`from models…`, `from api…`).
-- **Never log credential values.** Handlers may log *which* template was connected or which tool ran — never the credential fields themselves.
-- **Backend is the source of truth.** Frontend role checks are UX sugar; every protected endpoint enforces JWT + role server-side.
-- **JSX edits.** When generating `.tsx` programmatically, verify the file compiles after the write — escaping artifacts break the Next.js build immediately.
-- **Follow the design language.** The frontend is a 16-bit "Retro Cozy" pixel UI (warm night palette, chunky 2px borders, hard pixel shadows, stepped animations). Build from the existing tokens and component classes in `frontend/tailwind.config.js` + `frontend/app/globals.css` — see [Design Language](#design-language).
+Development conventions for this codebase — absolute imports, never log
+credential values, backend as the source of truth, JSX compile checks,
+the Retro Cozy design language — are codified in [AGENTS.md](AGENTS.md)
+under "Critical Developer Nuances" and "Code Style Guidelines". Agents
+working in this repo read AGENTS.md first; it is the source of truth for
+how changes are made.
 
 ## Roadmap
 
